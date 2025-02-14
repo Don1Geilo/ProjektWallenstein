@@ -15,6 +15,15 @@ print(f"🚀 GOOGLE_API_KEYFILE: {config.GOOGLE_API_KEYFILE}")
 # 🔥 Google Spreadsheet öffnen
 spreadsheet = open_google_sheet()
 
+# 🔥 Falls das Worksheet existiert, verwende es. Falls nicht, erstelle ein neues.
+try:
+    worksheet = spreadsheet.worksheet(stock_name)  # 🔍 Prüfen, ob es existiert
+    print(f"📂 Arbeitsblatt '{stock_name}' gefunden. Daten werden aktualisiert.")
+except gspread.exceptions.WorksheetNotFound:
+    worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")
+    print(f"🆕 Neues Arbeitsblatt '{stock_name}' erstellt.")
+
+
 # 🔥 Mehrere Subreddits abrufen
 subreddits = ["WallStreetBets", "WallstreetbetsGer", "Mauerstrassenwetten"]
 reddit_data_file = "reddit_data.json"
