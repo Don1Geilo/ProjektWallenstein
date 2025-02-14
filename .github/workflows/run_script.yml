@@ -1,4 +1,9 @@
 name: Automatische Aktienanalyse
+      - name: Python installieren
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.11'  # 🔥 Upgrade auf 3.11
+
 
 on:
   schedule:
