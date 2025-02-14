@@ -21,6 +21,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          python -m nltk.downloader vader_lexicon  # 🔥 NLTK-Datenbank laden
 
       - name: Google API Keyfile wiederherstellen
         run: echo "${{ secrets.GOOGLE_API_KEYFILE_B64 }}" | base64 --decode > Google_API.json
