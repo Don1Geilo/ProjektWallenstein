@@ -1,0 +1,18 @@
+name: Automatische Aktienanalyse
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # Läuft täglich um 9:00 UTC
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository klonen
+        uses: actions/checkout@v3
+      - name: Python installieren
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.10'
+      - name: Skript ausführen
+        run: python main.py
