@@ -1,8 +1,8 @@
 name: Automatische Aktienanalyse
 
 on:
-  schedule:
-    - cron: '0 9 * * *'  # Läuft täglich um 9:00 UTC
+  workflow_dispatch:
+
 
 jobs:
   run-script:
