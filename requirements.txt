@@ -1,0 +1,6 @@
+pandas
+gspread
+oauth2client
+yfinance
+requests
+python-dotenv
