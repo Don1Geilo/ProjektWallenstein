@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "agile-team-450915-s6",
+  "private_key_id": "8f77c308ffc3a9c23bdfba20307b80e42555f43d",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCgBdzmLNCPk+uA\nbaezyeEYlp3+rU/TkUgDQp6F6L6RLKeBBkMo4AoQs5K4RKeCv0K7yBuP3aRmwzuU\nmQ+4Uq6PjAX1gnuwPKawyGKmsb1orXRY5np3i80HCdhFzZahNpEJfwrn1+BoRLdB\n1ymKtGDVXo3uEFtg5THtfH2AZz/7vMQbQwVH/Lzm4D6+2Wo2xlG52n2ZQWQH/V0Z\nXN9+7eZPqVmarrIyJphio8r8iNbKwYYfNJg5THXzQ/iwQqbkjkfBXO/yWHpJejNS\ncbZPbmDmd/ITIw/1Oln8hJk8oCD8APYJT4FtnXxEbB6Ja5VIrRZ49o/Gs+JKtys4\n8anrzuWzAgMBAAECggEAFfBX1bLFMToNaoEeIdcGplFX/eeS7yWW4uOKSj+biNm/\naUALixoUJzAHaH35HULNimMn7DRt6qzPiVLmxdWIGyQOWRd3j7TxAYGnjMUHe8d0\nERAgMC2ZgWKHJSLHiPirL8scGqcNHB53pW4zQtHyCK669K2HaaRikPWlWypMql2C\nXa5RYwC6X6RfBEdjXNzPFuGS5UXeqxZC2nlCxhfz1BTJq04ZusPO4I3OHAt/Cewm\nvNSeFvwFpx0fKYByPYQQ7QF7eZAGLnwom3RVba6txR8DZhPX7RU+pLhNpnCDyYza\n5idMnCKlV87tWijsa1cPXg2e5LwaZGwz9RjCs1aX2QKBgQDPWFkIQ435g95S2mzY\nyNvgQw2YFMTNFfneqIrvWA/pgDpjKqLfhFOfwsve4rQpZx35ubLBCkGudJIzzOwY\nhuBw5XNHt4YG6tNk0wbnP5Uo7D1M5AgLUyvpZlZylHhw/hcya2WQ7iBy9sTg6kM5\nr6hK0hdzc1xuBVv0GpzF3LeBpQKBgQDFksWLlPDC3QRo9A38LnWZY9zjCwhCPXZY\nuZXQJTGkXtDW7EcOhBFvihWsgtz+m5dy9Cf6si/xbl/9SMfRou8ooPrS92VcwtkX\nnnmgwxaT0Anow6fTOukm0nE14P3iIsNt/5QZmXc9JU0PJh22vGRdpCpGHPNbwLzn\nPz9xNIV6dwKBgCAnUC8y4qpl460viB+aDlbZrxr9ZYN0O/pmYp05J8aLBwLn0rgc\nuicVOy5GM7AT+JcIUAsVfxgBpcZ4qcgn6lg3jMf7UsJx2fRRsUldF9FvyRXKauDu\ntemM4C0GjyLelFRSST7PXqLVV7SVP3WLoupvaAmUQyoglKDnG5anYqGtAoGBAKjg\nZb6Dlq/ZXzWetn2B8L8mHt5qxappAsmgCDAcOqx25yduWuZLeOPQMep9CQ0QTYnS\nrIGa4WQKpj3HghTsomQmBX9iO9/oJMwNh4UkfB3oSzAMXV0uE7A9XMti/1/VuxpA\nxYSEKum3AoEaYXea3Gc2NXQsts8MletLopzO+fDNAoGAbSpRAO+W2Kf7vwpXAR6r\nqRtujYXWnk+z6Ll0KTB7kURiKFBPpigCk6lgLdEEzlKdDFaIXcMQQDFLxXsbRMuu\nmQahURhTGkOsmSLJmCYKg4G2VfRclEKYmG0KeSX2av0oKjnC5GzKZXbjdX/Aq8Au\nVPm48UimSZ4x4L5RX0jFwVU=\n-----END PRIVATE KEY-----\n",
+  "client_email": "projekt-wallenstein@agile-team-450915-s6.iam.gserviceaccount.com",
+  "client_id": "115674509355475154376",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/projekt-wallenstein%40agile-team-450915-s6.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

@@ -1,0 +1,6 @@
+CLIENT_ID= "EUxwK7aC29h6qHvJLLc7pQ"
+CLIENT_SECRET= "ls4CoKP20BTM49dQwcx7CXmD4E38Kw"
+USER_AGENT= "GetSentimentFromPost"
+
+
+
