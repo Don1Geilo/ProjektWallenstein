@@ -15,15 +15,6 @@ print(f"🚀 GOOGLE_API_KEYFILE: {config.GOOGLE_API_KEYFILE}")
 # 🔥 Google Spreadsheet öffnen
 spreadsheet = open_google_sheet()
 
-# 🔥 Falls das Worksheet existiert, verwende es. Falls nicht, erstelle ein neues.
-try:
-    worksheet = spreadsheet.worksheet(stock_name)  # 🔍 Prüfen, ob es existiert
-    print(f"📂 Arbeitsblatt '{stock_name}' gefunden. Daten werden aktualisiert.")
-except gspread.exceptions.WorksheetNotFound:
-    worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")
-    print(f"🆕 Neues Arbeitsblatt '{stock_name}' erstellt.")
-
-
 # 🔥 Mehrere Subreddits abrufen
 subreddits = ["WallStreetBets", "WallstreetbetsGer", "Mauerstrassenwetten"]
 reddit_data_file = "reddit_data.json"
@@ -48,8 +39,16 @@ if len(all_posts) == 0:
 # 🔥 Mehrere Aktien auswerten
 stocks = ["NVDA", "AAPL", "TSLA", "MSFT"]  # ✅ Aktienliste erweitern
 
-for stock_name in stocks:
+for stock_name in stocks:  # 🔥 `stock_name` wird hier definiert!
     print(f"📊 Analysiere {stock_name}...")
+
+    # 🔥 Falls das Worksheet existiert, verwende es. Falls nicht, erstelle ein neues.
+    try:
+        worksheet = spreadsheet.worksheet(stock_name)  # 🔍 Prüfen, ob es existiert
+        print(f"📂 Arbeitsblatt '{stock_name}' gefunden. Daten werden aktualisiert.")
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")
+        print(f"🆕 Neues Arbeitsblatt '{stock_name}' erstellt.")
 
     # 📅 Sentiment-Daten vorbereiten
     sentiment_data = []
@@ -73,7 +72,6 @@ for stock_name in stocks:
     df_combined["Date"] = df_combined["Date"].astype(str)
 
     # 🔥 Daten in Google Sheets hochladen
-    worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")
     worksheet.update([["Stock:", stock_name]] + [df_combined.columns.values.tolist()] + df_combined.values.tolist())
 
     print(f"✅ {stock_name} erfolgreich gespeichert!")
