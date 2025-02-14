@@ -1,8 +1,9 @@
 name: Automatische Aktienanalyse
 
 on:
-  workflow_dispatch:
-
+  schedule:
+    - cron: '0 9 * * *'  # Läuft jeden Tag um 9:00 UTC
+  workflow_dispatch:  # Manuelles Starten erlaubt
 
 jobs:
   run-script:
@@ -10,9 +11,16 @@ jobs:
     steps:
       - name: Repository klonen
         uses: actions/checkout@v3
+
       - name: Python installieren
         uses: actions/setup-python@v3
         with:
           python-version: '3.10'
+
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Skript ausführen
         run: python main.py
