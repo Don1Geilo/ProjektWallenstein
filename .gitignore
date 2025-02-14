@@ -1,0 +1,12 @@
+# Sensible Dateien ignorieren
+.env
+Google_API.json
+reddit_data.json
+
+# Python-Cache ignorieren
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code spezifische Dateien ignorieren
+.vscode/

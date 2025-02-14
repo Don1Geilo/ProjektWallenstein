@@ -3,18 +3,15 @@ import gspread
 import json
 import os
 import yfinance as yf
+import config  # ✅ Lädt die Google Sheets ID aus .env
+from google_sheets import open_google_sheet
 from datetime import datetime, UTC
-from oauth2client.service_account import ServiceAccountCredentials
 from reddit_scraper import get_reddit_posts
 from sentiment_analysis import analyze_sentiment
 
-# 🔥 Google Sheets Verbindung einrichten
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("Google API.json", scope)
-client = gspread.authorize(creds)
 
 # 🔥 Google Spreadsheet öffnen
-spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1DWOYf1KU85mJhpj_HDfIM8pqgwuS1bHKcAjSC1o_IaI/edit")
+spreadsheet = open_google_sheet()  # ✅ Holt das gesamte Google Spreadsheet
 
 # 🔥 Mehrere Subreddits abrufen
 subreddits = ["WallStreetBets", "WallstreetbetsGer", "Mauerstrassenwetten"]
@@ -64,8 +61,14 @@ for stock_name in stocks:
     df_combined["Sentiment"] = df_combined["Sentiment"].fillna(0)
     df_combined["Date"] = df_combined["Date"].astype(str)
 
+    # 🔥 Google Sheet aktualisieren (Bestehendes Arbeitsblatt nutzen oder neues erstellen)
+    try:
+        worksheet = spreadsheet.worksheet(stock_name)  # Falls das Arbeitsblatt existiert
+        worksheet.clear()
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")  # Falls nicht existiert, neu erstellen
+
     # 🔥 Daten in Google Sheets hochladen
-    worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")
     worksheet.update([["Stock:", stock_name]] + [df_combined.columns.values.tolist()] + df_combined.values.tolist())
 
     print(f"✅ {stock_name} erfolgreich gespeichert!")
