@@ -1,9 +1,4 @@
 name: Automatische Aktienanalyse
-      - name: Python installieren
-        uses: actions/setup-python@v3
-        with:
-          python-version: '3.11'  # 🔥 Upgrade auf 3.11
-
 
 on:
   schedule:
@@ -17,10 +12,10 @@ jobs:
       - name: Repository klonen
         uses: actions/checkout@v3
 
-      - name: Python installieren
+      - name: Python 3.11 installieren  # ✅ Korrekt platziert
         uses: actions/setup-python@v3
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Abhängigkeiten installieren
         run: |
