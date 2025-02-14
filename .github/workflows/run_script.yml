@@ -12,7 +12,7 @@ jobs:
       - name: Repository klonen
         uses: actions/checkout@v3
 
-      - name: Python 3.11 installieren  # ✅ Korrekt platziert
+      - name: Python 3.11 installieren
         uses: actions/setup-python@v3
         with:
           python-version: '3.11'
@@ -25,8 +25,13 @@ jobs:
       - name: Google API Keyfile wiederherstellen
         run: echo "${{ secrets.GOOGLE_API_KEYFILE_B64 }}" | base64 --decode > Google_API.json
 
-      - name: Setze GOOGLE_API_KEYFILE
-        run: echo "GOOGLE_API_KEYFILE=Google_API.json" >> $GITHUB_ENV
+      - name: Setze Umgebungsvariablen für Reddit API & Google Sheets
+        run: |
+          echo "CLIENT_ID=${{ secrets.CLIENT_ID }}" >> $GITHUB_ENV
+          echo "CLIENT_SECRET=${{ secrets.CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "USER_AGENT=${{ secrets.USER_AGENT }}" >> $GITHUB_ENV
+          echo "GOOGLE_API_KEYFILE=Google_API.json" >> $GITHUB_ENV
+          echo "GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}" >> $GITHUB_ENV
 
       - name: Skript ausführen
         run: python main.py
