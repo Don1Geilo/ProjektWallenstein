@@ -1,17 +1,19 @@
+import os
+import json
 import pandas as pd
 import gspread
-import json
-import os
 import yfinance as yf
-import config  # ✅ Lädt die Google Sheets ID aus .env
+import config  # 🔥 Lädt API-Keys aus GitHub Secrets
 from google_sheets import open_google_sheet
-from datetime import datetime, UTC
 from reddit_scraper import get_reddit_posts
 from sentiment_analysis import analyze_sentiment
+from datetime import datetime, timezone
 
+# 🚀 Debugging: Zeigt den Status der API-Keys
+print(f"🚀 GOOGLE_API_KEYFILE: {config.GOOGLE_API_KEYFILE}")
 
 # 🔥 Google Spreadsheet öffnen
-spreadsheet = open_google_sheet()  # ✅ Holt das gesamte Google Spreadsheet
+spreadsheet = open_google_sheet()
 
 # 🔥 Mehrere Subreddits abrufen
 subreddits = ["WallStreetBets", "WallstreetbetsGer", "Mauerstrassenwetten"]
@@ -27,7 +29,7 @@ if os.path.exists(reddit_data_file):
 # 🆕 Falls Datei leer ist, neue Daten scrapen
 if len(all_posts) == 0:
     for subreddit in subreddits:
-        posts = get_reddit_posts(subreddit, limit=100)
+        posts = get_reddit_posts(subreddit, limit=100)  # 🔥 Mehr Daten sammeln
         all_posts.extend(posts)
 
     with open(reddit_data_file, "w", encoding="utf-8") as file:
@@ -35,7 +37,7 @@ if len(all_posts) == 0:
     print(f"✅ Neue Reddit-Daten gespeichert ({len(all_posts)} Posts)")
 
 # 🔥 Mehrere Aktien auswerten
-stocks = ["NVDA", "AAPL", "TSLA", "MSFT"]  # Liste der Aktien
+stocks = ["NVDA", "AAPL", "TSLA", "MSFT"]  # ✅ Aktienliste erweitern
 
 for stock_name in stocks:
     print(f"📊 Analysiere {stock_name}...")
@@ -44,7 +46,7 @@ for stock_name in stocks:
     sentiment_data = []
     for post in all_posts:
         if "date" in post and isinstance(post["date"], (int, float)):
-            readable_date = datetime.fromtimestamp(post["date"], UTC).date()
+            readable_date = datetime.fromtimestamp(post["date"], timezone.utc).date()
             sentiment_data.append({"Date": readable_date, "Sentiment": analyze_sentiment(post["text"])})
 
     df_sentiment = pd.DataFrame(sentiment_data)
@@ -52,23 +54,17 @@ for stock_name in stocks:
     df_sentiment = df_sentiment.groupby("Date").mean().reset_index()
 
     # 🔥 Tagesaktuelle Börsendaten abrufen (Yahoo Finance)
-    stock_data = yf.Ticker(stock_name).history(period="7d")  # Letzte 7 Tage
+    stock_data = yf.Ticker(stock_name).history(period="7d")  # 🔥 Letzte 7 Tage
     stock_data = stock_data.reset_index()
-    stock_data["Date"] = pd.to_datetime(stock_data["Date"]).dt.tz_localize(None)  # Zeitzone entfernen
+    stock_data["Date"] = pd.to_datetime(stock_data["Date"]).dt.tz_localize(None)
 
     # 🔥 Daten zusammenführen
     df_combined = stock_data.merge(df_sentiment, on="Date", how="left")
     df_combined["Sentiment"] = df_combined["Sentiment"].fillna(0)
     df_combined["Date"] = df_combined["Date"].astype(str)
 
-    # 🔥 Google Sheet aktualisieren (Bestehendes Arbeitsblatt nutzen oder neues erstellen)
-    try:
-        worksheet = spreadsheet.worksheet(stock_name)  # Falls das Arbeitsblatt existiert
-        worksheet.clear()
-    except gspread.exceptions.WorksheetNotFound:
-        worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")  # Falls nicht existiert, neu erstellen
-
     # 🔥 Daten in Google Sheets hochladen
+    worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")
     worksheet.update([["Stock:", stock_name]] + [df_combined.columns.values.tolist()] + df_combined.values.tolist())
 
     print(f"✅ {stock_name} erfolgreich gespeichert!")
