@@ -5,3 +5,4 @@ yfinance
 requests
 python-dotenv
 praw
+nltk
