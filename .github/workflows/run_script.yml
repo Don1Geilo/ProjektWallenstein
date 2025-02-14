@@ -22,5 +22,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Google API Keyfile wiederherstellen
+        run: echo "${{ secrets.GOOGLE_API_KEYFILE_B64 }}" | base64 --decode > Google_API.json
+
+      - name: Setze GOOGLE_API_KEYFILE
+        run: echo "GOOGLE_API_KEYFILE=Google_API.json" >> $GITHUB_ENV
+
       - name: Skript ausführen
         run: python main.py
