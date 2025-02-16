@@ -2,84 +2,92 @@ import os
 import json
 import pandas as pd
 import gspread
-import yfinance as yf
-import config  # 🔥 Lädt API-Keys aus GitHub Secrets
-from google_sheets import open_google_sheet
-from reddit_scraper import get_reddit_posts
-from sentiment_analysis import analyze_sentiment
 from datetime import datetime, timezone
 
-# 🚀 Debugging: Zeigt den Status der API-Keys
-print(f"🚀 GOOGLE_API_KEYFILE: {config.GOOGLE_API_KEYFILE}")
+# Eigene Module
+from stock_data import get_stock_data            # Lädt tägliche Börsendaten
+from reddit_scraper import get_reddit_posts      # Lädt Reddit-Posts
+from sentiment_analysis import analyze_sentiment # Berechnet Sentiment
+from google_sheets import open_google_sheet, create_chart
 
-# 🔥 Google Spreadsheet öffnen
-spreadsheet = open_google_sheet()
+def main():
+    # 🔥 Google Spreadsheet öffnen
+    spreadsheet = open_google_sheet()
 
-# 🔥 Mehrere Subreddits abrufen
-subreddits = ["WallStreetBets", "WallstreetbetsGer", "Mauerstrassenwetten"]
-reddit_data_file = "reddit_data.json"
+    reddit_data_file = "reddit_data.json"
+    subreddits = ["WallStreetBets", "WallstreetbetsGer", "Mauerstrassenwetten"]
+    all_posts = []
 
-# 📂 Falls bereits gespeicherte Reddit-Daten existieren, laden
-all_posts = []
-if os.path.exists(reddit_data_file):
-    with open(reddit_data_file, "r", encoding="utf-8") as file:
-        all_posts = json.load(file)
-    print(f"✅ Geladene gespeicherte Reddit-Daten ({len(all_posts)} Posts)")
+    # 1) Reddit-Posts laden oder neu scrapen
+    if os.path.exists(reddit_data_file):
+        with open(reddit_data_file, "r", encoding="utf-8") as f:
+            all_posts = json.load(f)
+        print(f"✅ Geladene gespeicherte Reddit-Daten ({len(all_posts)} Posts)")
+    if len(all_posts) == 0:
+        for sr in subreddits:
+            posts = get_reddit_posts(sr, limit=50)
+            all_posts.extend(posts)
+        with open(reddit_data_file, "w", encoding="utf-8") as f:
+            json.dump(all_posts, f, ensure_ascii=False, indent=4)
+        print(f"✅ Neue Reddit-Daten gespeichert ({len(all_posts)} Posts)")
 
-# 🆕 Falls Datei leer ist, neue Daten scrapen
-if len(all_posts) == 0:
-    for subreddit in subreddits:
-        posts = get_reddit_posts(subreddit, limit=100)  # 🔥 Mehr Daten sammeln
-        all_posts.extend(posts)
+    # 🔥 Mehrere Aktien
+    stocks = ["NVDA", "AAPL", "TSLA", "MSFT"]
 
-    with open(reddit_data_file, "w", encoding="utf-8") as file:
-        json.dump(all_posts, file, ensure_ascii=False, indent=4)
-    print(f"✅ Neue Reddit-Daten gespeichert ({len(all_posts)} Posts)")
+    for stock_name in stocks:
+        print(f"\n📊 Analysiere {stock_name}...")
 
-# 🔥 Mehrere Aktien auswerten
-stocks = ["NVDA", "AAPL", "TSLA", "MSFT"]  # ✅ Aktienliste erweitern
+        # 2) Worksheet vorbereiten
+        try:
+            worksheet = spreadsheet.worksheet(stock_name)
+            print(f"📂 Arbeitsblatt '{stock_name}' gefunden. Daten werden aktualisiert.")
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=stock_name, rows="500", cols="20")
+            print(f"🆕 Neues Arbeitsblatt '{stock_name}' erstellt.")
 
-for stock_name in stocks:  # 🔥 `stock_name` wird hier definiert!
-    print(f"📊 Analysiere {stock_name}...")
+        # 3) Sentiment pro Tag ermitteln
+        sentiment_data = []
+        for post in all_posts:
+            if "date" in post and isinstance(post["date"], (int, float)):
+                # Unix → Tagesdatum
+                dt_day = datetime.fromtimestamp(post["date"], timezone.utc).date()
+                # JEDER Post wird analysiert (kein Ticker-Check)
+                val = analyze_sentiment(post["text"])
+                sentiment_data.append({"Date": dt_day, "Sentiment": val})
 
-    # 🔥 Falls das Worksheet existiert, verwende es. Falls nicht, erstelle ein neues.
-    try:
-        worksheet = spreadsheet.worksheet(stock_name)  # 🔍 Prüfen, ob es existiert
-        print(f"📂 Arbeitsblatt '{stock_name}' gefunden. Daten werden aktualisiert.")
-    except gspread.exceptions.WorksheetNotFound:
-        worksheet = spreadsheet.add_worksheet(title=stock_name, rows="100", cols="20")
-        print(f"🆕 Neues Arbeitsblatt '{stock_name}' erstellt.")
+        df_sentiment = pd.DataFrame(sentiment_data)
+        if not df_sentiment.empty:
+            df_sentiment["Date"] = pd.to_datetime(df_sentiment["Date"]).dt.date
+            # Tagesdurchschnitt
+            df_sentiment = df_sentiment.groupby("Date").mean().reset_index()
+        else:
+            df_sentiment = pd.DataFrame(columns=["Date", "Sentiment"])
 
-    # 📅 Sentiment-Daten vorbereiten
-    sentiment_data = []
-    for post in all_posts:
-        if "date" in post and isinstance(post["date"], (int, float)):
-            readable_date = datetime.fromtimestamp(post["date"], timezone.utc).date()
-            sentiment_data.append({"Date": readable_date, "Sentiment": analyze_sentiment(post["text"])})
+        # 4) Börsendaten (täglich)
+        stock_data = get_stock_data(stock_name)
 
-    df_sentiment = pd.DataFrame(sentiment_data)
-    df_sentiment["Date"] = pd.to_datetime(df_sentiment["Date"])
-    df_sentiment = df_sentiment.groupby("Date").mean().reset_index()
+        # 5) Merge
+        df_combined = pd.merge(stock_data, df_sentiment, on="Date", how="left")
+        df_combined["Sentiment"] = df_combined["Sentiment"].fillna(0)
 
-    # 🔥 Tagesaktuelle Börsendaten abrufen (Yahoo Finance)
-    stock_data = yf.Ticker(stock_name).history(period="7d")  # 🔥 Letzte 7 Tage
-    stock_data = stock_data.reset_index()
-    stock_data["Date"] = pd.to_datetime(stock_data["Date"]).dt.tz_localize(None)
+        # 6) Spalten für Google Sheets: 
+        # A: Date | B: Close | C: Sentiment_Pos | D: Sentiment_Neg
+        df_combined["Sentiment_Pos"] = df_combined["Sentiment"].apply(lambda x: x if x > 0 else 0)
+        df_combined["Sentiment_Neg"] = df_combined["Sentiment"].apply(lambda x: x if x < 0 else 0)
+        df_combined["Date"] = df_combined["Date"].astype(str)
 
-    # 🔥 Daten zusammenführen
-    df_combined = stock_data.merge(df_sentiment, on="Date", how="left")
-    df_combined["Sentiment"] = df_combined["Sentiment"].fillna(0)
-    df_combined["Date"] = df_combined["Date"].astype(str)
+        df_upload = df_combined[["Date", "Close", "Sentiment_Pos", "Sentiment_Neg"]].fillna(0)
 
-    # 🔥 Daten in Google Sheets hochladen
-    worksheet.update([["Stock:", stock_name]] + [df_combined.columns.values.tolist()] + df_combined.values.tolist())
+        # 7) Daten in Google Sheets hochladen
+        sheet_data = [df_upload.columns.tolist()] + df_upload.values.tolist()
+        worksheet.update(sheet_data)
 
-    # 📈 Automatisch Diagramm erstellen
-    create_chart(worksheet, stock_name)
+        # 8) Diagramm erstellen (Linie = Close, Balken = Sentiment pos/neg)
+        create_chart(worksheet, stock_name)
 
-    print(f"✅ {stock_name} erfolgreich gespeichert!")
+        print(f"✅ {stock_name} erfolgreich gespeichert!")
 
+    print("\n🚀 Alle Aktienanalysen abgeschlossen!\n")
 
-    print(f"✅ {stock_name} erfolgreich gespeichert!")
-
-print("🚀 Alle Aktienanalysen abgeschlossen!")
+if __name__ == "__main__":
+    main()

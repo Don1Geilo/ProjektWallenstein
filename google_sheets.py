@@ -37,88 +37,132 @@ def delete_existing_charts(sheet):
         print("🗑️ Alte Diagramme wurden gelöscht!")
 
 def create_chart(sheet, stock_name):
-    """Erstellt ein neues Diagramm in Google Sheets"""
-    
-    # 🔥 Zuerst alle alten Diagramme entfernen
+    """Erstellt ein Kurs+Sentiment-Diagramm (Linie + Balken) in Google Sheets."""
+
+    # 1. Bestehende Charts entfernen
     delete_existing_charts(sheet)
 
+    sheet_id = sheet.spreadsheet.worksheet(sheet.title)._properties['sheetId']
+
+    # 2. Definiere das Kombi-Diagramm
     body = {
         "requests": [
             {
                 "addChart": {
                     "chart": {
                         "spec": {
-                            "title": f"{stock_name} Kurs & Sentiment",
+                            "title": f"{stock_name} -Kurs & Reddit Sentiment",
                             "basicChart": {
-                                "chartType": "LINE",
+                                "chartType": "COMBO",
                                 "legendPosition": "BOTTOM_LEGEND",
+                                # Achsen: links = Kurs, rechts = Sentiment
                                 "axis": [
                                     {"position": "BOTTOM_AXIS", "title": "Datum"},
-                                    {"position": "LEFT_AXIS", "title": "Börsenkurs"},
+                                    {"position": "LEFT_AXIS", "title": f"{stock_name} Kurs"},
                                     {"position": "RIGHT_AXIS", "title": "Sentiment"},
                                 ],
+                                # X-Achse = Spalte A (Index 0)
                                 "domains": [
                                     {
                                         "domain": {
                                             "sourceRange": {
                                                 "sources": [
-                                                    {"sheetId": sheet.spreadsheet.worksheet(sheet.title)._properties['sheetId'], 
-                                                     "startRowIndex": 1, 
-                                                     "endRowIndex": 100, 
-                                                     "startColumnIndex": 0, 
-                                                     "endColumnIndex": 1}
+                                                    {
+                                                        "sheetId": sheet_id,
+                                                        "startRowIndex": 1,
+                                                        "endRowIndex": 500,
+                                                        "startColumnIndex": 0,
+                                                        "endColumnIndex": 1
+                                                    }
                                                 ]
                                             }
                                         }
                                     }
                                 ],
                                 "series": [
-                                    {
+                                    {  # 🔹 Kurs (blaue Linie) = Spalte B (Index=1)
                                         "series": {
                                             "sourceRange": {
                                                 "sources": [
-                                                    {"sheetId": sheet.spreadsheet.worksheet(sheet.title)._properties['sheetId'], 
-                                                     "startRowIndex": 1, 
-                                                     "endRowIndex": 100, 
-                                                     "startColumnIndex": 1, 
-                                                     "endColumnIndex": 2}
+                                                    {
+                                                        "sheetId": sheet_id,
+                                                        "startRowIndex": 1,
+                                                        "endRowIndex": 500,
+                                                        "startColumnIndex": 1,
+                                                        "endColumnIndex": 2
+                                                    }
                                                 ]
                                             }
                                         },
                                         "targetAxis": "LEFT_AXIS",
+                                        "type": "LINE",
+                                        "color": {"red": 0.0, "green": 0.0, "blue": 1.0}  # Blau
                                     },
-                                    {
+                                    {  # 🔹 Sentiment Positive (grüne Balken) = Spalte C (Index=2)
                                         "series": {
                                             "sourceRange": {
                                                 "sources": [
-                                                    {"sheetId": sheet.spreadsheet.worksheet(sheet.title)._properties['sheetId'], 
-                                                     "startRowIndex": 1, 
-                                                     "endRowIndex": 100, 
-                                                     "startColumnIndex": 2, 
-                                                     "endColumnIndex": 3}
+                                                    {
+                                                        "sheetId": sheet_id,
+                                                        "startRowIndex": 1,
+                                                        "endRowIndex": 500,
+                                                        "startColumnIndex": 2,
+                                                        "endColumnIndex": 3
+                                                    }
                                                 ]
                                             }
                                         },
                                         "targetAxis": "RIGHT_AXIS",
-                                    }
-                                ],
+                                        "type": "COLUMN",
+                                        "color": {"red": 0.0, "green": 1.0, "blue": 0.0}  # Grün
+                                    },
+                                    {  # 🔹 Sentiment Negative (rote Balken) = Spalte D (Index=3)
+                                        "series": {
+                                            "sourceRange": {
+                                                "sources": [
+                                                    {
+                                                        "sheetId": sheet_id,
+                                                        "startRowIndex": 1,
+                                                        "endRowIndex": 500,
+                                                        "startColumnIndex": 3,
+                                                        "endColumnIndex": 4
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        "targetAxis": "RIGHT_AXIS",
+                                        "type": "COLUMN",
+                                        "color": {"red": 1.0, "green": 0.0, "blue": 0.0}  # Rot
+                                    },
+                                ]
                             }
                         },
-                       "position": {
-    "overlayPosition": {
-        "anchorCell": {
-            "sheetId": sheet.spreadsheet.worksheet(sheet.title)._properties['sheetId'],
-            "rowIndex": 1,
-            "columnIndex": 10  # 🔥 Diagramm weiter rechts platzieren (statt 6)
-        }
-    }
-}
-
+                        # Diagramm-Position
+                        "position": {
+                            "overlayPosition": {
+                                "anchorCell": {
+                                    "sheetId": sheet_id,
+                                    "rowIndex": 1,
+                                    "columnIndex": 8
+                                }
+                            }
+                        }
                     }
                 }
             }
         ]
     }
 
+    # 3. An Google Sheets senden
     sheet.spreadsheet.batch_update(body)
     print(f"📈 Diagramm für {stock_name} erstellt!")
+
+
+
+
+
+
+print("Diagramm erstellt!")
+   
+
+
