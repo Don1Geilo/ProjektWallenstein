@@ -21,7 +21,6 @@ def open_google_sheet(sheet_id=None):
     spreadsheet = client.open_by_key(sheet_id)
     return spreadsheet  # ❗ Jetzt geben wir das gesamte Spreadsheet zurück
 
-
 def delete_existing_charts(sheet):
     """Löscht alle vorhandenen Diagramme in Google Sheets"""
     requests = []
@@ -36,41 +35,47 @@ def delete_existing_charts(sheet):
         sheet.spreadsheet.batch_update({"requests": requests})
         print("🗑️ Alte Diagramme wurden gelöscht!")
 
-def create_chart(sheet, stock_name):
-    """Erstellt ein Kurs+Sentiment-Diagramm (Linie + Balken) in Google Sheets."""
 
-    # 1. Bestehende Charts entfernen
-    delete_existing_charts(sheet)
-
+def create_chart(sheet, stock_name, view_min, view_max):
+ 
     sheet_id = sheet.spreadsheet.worksheet(sheet.title)._properties['sheetId']
 
-    # 2. Definiere das Kombi-Diagramm
     body = {
         "requests": [
             {
                 "addChart": {
                     "chart": {
                         "spec": {
-                            "title": f"{stock_name} -Kurs & Reddit Sentiment",
+                            "title": f"{stock_name} Kurs & Reddit Sentiment",
                             "basicChart": {
                                 "chartType": "COMBO",
                                 "legendPosition": "BOTTOM_LEGEND",
-                                # Achsen: links = Kurs, rechts = Sentiment
+                                # Achsen definieren
                                 "axis": [
                                     {"position": "BOTTOM_AXIS", "title": "Datum"},
-                                    {"position": "LEFT_AXIS", "title": f"{stock_name} Kurs"},
-                                    {"position": "RIGHT_AXIS", "title": "Sentiment"},
-                                ],
-                                # X-Achse = Spalte A (Index 0)
-                                "domains": [
                                     {
+                                        "position": "LEFT_AXIS",
+                                        "title": f"{stock_name} Kurs",
+                                        "viewWindowOptions": {
+                                            "viewWindowMode": "explicit",
+                                            "viewWindowMin": view_min,
+                                            "viewWindowMax": view_max
+                                        }
+                                    },
+                                    {
+                                        "position": "RIGHT_AXIS",
+                                        "title": "Sentiment"
+                                    }
+                                ],
+                                "domains": [
+                                    {  # X-Achse = Spalte A (Index=0)
                                         "domain": {
                                             "sourceRange": {
                                                 "sources": [
                                                     {
                                                         "sheetId": sheet_id,
                                                         "startRowIndex": 1,
-                                                        "endRowIndex": 500,
+                                                        "endRowIndex": 1000,
                                                         "startColumnIndex": 0,
                                                         "endColumnIndex": 1
                                                     }
@@ -80,14 +85,14 @@ def create_chart(sheet, stock_name):
                                     }
                                 ],
                                 "series": [
-                                    {  # 🔹 Kurs (blaue Linie) = Spalte B (Index=1)
+                                    {  # 🔹 Kurs (Blaue Linie) → Spalte B (Index=1)
                                         "series": {
                                             "sourceRange": {
                                                 "sources": [
                                                     {
                                                         "sheetId": sheet_id,
                                                         "startRowIndex": 1,
-                                                        "endRowIndex": 500,
+                                                        "endRowIndex": 1000,
                                                         "startColumnIndex": 1,
                                                         "endColumnIndex": 2
                                                     }
@@ -96,16 +101,16 @@ def create_chart(sheet, stock_name):
                                         },
                                         "targetAxis": "LEFT_AXIS",
                                         "type": "LINE",
-                                        "color": {"red": 0.0, "green": 0.0, "blue": 1.0}  # Blau
+                                        "color": {"red": 0.0, "green": 0.0, "blue": 1.0}
                                     },
-                                    {  # 🔹 Sentiment Positive (grüne Balken) = Spalte C (Index=2)
+                                    {  # 🔹 Sentiment Positive (Grün) → Spalte C (Index=2)
                                         "series": {
                                             "sourceRange": {
                                                 "sources": [
                                                     {
                                                         "sheetId": sheet_id,
                                                         "startRowIndex": 1,
-                                                        "endRowIndex": 500,
+                                                        "endRowIndex": 1000,
                                                         "startColumnIndex": 2,
                                                         "endColumnIndex": 3
                                                     }
@@ -114,16 +119,16 @@ def create_chart(sheet, stock_name):
                                         },
                                         "targetAxis": "RIGHT_AXIS",
                                         "type": "COLUMN",
-                                        "color": {"red": 0.0, "green": 1.0, "blue": 0.0}  # Grün
+                                        "color": {"red": 0.0, "green": 1.0, "blue": 0.0}
                                     },
-                                    {  # 🔹 Sentiment Negative (rote Balken) = Spalte D (Index=3)
+                                    {  # 🔹 Sentiment Negative (Rot) → Spalte D (Index=3)
                                         "series": {
                                             "sourceRange": {
                                                 "sources": [
                                                     {
                                                         "sheetId": sheet_id,
                                                         "startRowIndex": 1,
-                                                        "endRowIndex": 500,
+                                                        "endRowIndex": 1000,
                                                         "startColumnIndex": 3,
                                                         "endColumnIndex": 4
                                                     }
@@ -132,17 +137,16 @@ def create_chart(sheet, stock_name):
                                         },
                                         "targetAxis": "RIGHT_AXIS",
                                         "type": "COLUMN",
-                                        "color": {"red": 1.0, "green": 0.0, "blue": 0.0}  # Rot
-                                    },
+                                        "color": {"red": 1.0, "green": 0.0, "blue": 0.0}
+                                    }
                                 ]
                             }
                         },
-                        # Diagramm-Position
                         "position": {
                             "overlayPosition": {
                                 "anchorCell": {
                                     "sheetId": sheet_id,
-                                    "rowIndex": 1,
+                                    "rowIndex": 0,
                                     "columnIndex": 8
                                 }
                             }
@@ -153,16 +157,5 @@ def create_chart(sheet, stock_name):
         ]
     }
 
-    # 3. An Google Sheets senden
     sheet.spreadsheet.batch_update(body)
-    print(f"📈 Diagramm für {stock_name} erstellt!")
-
-
-
-
-
-
-print("Diagramm erstellt!")
-   
-
-
+    print(f"📈 Diagramm für {stock_name} erstellt (Skala {view_min}..{view_max})!")
