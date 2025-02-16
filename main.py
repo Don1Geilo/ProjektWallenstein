@@ -74,6 +74,12 @@ for stock_name in stocks:  # 🔥 `stock_name` wird hier definiert!
     # 🔥 Daten in Google Sheets hochladen
     worksheet.update([["Stock:", stock_name]] + [df_combined.columns.values.tolist()] + df_combined.values.tolist())
 
+    # 📈 Automatisch Diagramm erstellen
+    create_chart(worksheet, stock_name)
+
+    print(f"✅ {stock_name} erfolgreich gespeichert!")
+
+
     print(f"✅ {stock_name} erfolgreich gespeichert!")
 
 print("🚀 Alle Aktienanalysen abgeschlossen!")
