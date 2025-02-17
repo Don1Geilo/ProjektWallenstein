@@ -22,18 +22,23 @@ def open_google_sheet(sheet_id=None):
     return spreadsheet  # ❗ Jetzt geben wir das gesamte Spreadsheet zurück
 
 def delete_existing_charts(sheet):
-    """Löscht alle vorhandenen Diagramme in Google Sheets"""
+    """Löscht alle vorhandenen Diagramme in einem Worksheet."""
     requests = []
-    spreadsheet_metadata = sheet.spreadsheet.fetch_sheet_metadata()
+    # Sheet-Metadaten abrufen
+    sheet_metadata = sheet.spreadsheet.fetch_sheet_metadata()
     
-    for sheet_data in spreadsheet_metadata["sheets"]:
-        if sheet_data["properties"]["title"] == sheet.title and "charts" in sheet_data:
-            for chart in sheet_data["charts"]:
+    for sht in sheet_metadata["sheets"]:
+        # Falls das Worksheet-Titel mit dem aktuellen `sheet.title` übereinstimmt:
+        if sht["properties"]["title"] == sheet.title and "charts" in sht:
+            # Alle Chart-Objekte durchgehen
+            for chart in sht["charts"]:
+                # Für jedes Diagramm einen Lösch-Request hinzufügen
                 requests.append({"deleteEmbeddedObject": {"objectId": chart["chartId"]}})
-
+    
+    # Falls es Diagramme gab, batch_update ausführen
     if requests:
         sheet.spreadsheet.batch_update({"requests": requests})
-        print("🗑️ Alte Diagramme wurden gelöscht!")
+
 
 
 def create_chart(sheet, stock_name, view_min, view_max):
