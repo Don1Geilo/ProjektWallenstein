@@ -8,6 +8,7 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
+
     steps:
       - name: Repository klonen
         uses: actions/checkout@v3
@@ -21,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          python -m nltk.downloader vader_lexicon  # 🔥 NLTK-Datenbank laden
+          python -m nltk.downloader vader_lexicon
 
       - name: Google API Keyfile wiederherstellen
         run: echo "${{ secrets.GOOGLE_API_KEYFILE_B64 }}" | base64 --decode > Google_API.json
@@ -36,3 +37,14 @@ jobs:
 
       - name: Skript ausführen
         run: python main.py
+
+      - name: Änderungen committen (reddit_data.json)
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git pull origin ${{ github.ref_name }} || echo "Kein Pull nötig"
+          git add reddit_data.json || echo "Keine Datei zum Hinzufügen"
+          git commit -m "🤖 Update reddit_data.json (auto)" || echo "Keine Änderungen zum Committen"
+          git push origin HEAD:${{ github.ref_name }} || echo "Push fehlgeschlagen oder unnötig"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
