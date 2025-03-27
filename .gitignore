@@ -2,6 +2,7 @@
 .env
 Google_API.json
 reddit_data.json
+stock.cache.json
 
 # Python-Cache ignorieren
 __pycache__/
