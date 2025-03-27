@@ -18,11 +18,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Abhängigkeiten installieren
+      - name: Abhängigkeiten installieren + NLTK-Setup
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          python -m nltk.downloader vader_lexicon
+          python -m nltk.downloader vader_lexicon punkt punkt_table punkt3 punkt4 punkt5 averaged_perceptron_tagger
 
       - name: Google API Keyfile wiederherstellen
         run: echo "${{ secrets.GOOGLE_API_KEYFILE_B64 }}" | base64 --decode > Google_API.json
