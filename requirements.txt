@@ -5,5 +5,5 @@ yfinance
 requests
 python-dotenv
 praw
-nltk
+nltk==3.8.1
 scikit-learn
