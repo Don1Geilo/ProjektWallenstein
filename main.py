@@ -20,9 +20,6 @@ DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "data/wallenstein.duckdb").strip()
 STOCK_OVERVIEW_DIR = "stockOverview"
 os.makedirs(STOCK_OVERVIEW_DIR, exist_ok=True)
 
-TARGETS_CSV = os.path.join(STOCK_OVERVIEW_DIR, "price_targets.csv")
-RECO_CSV    = os.path.join(STOCK_OVERVIEW_DIR, "recommendations.csv")
-
 # Ticker
 TICKERS = [t.strip().upper() for t in os.getenv("WALLENSTEIN_TICKERS", "NVDA,AMZN,SMCI").split(",") if t.strip()]
 
@@ -33,9 +30,9 @@ TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # --- Projekt‑Module ---
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
-from wallenstein.broker_targets import fetch_many
-from wallenstein.db_targets import save_snapshots
-from wallenstein.export_targets import export_latest_targets, export_latest_recs
+# from wallenstein.broker_targets import fetch_many
+# from wallenstein.db_targets import save_snapshots
+# from wallenstein.export_targets import export_latest_targets, export_latest_recs
 
 # ---------- Utils ----------
 def send_telegram(text: str) -> None:
@@ -91,41 +88,6 @@ def main() -> int:
             for t in TICKERS
         )
     )
-
-    # 2) Broker-Ziele holen und speichern
-    try:
-        snapshots = fetch_many(TICKERS)
-        save_snapshots(DB_PATH, snapshots)
-        if snapshots:
-            lines = []
-            for s in snapshots:
-                if "error" in s:
-                    lines.append(f"{s.get('ticker')}: {s['error']}")
-                else:
-                    mean = s.get("target_mean")
-                    high = s.get("target_high")
-                    low = s.get("target_low")
-                    lines.append(
-                        f"{s.get('ticker')}: mean {mean if mean is not None else 'n/a'} "
-                        f"high {high if high is not None else 'n/a'} "
-                        f"low {low if low is not None else 'n/a'}"
-                    )
-            send_telegram("🎯 Broker Price Targets\n" + "\n".join(lines))
-    except Exception as e:
-        log.error(f"❌ Broker-Ziele fehlgeschlagen: {e}")
-
-    # 3) CSV-Exporte
-    try:
-        export_latest_targets(DB_PATH, TARGETS_CSV, TICKERS)
-        log.info(f"✅ price_targets.csv exportiert → {TARGETS_CSV}")
-    except Exception as e:
-        log.error(f"❌ Export price_targets.csv fehlgeschlagen: {e}")
-
-    try:
-        export_latest_recs(DB_PATH, RECO_CSV, TICKERS)
-        log.info(f"✅ recommendations.csv exportiert → {RECO_CSV}")
-    except Exception as e:
-        log.error(f"❌ Export recommendations.csv fehlgeschlagen: {e}")
 
     log.info(f"🏁 Fertig in {time.time() - t0:.1f}s")
     return 0
