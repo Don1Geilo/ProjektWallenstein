@@ -96,6 +96,17 @@ def main() -> int:
     try:
         snapshots = fetch_many(TICKERS)
         save_snapshots(DB_PATH, snapshots)
+        if snapshots:
+            lines = []
+            for s in snapshots:
+                if "error" in s:
+                    lines.append(f"{s.get('ticker')}: {s['error']}")
+                else:
+                    lines.append(
+                        f"{s.get('ticker')}: mean {s.get('target_mean', 'n/a')} "
+                        f"high {s.get('target_high', 'n/a')} low {s.get('target_low', 'n/a')}"
+                    )
+            send_telegram("🎯 Broker Price Targets\n" + "\n".join(lines))
     except Exception as e:
         log.error(f"❌ Broker-Ziele fehlgeschlagen: {e}")
 
