@@ -79,7 +79,7 @@ def _finnhub_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return r.json()
     except ValueError as e:
-        snippet = " ".join(r.text.split())[:200]
+        snippet = " ".join(r.text.split())[:200]  # normalize and truncate
         log.error("Finnhub JSON decode failed [%s]: %s", r.status_code, snippet)
         raise FinnhubResponseError(r.status_code, snippet) from e
 
