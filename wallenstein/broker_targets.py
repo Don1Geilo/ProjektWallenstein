@@ -18,6 +18,15 @@ FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN", "demo")
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 
 
+class FinnhubResponseError(Exception):
+    """Raised when Finnhub returns a non-JSON response."""
+
+    def __init__(self, status: int, snippet: str):
+        super().__init__(f"HTTP {status}: {snippet}")
+        self.status = status
+        self.snippet = snippet
+
+
 # ---------------------------------------------------------------------------
 # HTTP session with retry
 # ---------------------------------------------------------------------------
@@ -67,7 +76,12 @@ def _finnhub_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
     url = f"{FINNHUB_BASE_URL}/{path}"
     r = _SESSION.get(url, params=params, timeout=10.0)
     r.raise_for_status()
-    return r.json()
+    try:
+        return r.json()
+    except ValueError as e:
+        snippet = r.text[:200].strip()
+        log.error("Finnhub JSON decode failed [%s]: %s", r.status_code, snippet)
+        raise FinnhubResponseError(r.status_code, snippet) from e
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +96,8 @@ def _price_targets(ticker: str) -> Dict[str, Optional[float]]:
         out["mean"] = _pos(_sf(data.get("targetMean")))
         out["high"] = _pos(_sf(data.get("targetHigh")))
         out["low"] = _pos(_sf(data.get("targetLow")))
+    except FinnhubResponseError as e:
+        log.warning(f"[{ticker}] price-target error: {e}")
     except Exception as e:
         log.warning(f"[{ticker}] price-target error: {e}")
     return out
@@ -99,6 +115,8 @@ def _recommendation_counts(ticker: str) -> Dict[str, Optional[int]]:
         out["hold"] = latest.get("hold")
         out["sell"] = latest.get("sell")
         out["strong_sell"] = latest.get("strongSell")
+    except FinnhubResponseError as e:
+        log.warning(f"[{ticker}] recommendation error: {e}")
     except Exception as e:
         log.warning(f"[{ticker}] recommendation error: {e}")
     return out
