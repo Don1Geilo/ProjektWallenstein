@@ -1,9 +1,10 @@
 pandas
-gspread
-oauth2client
+numpy
+duckdb
 yfinance
 requests
-python-dotenv
 praw
-nltk==3.8.1
+nltk
+python-dotenv
 scikit-learn
+pandas-datareader

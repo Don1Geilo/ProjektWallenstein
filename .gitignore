@@ -1,13 +1,35 @@
-# Sensible Dateien ignorieren
+# --- Secrets & Config ---
 .env
+.env.*
 Google_API.json
 reddit_data.json
 stock.cache.json
+telegram_token.txt
+config.json
 
-# Python-Cache ignorieren
+# --- DuckDB Datenbank & Exporte ---
+*.duckdb
+*.db
+stockOverview/*.csv
+*.parquet
+
+# --- Python Cache ---
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 
-# VS Code spezifische Dateien ignorieren
+# --- Build / Packaging ---
+*.egg-info/
+dist/
+build/
+
+# --- IDE / Editor ---
 .vscode/
+.idea/
+
+# --- Logs ---
+*.log
+
+# --- Sonstiges ---
+.DS_Store

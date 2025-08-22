@@ -1,203 +1,167 @@
 import os
-import json
+import time
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional
+
 import pandas as pd
-import gspread
-from datetime import datetime, timezone, timedelta
-import numpy as np
-from stock_data import get_stock_data
-from reddit_scraper import update_reddit_data
-from sentiment_analysis import analyze_sentiment
-from google_sheets import open_google_sheet, create_chart
-from stock_keywords import global_synonyms
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
+import requests
+from dotenv import load_dotenv, find_dotenv
 
-DATA_RETENTION_DAYS = 7  
+# --- .env laden ---
+env_loaded = load_dotenv(find_dotenv(usecwd=True), override=True)
+if not env_loaded:
+    alt_path = Path(__file__).with_name(".env")
+    load_dotenv(dotenv_path=alt_path, override=True)
 
-def clean_old_data(file_path):
-    """Löscht alte Daten aus der JSON-Datei, die älter als 7 Tage sind."""
-    if not os.path.exists(file_path):
-        return []
+# --- Logging ---
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("wallenstein")
+
+# --- Pfade/Konfig ---
+DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "data/wallenstein.duckdb").strip()
+STOCK_OVERVIEW_DIR = "stockOverview"
+os.makedirs(STOCK_OVERVIEW_DIR, exist_ok=True)
+
+TARGETS_CSV = os.path.join(STOCK_OVERVIEW_DIR, "price_targets.csv")
+RECO_CSV    = os.path.join(STOCK_OVERVIEW_DIR, "recommendations.csv")
+
+# Ticker
+TICKERS = [t.strip().upper() for t in os.getenv("WALLENSTEIN_TICKERS", "NVDA,AMZN,SMCI").split(",") if t.strip()]
+
+# Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+# --- Projekt‑Module ---
+from wallenstein.stock_data import update_prices
+from wallenstein.db_utils import ensure_prices_view, get_latest_prices_auto
+from wallenstein.stock_data import update_prices, update_fx_rates
+from wallenstein.db_utils import ensure_prices_view, get_latest_prices
+
+# ---------- Utils ----------
+def send_telegram(text: str) -> None:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        log.warning("Telegram nicht konfiguriert – Nachricht nicht gesendet.")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=15)
+        if r.ok:
+            try:
+                data = r.json()
+                mid = data.get("result", {}).get("message_id")
+            except Exception:
+                mid = "n/a"
+            log.info(f"Telegram OK → message_id={mid}")
+        else:
+            log.warning(f"Telegram API {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        log.error(f"Telegram SendError: {e}")
+
+def export_csv_targets(path: str, rows: List[dict]) -> None:
+    cols = ["timestamp_utc","ticker","price","target_low","target_mean","target_high","rec_text","rec_mean"]
+    pd.DataFrame(rows, columns=cols).to_csv(path, index=False, encoding="utf-8")
+
+def export_csv_recommendations(path: str, rows: List[dict]) -> None:
+    cols = ["timestamp_utc","ticker","price","target_low","target_mean","target_high",
+            "rec_text","rec_mean","broker_sig","reddit_score","combined_score","recommendation"]
+    pd.DataFrame(rows, columns=cols).to_csv(path, index=False, encoding="utf-8")
+
+def simple_recommendation(price: Optional[float]) -> str:
+    # Ohne Analysten/Reddit: neutral
+    return "Hold" if price is not None else "n/a"
+
+# ---------- Main ----------
+def main() -> int:
+    t0 = time.time()
+    log.info("🚀 Start Wallenstein: Pipeline-Run")
+
+    # 1) Kursdaten updaten (DB -> prices)
+    try:
+        added = update_prices(DB_PATH, TICKERS)
+        if added:
+            log.info(f"✅ Kursdaten aktualisiert: +{added} neue Zeilen")
+    except Exception as e:
+        log.error(f"❌ Kursupdate fehlgeschlagen: {e}")
+
+    # 2) View aktualisieren & aktuelle Preise laden
+    try:
+        _ = ensure_prices_view(DB_PATH)
+    except Exception as e:
+        log.warning(f"View-Erstellung fehlgeschlagen/übersprungen: {e}")
+
+    current_prices: Dict[str, Optional[float]] = {}
+    try:
+        current_prices = get_latest_prices_auto(DB_PATH, TICKERS)
+    except Exception as e:
+        log.error(f"❌ Lesen aktueller Preise fehlgeschlagen: {e}")
+        current_prices = {}
+
+    log.info(f"ℹ️ Aktuelle Preise: {current_prices}")
+
+        # 1) Kursdaten (USD) updaten
+    added = update_prices(DB_PATH, TICKERS)
+    # 1b) FX EURUSD updaten
+    fx_added = update_fx_rates(DB_PATH)
+    log.info(f"FX-Update: +{fx_added} neue EURUSD-Zeilen")
+    ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
+    prices_usd = get_latest_prices(DB_PATH, TICKERS, use_eur=False)
+    prices_eur = get_latest_prices(DB_PATH, TICKERS, use_eur=True)
+    log.info(f"USD: {prices_usd} | EUR: {prices_eur}")
+   
+    send_telegram(
+    "📊 Wallenstein Preise\n" +
+    "\n".join(
+        f"{t}: {prices_usd.get(t):.2f} USD | {prices_eur.get(t):.2f} EUR"
+        if prices_usd.get(t) is not None and prices_eur.get(t) is not None
+        else f"{t}: n/a"
+        for t in TICKERS
+    )
+)
+
+    # 3) CSV-Exporte (ohne Analysten – Platzhalterwerte)
+    now_utc = int(time.time())
+    targets_rows, reco_rows = [], []
+
+    for t in TICKERS:
+        price = current_prices.get(t)
+        targets_rows.append({
+            "timestamp_utc": now_utc,
+            "ticker": t,
+            "price": price,
+            "target_low": None,
+            "target_mean": None,
+            "target_high": None,
+            "rec_text": None,
+            "rec_mean": None,
+        })
+        reco_rows.append({
+            "timestamp_utc": now_utc,
+            "ticker": t,
+            "price": price,
+            "target_low": None,
+            "target_mean": None,
+            "target_high": None,
+            "rec_text": None,
+            "rec_mean": None,
+            "broker_sig": 0.0,
+            "reddit_score": 0.0,
+            "combined_score": 0.0,
+            "recommendation": simple_recommendation(price),
+        })
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, ValueError):
-        print(f"⚠️ Fehler beim Lesen von {file_path}. Datei wird zurückgesetzt.")
-        data = []
-
-    if not data:
-        print(f"⚠️ {file_path} ist leer oder ungültig!")
-        return []
-
-    cutoff_timestamp = (datetime.now(timezone.utc) - timedelta(days=DATA_RETENTION_DAYS)).timestamp()
-    filtered_data = [item for item in data if float(item.get("date", 0)) >= cutoff_timestamp]
-
-    if filtered_data != data:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(filtered_data, f, indent=4, default=lambda o: int(o) if isinstance(o, np.integer) else o)
-
-    return filtered_data
-
-def main():
-    spreadsheet = open_google_sheet()
+        export_csv_targets(TARGETS_CSV, targets_rows)
+        log.info(f"✅ price_targets.csv exportiert → {TARGETS_CSV}")
+    except Exception as e:
+        log.error(f"❌ Export price_targets.csv fehlgeschlagen: {e}")
 
     try:
-        spreadsheet.del_worksheet(spreadsheet.worksheet("stocksOverview"))
-    except gspread.exceptions.WorksheetNotFound:
-        pass
-    overview_worksheet = spreadsheet.add_worksheet(title="stocksOverview", rows="500", cols="20")
-
-    print("🔄 Aktualisiere Reddit-Daten...")
-    update_reddit_data()
-    reddit_data_file = "reddit_data.json"
-    all_posts = clean_old_data(reddit_data_file)
-
-    print(f"✅ {len(all_posts)} aktuelle Reddit-Posts geladen.")
-
-    stocks = ["NVDA", "AAPL", "TSLA", "MSFT", "RHM.DE", "GOOGL"]
-
-    sentiment_rows = []
-    
-    for post in all_posts:
-        dt_day = datetime.fromtimestamp(float(post["date"]), timezone.utc).date()
-        full_text = (post["title"] or "") + " " + (post["text"] or "") + " ".join(post.get("comments", []))
-
-        matched_stocks = []
-        for stock_name in stocks:
-            if any(alias.lower() in full_text.lower() for alias in global_synonyms.get(stock_name, [stock_name])):  
-                matched_stocks.append(stock_name)
-
-        if matched_stocks:
-            val = analyze_sentiment(full_text)
-            for stock_name in matched_stocks:
-                sentiment_rows.append({"Date": dt_day, "Stock": stock_name, "Sentiment": val})
-
-    df_sentiment = pd.DataFrame(sentiment_rows)
-
-    if not df_sentiment.empty:
-        df_sentiment["Date"] = pd.to_datetime(df_sentiment["Date"])
-        df_sentiment = df_sentiment.groupby(["Date", "Stock"]).mean().reset_index()
-    else:
-        df_sentiment = pd.DataFrame(columns=["Date", "Stock", "Sentiment"])
-
-    overview_data = []
-    stock_charts = []
-
-    for stock_name in stocks:
-        print(f"\n📊 Analysiere {stock_name}...")
-
-        try:
-            worksheet = spreadsheet.worksheet(stock_name)
-        except gspread.exceptions.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=stock_name, rows="500", cols="20")
-
-        stock_data = get_stock_data(stock_name, update_cache=True)
-
-        if stock_data.empty:
-            print(f"⚠️ Keine Börsendaten für {stock_name} – überspringe.")
-            continue
-
-        stock_data["Date"] = pd.to_datetime(stock_data["Date"]).dt.date
-
-        if "High" in stock_data.columns and "Low" in stock_data.columns:
-            stock_data["Volatility"] = stock_data["High"] - stock_data["Low"]
-        else:
-            print(f"⚠️ Spalten 'High' und 'Low' fehlen – Volatility kann nicht berechnet werden.")
-            stock_data["Volatility"] = np.nan
-
-        stock_data = stock_data.groupby("Date").agg({
-            "Close": "last", "High": "max", "Low": "min", "Volatility": "mean"
-        }).reset_index()
-
-        df_sentiment_stock = df_sentiment[df_sentiment["Stock"] == stock_name].drop(columns=["Stock"], errors="ignore")
-        df_sentiment_stock["Date"] = pd.to_datetime(df_sentiment_stock["Date"]).dt.strftime("%Y-%m-%d")
-        stock_data["Date"] = pd.to_datetime(stock_data["Date"]).dt.strftime("%Y-%m-%d")
-
-        latest_stock_date = stock_data["Date"].max()
-        df_sentiment_stock = df_sentiment_stock[df_sentiment_stock["Date"] <= latest_stock_date]
-        df_temp = pd.merge(stock_data, df_sentiment_stock, on="Date", how="left")
-        df_temp["Stock"] = stock_name  # 🔥 Stock-Spalte wieder hinzufügen
-
-        if 'df_combined' in locals():
-            df_combined = pd.concat([df_combined, df_temp], ignore_index=True)  # 🔥 Daten für alle Aktien speichern
-        else:
-            df_combined = df_temp.copy()  # Erste Initialisierung
-
-
-        df_combined["Sentiment"] = df_combined["Sentiment"].fillna(0)
-
-        df_combined["Close_lag1"] = df_combined["Close"].shift(1)
-        df_combined["Sentiment_lag1"] = df_combined["Sentiment"].shift(1)
-        df_combined["y"] = (df_combined["Close"] > df_combined["Close_lag1"]).astype(int)
-        df_combined.dropna(inplace=True)
-
-        print(f"📌 Letzte 10 Zeilen von Close, Close_lag1 und y für {stock_name}:")
-        print(df_combined[["Close", "Close_lag1", "y"]].tail(10))
-
-        train_size = int(len(df_combined) * 0.8)
-        df_train = df_combined.iloc[:train_size]
-        df_test = df_combined.iloc[train_size:]
-
-        X_train = df_train[["Close_lag1", "Sentiment_lag1"]]
-        y_train = df_train["y"]
-        X_test = df_test[["Close_lag1", "Sentiment_lag1"]]
-        y_test = df_test["y"]
-
-        unique_classes, counts = np.unique(y_train, return_counts=True)
-        print(f"📌 y_train Klassenverteilung für {stock_name}: {dict(zip(unique_classes, counts))}")
-
-        if len(unique_classes) < 2:
-            print(f"⚠️ Zu wenig Klassen in y_train für {stock_name} (nur {unique_classes[0]}), überspringe Modell-Training.")
-            accuracy = None
-        else:
-            model = LogisticRegression()
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            accuracy = accuracy_score(y_test, y_pred)
-            print(f"🔍 {stock_name}: Modell-Accuracy: {accuracy:.2%}")
-
-        df_stock = df_combined[df_combined["Stock"] == stock_name]  # 🔥 Filtere nur die Daten der aktuellen Aktie
-
-        if df_stock.empty:
-            print(f"⚠️ Keine Daten für {stock_name}, Überspringe Google Sheets Update.")
-        else:
-            worksheet.update([df_stock.columns.tolist()] + df_stock.fillna(0).values.tolist())
-            print(f"✅ Daten für {stock_name} erfolgreich in Google Sheets aktualisiert.")
-
-
-        stock_charts.append((overview_worksheet, stock_name, df_combined["Close"].min() * 0.95, df_combined["Close"].max() * 1.05))
-        overview_data.append([stock_name, df_combined["Close"].iloc[-1], df_combined["Sentiment"].iloc[-1], accuracy])
-
-    overview_worksheet.update([["Stock", "Last Close", "Last Sentiment", "Accuracy"]] + overview_data)
-    for stock_name in stocks:
-        print(f"📊 Erstelle Diagramm für {stock_name} in stocksOverview...")
-
-        # 🔥 Korrekte Daten nur für die aktuelle Aktie filtern
-        df_stock = df_combined[df_combined["Stock"] == stock_name].copy()
-
-        if df_stock.empty:
-            print(f"⚠️ Keine Daten für {stock_name}, Diagramm übersprungen.")
-            continue
-
-        print(f"📌 Daten für {stock_name} zur Diagrammerstellung:")
-        print(df_stock[["Date", "Stock", "Close"]].tail())  # Debugging: Zeigt letzte Werte
-
-        try:
-            # 🔥 Stelle sicher, dass create_chart NUR die Daten der jeweiligen Aktie nutzt
-            create_chart(
-                worksheet=overview_worksheet, 
-                stock_name=stock_name, 
-                min_value=df_stock["Close"].min() * 0.95, 
-                max_value=df_stock["Close"].max() * 1.05,
-                df=df_stock  # NUR die aktuelle Aktie übergeben
-            )
-            print(f"✅ Diagramm für {stock_name} erfolgreich erstellt.")
-        except Exception as e:
-            print(f"⚠️ Fehler beim Erstellen des Diagramms für {stock_name}: {e}")
-
-    print("📊 Gesamtübersicht und Charts aktualisiert!")
-    print("\n🚀 Alle Analysen abgeschlossen!\n")
+        export_csv_recommendations(RECO_CSV, reco_rows)
+        log.info(f"✅ recommendations.csv exportiert → {RECO_CSV}")
+    except Exception as e:
+        log.error(f"❌ Export recommendations.csv fehlgeschlagen: {e}")
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
