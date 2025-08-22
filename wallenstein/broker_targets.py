@@ -79,7 +79,11 @@ def _finnhub_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return r.json()
     except ValueError as e:
+ codex/normalize-and-log-finnhub-response-snippet-ggbtlc
+        snippet = " ".join(r.text.split())[:200]  # normalize and truncate
+
         snippet = " ".join(r.text.split())[:200]
+ main
         log.error("Finnhub JSON decode failed [%s]: %s", r.status_code, snippet)
         raise FinnhubResponseError(r.status_code, snippet) from e
 

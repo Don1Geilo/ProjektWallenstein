@@ -102,9 +102,19 @@ def main() -> int:
                 if "error" in s:
                     lines.append(f"{s.get('ticker')}: {s['error']}")
                 else:
+codex/normalize-and-log-finnhub-response-snippet-ggbtlc
+                    mean = s.get("target_mean")
+                    high = s.get("target_high")
+                    low = s.get("target_low")
+                    lines.append(
+                        f"{s.get('ticker')}: mean {mean if mean is not None else 'n/a'} "
+                        f"high {high if high is not None else 'n/a'} "
+                        f"low {low if low is not None else 'n/a'}"
+
                     lines.append(
                         f"{s.get('ticker')}: mean {s.get('target_mean', 'n/a')} "
                         f"high {s.get('target_high', 'n/a')} low {s.get('target_low', 'n/a')}"
+ main
                     )
             send_telegram("🎯 Broker Price Targets\n" + "\n".join(lines))
     except Exception as e:
