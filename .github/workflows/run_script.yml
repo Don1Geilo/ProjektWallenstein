@@ -1,51 +1,102 @@
-name: Automatische Aktienanalyse
+name: Wallenstein Pipeline
 
 on:
+  workflow_dispatch: {}
   schedule:
-    - cron: '0 9 * * *'  # Läuft jeden Tag um 9:00 UTC
-  workflow_dispatch:  # Manuelles Starten erlaubt
+    # 07:05 Europe/Berlin (Actions läuft in UTC)
+    - cron: "5 6 * * 1-5"
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+  TZ: "Europe/Berlin"
+  WALLENSTEIN_DB_PATH: data/wallenstein.duckdb
+  # Backoff/Sleep für Rate-Limits (liest dein Code implizit; notfalls bei fetch_many nutzen)
+  WALLENSTEIN_YF_SLEEP: "0.6"
 
 jobs:
-  run-script:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+
+    concurrency:
+      group: wallenstein-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
-      - name: Repository klonen
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Python 3.11 installieren
-        uses: actions/setup-python@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            **/requirements.txt
 
-      - name: Abhängigkeiten installieren + NLTK-Setup
+      - name: Install dependencies
         run: |
             python -m pip install --upgrade pip
             pip install -r requirements.txt
-            python -m nltk.downloader vader_lexicon punkt
-        
 
-      - name: Google API Keyfile wiederherstellen
-        run: echo "${{ secrets.GOOGLE_API_KEYFILE_B64 }}" | base64 --decode > Google_API.json
-
-      - name: Setze Umgebungsvariablen für Reddit API & Google Sheets
+      - name: Prepare folders
         run: |
-          echo "CLIENT_ID=${{ secrets.CLIENT_ID }}" >> $GITHUB_ENV
-          echo "CLIENT_SECRET=${{ secrets.CLIENT_SECRET }}" >> $GITHUB_ENV
-          echo "USER_AGENT=${{ secrets.USER_AGENT }}" >> $GITHUB_ENV
-          echo "GOOGLE_API_KEYFILE=Google_API.json" >> $GITHUB_ENV
-          echo "GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}" >> $GITHUB_ENV
+          mkdir -p data stockOverview
 
-      - name: Skript ausführen
-        run: python main.py
-
-      - name: Änderungen committen (reddit_data.json)
+      - name: Export env from Secrets
+        # Wir schreiben KEINE .env-Datei — main.py liest direkt os.getenv(...).
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git pull origin ${{ github.ref_name }} || echo "Kein Pull nötig"
-          git add reddit_data.json || echo "Keine Datei zum Hinzufügen"
-          git commit -m "🤖 Update reddit_data.json (auto)" || echo "Keine Änderungen zum Committen"
-          git push origin HEAD:${{ github.ref_name }} || echo "Push fehlgeschlagen oder unnötig"
+          echo "Env ready"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          REDDIT_CLIENT_ID:   ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USER_AGENT:  ${{ secrets.REDDIT_USER_AGENT }}
+
+      - name: Run Wallenstein (with retries)
+        id: run_wallenstein
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          REDDIT_CLIENT_ID:   ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USER_AGENT:  ${{ secrets.REDDIT_USER_AGENT }}
+        run: |
+          set -e
+          echo "Start Wallenstein…"
+          # Einfacher 3x-Retry, falls yfinance kurz ratelimited:
+          n=0
+          until [ $n -ge 3 ]
+          do
+            python main.py && break
+            n=$((n+1))
+            echo "Run failed ($n). Sleeping & retrying…"
+            sleep $((30*n))
+          done
+
+      - name: Upload CSV artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stockOverview-${{ github.run_id }}
+          path: |
+            stockOverview/*.csv
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Persist DuckDB (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: duckdb-${{ github.run_id }}
+          path: data/*.duckdb
+          if-no-files-found: warn
+          retention-days: 3
