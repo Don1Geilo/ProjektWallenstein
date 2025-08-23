@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -13,6 +15,13 @@ from wallenstein.sentiment import (
     aggregate_sentiment_by_ticker,
     derive_recommendation,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_bert(monkeypatch):
+    """Use keyword sentiment by default for tests."""
+
+    monkeypatch.setenv("USE_BERT_SENTIMENT", "0")
 
 def test_analyze_sentiment_keywords():
     text = "I'm going long and want to buy more calls, not sell"

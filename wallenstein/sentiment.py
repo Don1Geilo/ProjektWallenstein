@@ -5,8 +5,29 @@ allowing rudimentary multilingual sentiment detection."""
 
 from __future__ import annotations
 
+import importlib.util
+import logging
 import os
 from typing import Dict, Iterable
+
+
+logger = logging.getLogger(__name__)
+_keyword_hint_logged = False
+
+
+def _transformers_available() -> bool:
+    """Return ``True`` if the ``transformers`` package can be imported."""
+
+    return importlib.util.find_spec("transformers") is not None
+
+
+def _log_keyword_hint(message: str = "Using keyword-based sentiment analysis") -> None:
+    """Log ``message`` once to inform about fallback behaviour."""
+
+    global _keyword_hint_logged
+    if not _keyword_hint_logged:
+        logger.info(message)
+        _keyword_hint_logged = True
 
 # Intensifiers and negation markers used to enrich the keyword map
 INTENSITY_WEIGHTS: Dict[str, int] = {
@@ -35,6 +56,8 @@ KEYWORD_SCORES: Dict[str, int] = {
     "kaufen": 1,
     "kauf": 1,
     "bullisch": 1,
+    "moon": 1,
+    "pump": 1,
     # negative
     "short": -1,
     "put": -1,
@@ -43,6 +66,8 @@ KEYWORD_SCORES: Dict[str, int] = {
     "sell": -1,
     "verkaufen": -1,
     "bärisch": -1,
+    "dip": -1,
+    "dump": -1,
 }
 
 # extend keyword scores with simple intensity phrases and negated forms
@@ -150,13 +175,31 @@ def analyze_sentiment_bert(text: str) -> float:
 def analyze_sentiment(text: str) -> float:
     """Return a sentiment score for ``text``.
 
-    The function defaults to a lightweight keyword approach but can switch to a
-    BERT based model when the ``USE_BERT_SENTIMENT`` environment variable is
-    set to a truthy value.
+    The function prefers a BERT model when available. Users can explicitly
+    select the method via the ``USE_BERT_SENTIMENT`` environment variable.
+    Truthy values force the BERT model, falsy values enforce the keyword
+    approach.  When unspecified the function automatically uses BERT if the
+    :mod:`transformers` package is installed, otherwise it falls back to the
+    keyword based implementation and logs an informational hint.
     """
 
-    if os.getenv("USE_BERT_SENTIMENT", "").lower() in {"1", "true", "yes"}:
-        return analyze_sentiment_bert(text)
+    use_env = os.getenv("USE_BERT_SENTIMENT")
+    if use_env is not None:
+        if use_env.lower() in {"1", "true", "yes"}:
+            try:
+                return analyze_sentiment_bert(text)
+            except Exception:  # pragma: no cover - defensive
+                _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
+        else:
+            _log_keyword_hint("Keyword sentiment forced via USE_BERT_SENTIMENT")
+    else:
+        if _transformers_available():
+            try:
+                return analyze_sentiment_bert(text)
+            except Exception:  # pragma: no cover - defensive
+                _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
+        else:
+            _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
 
     text = apply_negation(text.lower())
     tokens = text.split()
