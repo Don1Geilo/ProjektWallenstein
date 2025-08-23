@@ -4,21 +4,31 @@ from __future__ import annotations
 
 from typing import Dict, Iterable
 
+# keyword -> sentiment score mapping used by :func:`analyze_sentiment`
+KEYWORD_SCORES: Dict[str, int] = {
+    "long": 1,
+    "call": 1,
+    "bull": 1,
+    "bullish": 1,
+    "short": -1,
+    "put": -1,
+    "bear": -1,
+    "bearish": -1,
+}
+
 
 def analyze_sentiment(text: str) -> float:
-    """Return a dummy sentiment score for ``text``.
+    """Return a simplistic sentiment score for ``text``.
 
-    The function flags positive sentiment when the words ``"long"`` or
-    ``"call"`` are present and negative sentiment for ``"short"`` or
-    ``"put"``.
+    Positive sentiment is counted for occurrences of ``"long"``, ``"call"``,
+    ``"bull"`` or ``"bullish"`` while ``"short"``, ``"put"``, ``"bear`` and
+    ``"bearish"`` contribute negative sentiment.
     """
 
     text = text.lower()
     score = 0
-    if "long" in text or "call" in text:
-        score += 1
-    if "short" in text or "put" in text:
-        score -= 1
+    for keyword, value in KEYWORD_SCORES.items():
+        score += text.count(keyword) * value
     return score
 
 
