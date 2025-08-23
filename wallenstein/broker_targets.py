@@ -99,18 +99,16 @@ def _parse_price_target_item(item: Dict[str, Any]) -> Dict[str, Optional[float]]
                 return item[k]
         return None
 
+    mean_keys = (
+        "targetConsensus",
+        "priceTargetAverage",
+        "priceTarget",
+        "targetPrice",
+        "targetMean",
+    )
+
     return {
-        "target_mean": _pos(
-            _sf(
-                _first(
-                    "targetConsensus",
-                    "priceTargetAverage",
-                    "priceTarget",
-                    "targetPrice",
-                    "targetMean",
-                )
-            )
-        ),
+        "target_mean": _pos(_sf(_first(*mean_keys))),
         "target_high": _pos(
             _sf(_first("targetHigh", "priceTargetHigh", "targetPriceHigh"))
         ),
