@@ -8,3 +8,5 @@ nltk
 python-dotenv
 scikit-learn
 pandas-datareader
+transformers
+torch

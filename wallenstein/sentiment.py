@@ -5,6 +5,7 @@ allowing rudimentary multilingual sentiment detection."""
 
 from __future__ import annotations
 
+import os
 from typing import Dict, Iterable
 
 # keyword -> sentiment score mapping used by :func:`analyze_sentiment`
@@ -34,6 +35,38 @@ KEYWORD_SCORES: Dict[str, int] = {
     "verkaufen": -1,
     "bärisch": -1,
 }
+
+
+class BertSentiment:
+    """Sentiment analyzer backed by HuggingFace models.
+
+    The underlying pipeline is instantiated lazily on first use. The model is
+    chosen via the ``SENTIMENT_BACKEND`` environment variable which accepts
+    ``"finbert"`` (default) or ``"de-bert"`` for a German model.
+    """
+
+    _pipe = None
+
+    def __init__(self) -> None:
+        backend = os.getenv("SENTIMENT_BACKEND", "finbert").lower()
+        if backend == "finbert":
+            self.model = "ProsusAI/finbert"
+        elif backend == "de-bert":
+            self.model = "oliverguhr/german-sentiment-bert"
+        else:
+            raise ValueError(f"Unsupported backend: {backend}")
+        self.backend = backend
+
+    @property
+    def pipe(self):  # pragma: no cover - heavy model
+        if self._pipe is None:
+            from transformers import pipeline
+
+            self._pipe = pipeline("sentiment-analysis", model=self.model)
+        return self._pipe
+
+    def __call__(self, text: str):  # pragma: no cover - heavy model
+        return self.pipe(text)
 
 
 def analyze_sentiment(text: str) -> float:
@@ -97,5 +130,6 @@ __all__ = [
     "analyze_sentiment",
     "aggregate_sentiment_by_ticker",
     "derive_recommendation",
+    "BertSentiment",
 ]
 
