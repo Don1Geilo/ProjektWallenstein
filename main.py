@@ -87,7 +87,8 @@ def main() -> int:
     for ticker, texts in reddit_posts.items():
         texts = list(texts)
         if texts:
-            scores = [analyze_sentiment(t) for t in texts]
+            # update_reddit_data returns dicts with keys {"created_utc", "text"}
+            scores = [analyze_sentiment(t["text"]) for t in texts]
             sentiments[ticker] = sum(scores) / len(scores)
         else:
             sentiments[ticker] = 0.0
