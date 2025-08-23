@@ -1,9 +1,16 @@
 from pathlib import Path
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import wallenstein.broker_targets as bt
+
+
+@pytest.fixture
+def api_key():
+    return "test-key"
 
 
 def test_fmp_get_request_is_made_once_with_api_key(requests_mock, monkeypatch):
