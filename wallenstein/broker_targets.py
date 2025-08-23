@@ -127,7 +127,16 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
     }
 
     data = _fmp_get("price-target-consensus", {"symbol": ticker})
+    fallback_used = False
+    if (isinstance(data, dict) and data.get("error")) or not data:
+        msg = data.get("error") if isinstance(data, dict) else "empty response"
+        log.warning(f"[{ticker}] price-target-consensus {msg}; falling back to price-target")
+        data = _fmp_get("price-target", {"symbol": ticker})
+        fallback_used = True
+
     if isinstance(data, dict) and data.get("error"):
+        if fallback_used:
+            log.warning(f"[{ticker}] price-target fallback failed: {data['error']}")
         return data
 
     try:
@@ -155,10 +164,11 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
 
 def _fmp_price_targets(tickers: List[str]) -> Dict[str, Dict[str, Any]]:
     """Fetch price targets for multiple tickers with a single API call."""
-
     data = _fmp_get("price-target-consensus", {"symbol": ",".join(tickers)})
-    if isinstance(data, dict) and data.get("error"):
-        return {t: {"error": data["error"]} for t in tickers}
+    if (isinstance(data, dict) and data.get("error")) or not data:
+        msg = data.get("error") if isinstance(data, dict) else "empty response"
+        log.warning(f"price-target-consensus bulk {msg}; falling back to per-ticker requests")
+        return {t: _fmp_price_target(t) for t in tickers}
     if isinstance(data, dict):
         data = [data]
 
