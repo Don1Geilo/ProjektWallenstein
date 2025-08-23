@@ -100,10 +100,26 @@ def _parse_price_target_item(item: Dict[str, Any]) -> Dict[str, Optional[float]]
         return None
 
     return {
-        "target_mean": _pos(_sf(_first("targetConsensus", "priceTargetAverage"))),
-        "target_high": _pos(_sf(_first("targetHigh", "priceTargetHigh"))),
-        "target_low": _pos(_sf(_first("targetLow", "priceTargetLow"))),
-        "target_median": _pos(_sf(_first("targetMedian", "priceTargetMedian"))),
+        "target_mean": _pos(
+            _sf(
+                _first(
+                    "targetConsensus",
+                    "priceTargetAverage",
+                    "priceTarget",
+                    "targetPrice",
+                    "targetMean",
+                )
+            )
+        ),
+        "target_high": _pos(
+            _sf(_first("targetHigh", "priceTargetHigh", "targetPriceHigh"))
+        ),
+        "target_low": _pos(
+            _sf(_first("targetLow", "priceTargetLow", "targetPriceLow"))
+        ),
+        "target_median": _pos(
+            _sf(_first("targetMedian", "priceTargetMedian", "targetPriceMedian"))
+        ),
     }
 
 
