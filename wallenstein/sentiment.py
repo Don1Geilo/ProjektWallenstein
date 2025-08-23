@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Dict, Iterable
+
+import pandas as pd
+
+from .stock_keywords import global_synonyms
 
 # keyword -> sentiment score mapping used by :func:`analyze_sentiment`
 KEYWORD_SCORES: Dict[str, int] = {
@@ -74,9 +79,60 @@ def derive_recommendation(score: float) -> str:
     return "Hold"
 
 
+def build_daily_sentiment(posts: Iterable[dict], tickers: Iterable[str]) -> pd.DataFrame:
+    """Return average daily sentiment for ``tickers`` based on ``posts``.
+
+    Each post may contain ``title``, ``text`` and optionally ``comments``. The
+    post timestamp can be provided via ``created_utc`` (datetime or timestamp)
+    or ``date`` (timestamp).  Posts are matched to tickers using
+    :data:`global_synonyms` and scored with :func:`analyze_sentiment`.
+    """
+
+    rows = []
+    for post in posts:
+        ts = post.get("created_utc") or post.get("date")
+        try:
+            if isinstance(ts, datetime):
+                day = ts.date()
+            else:
+                day = datetime.fromtimestamp(float(ts), tz=timezone.utc).date()
+        except Exception:
+            continue
+
+        title = post.get("title") or ""
+        text = post.get("text") or ""
+        comments = post.get("comments", [])
+        if not isinstance(comments, list):
+            comments = []
+        full_text = f"{title} {text} " + " ".join(map(str, comments))
+        lowered = full_text.lower()
+
+        matched = [
+            t
+            for t in tickers
+            if any(alias.lower() in lowered for alias in global_synonyms.get(t, [t]))
+        ]
+        if not matched:
+            continue
+
+        val = analyze_sentiment(full_text)
+        for t in matched:
+            rows.append({"Date": day, "Stock": t, "Sentiment": val})
+
+    if not rows:
+        return pd.DataFrame(columns=["Date", "Stock", "Sentiment"])
+
+    df = pd.DataFrame(rows)
+    df["Date"] = pd.to_datetime(df["Date"])
+    return (
+        df.groupby(["Date", "Stock"], as_index=False)["Sentiment"].mean()
+    )
+
+
 __all__ = [
     "analyze_sentiment",
     "aggregate_sentiment_by_ticker",
     "derive_recommendation",
+    "build_daily_sentiment",
 ]
 

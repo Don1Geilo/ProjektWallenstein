@@ -46,7 +46,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # --- Projekt‑Module ---
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
-from wallenstein.sentiment import analyze_sentiment, derive_recommendation
+from wallenstein.sentiment import build_daily_sentiment, derive_recommendation
 
 
 # ---------- Main ----------
@@ -83,15 +83,15 @@ def main() -> int:
     prices_usd = get_latest_prices(DB_PATH, TICKERS, use_eur=False)
     log.info(f"USD: {prices_usd}")
 
+    all_posts = [p for posts in reddit_posts.values() for p in posts]
+    df_sentiment = build_daily_sentiment(all_posts, TICKERS)
     sentiments = {}
-    for ticker, texts in reddit_posts.items():
-        texts = list(texts)
-        if texts:
-            # update_reddit_data returns dicts with keys {"created_utc", "text"}
-            scores = [analyze_sentiment(t["text"]) for t in texts]
-            sentiments[ticker] = sum(scores) / len(scores)
+    for t in TICKERS:
+        df_t = df_sentiment[df_sentiment["Stock"] == t]
+        if not df_t.empty:
+            sentiments[t] = df_t.sort_values("Date")["Sentiment"].iloc[-1]
         else:
-            sentiments[ticker] = 0.0
+            sentiments[t] = 0.0
 
     price_lines = []
     sentiment_lines = []
