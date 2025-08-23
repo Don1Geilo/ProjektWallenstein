@@ -36,3 +36,17 @@ def test_company_name_bucketed(monkeypatch):
     assert len(out["AMZN"]) == 1
     assert "nvidia" in out["NVDA"][0]["text"].lower()
     assert "amazon" in out["AMZN"][0]["text"].lower()
+
+
+def test_aliases_loaded_from_file():
+    import json, importlib
+
+    alias_path = ROOT / "data" / "ticker_aliases.json"
+    original = alias_path.read_text()
+    try:
+        alias_path.write_text(json.dumps({"XYZ": ["some corp"]}))
+        importlib.reload(reddit_scraper)
+        assert "some corp" in reddit_scraper.TICKER_NAME_MAP["XYZ"]
+    finally:
+        alias_path.write_text(original)
+        importlib.reload(reddit_scraper)
