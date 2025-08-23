@@ -243,10 +243,12 @@ def update_reddit_data(
                 "CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)"
             )
             con.register("df_all", df_all)
-            con.execute(
+            cur = con.execute(
                 "INSERT INTO reddit_posts SELECT * FROM df_all ON CONFLICT(id) DO NOTHING"
             )
-        log.info(f"Wrote {len(df_all)} posts to reddit_posts")
+        log.info(
+            f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
+        )
 
     # Alte Einträge entfernen
     purge_old_posts()
