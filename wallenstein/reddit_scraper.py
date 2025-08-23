@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 import duckdb
@@ -17,6 +17,9 @@ log = logging.getLogger("wallenstein.reddit")
 
 # Gemeinsamer DB-Pfad (ENV erlaubt Override, sonst Default)
 DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "wallenstein.duckdb")
+
+# Anzahl Tage, die Posts in der Datenbank behalten werden
+DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", "30"))
 
 # ----------------------------
 # Bestehende Funktion von dir
@@ -81,6 +84,20 @@ def _post_matches_ticker(title: str, body: str, patterns: List[re.Pattern]) -> b
     return False
 
 
+def purge_old_posts() -> None:
+    """Remove posts older than ``DATA_RETENTION_DAYS`` from the database."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=DATA_RETENTION_DAYS)
+    with duckdb.connect(DB_PATH) as con:
+        try:
+            con.execute(
+                "DELETE FROM reddit_posts WHERE created_utc < ?",
+                [cutoff],
+            )
+        except Exception:
+            # Tabelle existiert noch nicht – dann gibt es nichts zu löschen
+            pass
+
+
 # -------------------------------------------------------
 # Öffentliche API: erwartet dein main.py
 # -------------------------------------------------------
@@ -91,9 +108,10 @@ def update_reddit_data(
 ) -> Dict[str, List[dict]]:
     """Scrape, persist and organise Reddit posts.
 
-    Posts from every subreddit are combined into a single DataFrame before the
-    ``reddit_posts`` table is replaced.  This ensures the database only holds a
-    consistent snapshot.  Returns a mapping such as
+    Posts from every subreddit are combined into a single DataFrame before new
+    entries are merged into the ``reddit_posts`` table.  Afterwards, rows older
+    than ``DATA_RETENTION_DAYS`` are purged to keep the table small.  Returns a
+    mapping such as
     ``{"NVDA": [{"created_utc": <timestamp>, "text": "..."}, ...]}`` where each
     entry contains the post timestamp and text.
     """
@@ -113,18 +131,22 @@ def update_reddit_data(
         df_all = pd.concat(frames, ignore_index=True)
         df_all.drop_duplicates(subset="id", inplace=True)
         with duckdb.connect(DB_PATH) as con:
-            con.execute("""
+            con.execute(
+                """
                 CREATE TABLE IF NOT EXISTS reddit_posts (
-                    id VARCHAR,
+                    id VARCHAR PRIMARY KEY,
                     title VARCHAR,
                     created_utc TIMESTAMP,
                     text VARCHAR
                 )
-            """)
-            con.execute("DELETE FROM reddit_posts")
+                """
+            )
             con.register("df_all", df_all)
-            con.execute("INSERT INTO reddit_posts SELECT * FROM df_all")
+            con.execute("INSERT OR REPLACE INTO reddit_posts SELECT * FROM df_all")
         log.info(f"Wrote {len(df_all)} posts to reddit_posts")
+
+    # Alte Einträge entfernen
+    purge_old_posts()
 
     # 2) Posts aus DB lesen
     df = _load_posts_from_db()
