@@ -38,11 +38,16 @@ TICKER_NAME_MAP: Dict[str, List[str]] = {
 # ----------------------------
 # Bestehende Funktion von dir
 # ----------------------------
-def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd.DataFrame:
+def fetch_reddit_posts(
+    subreddit: str = "wallstreetbets", limit: int = 50, top_comments: int = 0
+) -> pd.DataFrame:
     """Return hot posts from ``subreddit`` as a ``DataFrame``.
 
     Only interacts with the Reddit API; no database reads or writes occur here.
     Callers can persist the resulting frame if needed.
+
+    When ``top_comments`` is > 0, up to that many hottest comments per post are
+    retrieved and returned in a separate ``comments`` column.
     """
 
     reddit = praw.Reddit(
@@ -53,12 +58,26 @@ def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd
 
     posts = []
     for post in reddit.subreddit(subreddit).hot(limit=limit):
-        posts.append({
-            "id": post.id,
-            "title": post.title or "",
-            "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
-            "text": post.selftext or "",
-        })
+        comments_txt = ""
+        if top_comments > 0:
+            try:
+                post.comments.replace_more(limit=0)
+                comments_txt = "\n".join(
+                    [c.body or "" for c in post.comments[:top_comments]]
+                )
+            except Exception:
+                # Kommentare sind optional; bei Fehlern ignorieren
+                comments_txt = ""
+
+        posts.append(
+            {
+                "id": post.id,
+                "title": post.title or "",
+                "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
+                "text": post.selftext or "",
+                "comments": comments_txt,
+            }
+        )
 
     return pd.DataFrame(posts)
 
@@ -127,6 +146,7 @@ def update_reddit_data(
     tickers: List[str],
     subreddits: List[str] | None = None,
     limit_per_sub: int = 50,
+    top_comments: int = 3,
 ) -> Dict[str, List[dict]]:
     """Scrape, persist and organise Reddit posts.
 
@@ -138,19 +158,41 @@ def update_reddit_data(
     entry contains the post timestamp and text.
     """
     if not subreddits:
-        subreddits = ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
+        subreddits = [
+            "wallstreetbets",
+            "wallstreetbetsGer",
+            "mauerstrassenwetten",
+            "stockmarket",
+            "investing",
+        ]
+        extra = os.getenv("EXTRA_SUBS", "")
+        if extra:
+            subreddits.extend([s.strip() for s in extra.split(",") if s.strip()])
+        # Duplikate vermeiden
+        subreddits = list(dict.fromkeys(subreddits))
 
     # 1) neue Posts je Subreddit holen (Hot reicht als MVP; kann leicht auf 'new' umgestellt werden)
     frames = []
     for sub in subreddits:
         try:
-            frames.append(fetch_reddit_posts(subreddit=sub, limit=limit_per_sub))
+            frames.append(
+                fetch_reddit_posts(
+                    subreddit=sub, limit=limit_per_sub, top_comments=top_comments
+                )
+            )
         except Exception:
             # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
             pass
 
     if frames:
         df_all = pd.concat(frames, ignore_index=True)
+        if "comments" in df_all.columns:
+            df_all["text"] = (
+                df_all["text"].fillna("")
+                + "\n"
+                + df_all["comments"].fillna("")
+            ).str.strip().str[:2000]
+            df_all.drop(columns=["comments"], inplace=True)
         df_all.drop_duplicates(subset="id", inplace=True)
         with duckdb.connect(DB_PATH) as con:
             con.execute(
