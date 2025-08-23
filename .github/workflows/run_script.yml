@@ -13,6 +13,8 @@ env:
   WALLENSTEIN_DB_PATH: data/wallenstein.duckdb
   # Backoff/Sleep für Rate-Limits (liest dein Code implizit; notfalls bei fetch_many nutzen)
   WALLENSTEIN_YF_SLEEP: "0.6"
+  # Weitere Subreddits, kommasepariert (z. B. "finanzen,de_geld")
+  EXTRA_SUBS: ""
 
 jobs:
   run:
