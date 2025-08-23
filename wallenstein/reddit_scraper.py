@@ -33,19 +33,6 @@ def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd
 
     df = pd.DataFrame(posts)
 
-    with duckdb.connect(DB_PATH) as con:
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS reddit_posts (
-                id VARCHAR,
-                title VARCHAR,
-                created_utc TIMESTAMP,
-                text VARCHAR
-            )
-        """)
-        # einfache "Snapshot"-Strategie: wir überschreiben (wie bei dir)
-        con.execute("DELETE FROM reddit_posts")
-        con.execute("INSERT INTO reddit_posts SELECT * FROM df")
-
     return df
 
 
@@ -95,7 +82,7 @@ def update_reddit_data(tickers: List[str],
     Rückgabe: { "NVDA": ["titel + text", "..."], "AMZN": [...], ... }
     """
     if not subreddits:
-        subreddits = ["wallstreetbets", "stocks", "investing"]
+        subreddits = ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
 
     # 1) neue Posts je Subreddit holen (Hot reicht als MVP; kann leicht auf 'new' umgestellt werden)
     frames = []
@@ -107,9 +94,18 @@ def update_reddit_data(tickers: List[str],
             pass
 
     if frames:
-        # Zuletzt geholter Sub überschreibt DB (wie in fetch_reddit_posts implementiert)
-        # Das ist simpel – für ein echtes Merge könntest du auf UPSERT wechseln.
-        pass
+        df_all = pd.concat(frames, ignore_index=True)
+        with duckdb.connect(DB_PATH) as con:
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS reddit_posts (
+                    id VARCHAR,
+                    title VARCHAR,
+                    created_utc TIMESTAMP,
+                    text VARCHAR
+                )
+            """)
+            con.execute("DELETE FROM reddit_posts")
+            con.execute("INSERT INTO reddit_posts SELECT * FROM df_all")
 
     # 2) Posts aus DB lesen
     df = _load_posts_from_db()
