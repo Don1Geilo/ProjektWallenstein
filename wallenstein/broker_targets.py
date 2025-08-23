@@ -84,6 +84,16 @@ def _fmp_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # FMP specific helpers
 # ---------------------------------------------------------------------------
+def _parse_price_target_item(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    """Map raw FMP price target item to our internal structure."""
+
+    return {
+        "target_mean": _pos(_sf(item.get("targetConsensus"))),
+        "target_high": _pos(_sf(item.get("targetHigh"))),
+        "target_low": _pos(_sf(item.get("targetLow"))),
+    }
+
+
 def _fmp_price_target(ticker: str) -> Dict[str, Any]:
     """Return price targets and recommendation counts for ``ticker``.
 
@@ -102,36 +112,40 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
         "strong_sell": None,
     }
 
-    data = _fmp_get("price-target", {"symbol": ticker})
+    data = _fmp_get("price-target-consensus", {"symbol": ticker})
     if isinstance(data, dict) and data.get("error"):
         return data
 
     try:
-        item = data[0] if isinstance(data, list) and data else {}
-        out["target_mean"] = _pos(
-            _sf(
-                item.get("targetMean")
-                or item.get("priceTargetAverage")
-                or item.get("targetConsensus")
-            )
-        )
-        out["target_high"] = _pos(
-            _sf(item.get("targetHigh") or item.get("priceTargetHigh"))
-        )
-        out["target_low"] = _pos(
-            _sf(item.get("targetLow") or item.get("priceTargetLow"))
-        )
-        out["strong_buy"] = (
-            item.get("strongBuy") or item.get("ratingStrongBuy")
-        )
-        out["buy"] = item.get("buy") or item.get("ratingBuy")
-        out["hold"] = item.get("hold") or item.get("ratingHold")
-        out["sell"] = item.get("sell") or item.get("ratingSell")
-        out["strong_sell"] = (
-            item.get("strongSell") or item.get("ratingStrongSell")
-        )
-    except Exception as e:
+        if isinstance(data, list) and data:
+            item = data[0]
+        elif isinstance(data, dict):
+            item = data
+        else:
+            item = {}
+        out.update(_parse_price_target_item(item))
+    except Exception as e:  # pragma: no cover - defensive
         log.warning(f"[{ticker}] price-target error: {e}")
+    return out
+
+
+def _fmp_price_targets(tickers: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch price targets for multiple tickers with a single API call."""
+
+    data = _fmp_get("price-target-consensus", {"symbol": ",".join(tickers)})
+    if isinstance(data, dict) and data.get("error"):
+        return {t: {"error": data["error"]} for t in tickers}
+    if isinstance(data, dict):
+        data = [data]
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for item in data or []:
+        t = str(item.get("symbol") or item.get("ticker") or "").upper()
+        out[t] = _parse_price_target_item(item)
+
+    # Ensure every requested ticker has an entry
+    for t in tickers:
+        out.setdefault(t, {"target_mean": None, "target_high": None, "target_low": None})
     return out
 
 
@@ -165,17 +179,22 @@ def _compute_rec_text(mean: Optional[float]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def fetch_broker_snapshot(ticker: str) -> Dict[str, Any]:
-    """Fetch a broker snapshot for a single ``ticker`` using FMP."""
+def fetch_broker_snapshot(ticker: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Fetch a broker snapshot for a single ``ticker`` using FMP.
+
+    If ``data`` is provided it must contain the already fetched price target
+    information for ``ticker`` and no additional HTTP request will be made.
+    """
 
     now = int(time.time())
-    data = _fmp_price_target(ticker)
+    if data is None:
+        data = _fmp_price_target(ticker)
 
     if isinstance(data, dict) and data.get("error"):
         return {
             "ticker": ticker,
             "error": data["error"],
-            "source": "fmp.price-target",
+            "source": "fmp.price-target-consensus",
             "fetched_at_utc": now,
         }
 
@@ -201,24 +220,39 @@ def fetch_broker_snapshot(ticker: str) -> Dict[str, Any]:
         "hold": counts.get("hold"),
         "sell": counts.get("sell"),
         "strong_sell": counts.get("strong_sell"),
-        "source": "fmp.price-target",
+        "source": "fmp.price-target-consensus",
         "fetched_at_utc": now,
     }
 
 
-def fetch_many(tickers: List[str], *, sleep_between: float = 0.25) -> List[Dict[str, Any]]:
-    """Fetch broker snapshots for multiple tickers."""
+def fetch_many(tickers: List[str], *, sleep_between: float = 0.0) -> List[Dict[str, Any]]:
+    """Fetch broker snapshots for multiple tickers with a single API call."""
 
     out: List[Dict[str, Any]] = []
+    try:
+        data_map = _fmp_price_targets(tickers)
+    except Exception as e:  # pragma: no cover - defensive
+        now = int(time.time())
+        err = str(e)
+        for t in tickers:
+            out.append(
+                {
+                    "ticker": t,
+                    "error": err,
+                    "source": "fmp.price-target-consensus",
+                    "fetched_at_utc": now,
+                }
+            )
+        return out
     for t in tickers:
         try:
-            out.append(fetch_broker_snapshot(t))
-        except Exception as e:
+            out.append(fetch_broker_snapshot(t, data=data_map.get(t, {})))
+        except Exception as e:  # pragma: no cover - defensive
             out.append(
                 {
                     "ticker": t,
                     "error": str(e),
-                    "source": "fmp",
+                    "source": "fmp.price-target-consensus",
                     "fetched_at_utc": int(time.time()),
                 }
             )
