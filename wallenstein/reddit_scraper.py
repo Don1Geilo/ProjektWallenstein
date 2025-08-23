@@ -1,13 +1,19 @@
 # wallenstein/reddit_scraper.py
 from __future__ import annotations
+
+import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Dict, List
-import praw
+
 import duckdb
 import pandas as pd
-from datetime import datetime, timezone
+import praw
+
 from . import config
+
+log = logging.getLogger("wallenstein.reddit")
 
 # Gemeinsamer DB-Pfad (ENV erlaubt Override, sonst Default)
 DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "wallenstein.duckdb")
@@ -95,6 +101,7 @@ def update_reddit_data(tickers: List[str],
 
     if frames:
         df_all = pd.concat(frames, ignore_index=True)
+        df_all.drop_duplicates(subset="id", inplace=True)
         with duckdb.connect(DB_PATH) as con:
             con.execute("""
                 CREATE TABLE IF NOT EXISTS reddit_posts (
@@ -105,7 +112,9 @@ def update_reddit_data(tickers: List[str],
                 )
             """)
             con.execute("DELETE FROM reddit_posts")
+            con.register("df_all", df_all)
             con.execute("INSERT INTO reddit_posts SELECT * FROM df_all")
+        log.info(f"Wrote {len(df_all)} posts to reddit_posts")
 
     # 2) Posts aus DB lesen
     df = _load_posts_from_db()
