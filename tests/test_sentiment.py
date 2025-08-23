@@ -1,11 +1,18 @@
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from wallenstein.sentiment import analyze_sentiment, aggregate_sentiment_by_ticker, derive_recommendation
+import wallenstein.sentiment as sentiment
+from wallenstein.sentiment import (
+    analyze_sentiment,
+    analyze_sentiment_bert,
+    aggregate_sentiment_by_ticker,
+    derive_recommendation,
+)
 
 def test_analyze_sentiment_keywords():
     text = "I'm going long and want to buy more calls, not sell"
@@ -34,3 +41,24 @@ def test_aggregate_and_recommendation():
 def test_intensity_and_negation():
     assert analyze_sentiment("This is a strong buy signal") == 2
     assert analyze_sentiment("Bitte nicht kaufen") < 0
+
+
+def test_analyze_sentiment_bert_mock():
+    with patch("wallenstein.sentiment.BertSentiment") as MockBert:
+        sentiment._bert_analyzer = None
+        instance = MockBert.return_value
+        instance.return_value = [{"label": "positive", "score": 0.8}]
+        assert analyze_sentiment_bert("text") > 0
+        instance.return_value = [{"label": "negative", "score": 0.6}]
+        assert analyze_sentiment_bert("text") < 0
+
+
+def test_env_switches_to_bert(monkeypatch):
+    with patch("wallenstein.sentiment.BertSentiment") as MockBert:
+        sentiment._bert_analyzer = None
+        MockBert.return_value.return_value = [{"label": "positive", "score": 0.9}]
+        monkeypatch.setenv("USE_BERT_SENTIMENT", "1")
+        assert analyze_sentiment("whatever") > 0
+        monkeypatch.delenv("USE_BERT_SENTIMENT", raising=False)
+        # ensure fallback path still works
+        assert analyze_sentiment("buy") > 0
