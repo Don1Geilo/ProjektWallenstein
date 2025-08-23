@@ -2,10 +2,10 @@
 
 This is a ready-to-push bundle. It includes:
 - Robust price updater with DuckDB storage
-- Broker targets & recommendations (Yahoo QuoteSummary)
 - Reddit sentiment integration (PRAW)
 - Telegram alerts (optional)
-- CSV exports in `stockOverview/`
+
+Broker-target support is temporarily disabled pending a new data provider.
 
 ## Quickstart
 ```bash
@@ -26,12 +26,10 @@ python main.py
 ├─ requirements.txt
 ├─ .env.example
 ├─ data/                  # DuckDB lives here
-├─ stockOverview/         # CSV exports
 └─ wallenstein/
    ├─ __init__.py
    ├─ stock_data.py
    ├─ db_utils.py
-   ├─ broker_targets.py
    ├─ reddit_scraper.py
    └─ sentiment.py
 ```
