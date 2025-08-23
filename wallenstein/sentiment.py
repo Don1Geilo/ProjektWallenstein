@@ -22,13 +22,16 @@ def analyze_sentiment(text: str) -> float:
     return score
 
 
-def aggregate_sentiment_by_ticker(ticker_texts: Dict[str, Iterable[str]]) -> Dict[str, float]:
+def aggregate_sentiment_by_ticker(
+    ticker_texts: Dict[str, Iterable[dict]]
+) -> Dict[str, float]:
     """Aggregate sentiment scores for each ticker.
 
     Parameters
     ----------
     ticker_texts:
-        Mapping of ticker symbols to iterables of text snippets.
+        Mapping of ticker symbols to iterables of post dictionaries. Each
+        dictionary should contain a ``"text"`` key whose value is analysed.
 
     Returns
     -------
@@ -38,10 +41,14 @@ def aggregate_sentiment_by_ticker(ticker_texts: Dict[str, Iterable[str]]) -> Dic
     """
 
     result: Dict[str, float] = {}
-    for ticker, texts in ticker_texts.items():
-        texts = list(texts)
-        if texts:
-            result[ticker] = sum(analyze_sentiment(t) for t in texts) / len(texts)
+    for ticker, entries in ticker_texts.items():
+        entries = list(entries)
+        if entries:
+            total = 0.0
+            for entry in entries:
+                text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
+                total += analyze_sentiment(text)
+            result[ticker] = total / len(entries)
         else:
             result[ticker] = 0.0
     return result
