@@ -1,19 +1,16 @@
 name: Wallenstein Pipeline
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   schedule:
-    # 07:05 Europe/Berlin (Actions läuft in UTC)
-    - cron: "5 6 * * 1-5"
+    - cron: "5 6 * * 1-5"  # 07:05 Europe/Berlin (GitHub Actions uses UTC)
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTHONUNBUFFERED: "1"
   TZ: "Europe/Berlin"
   WALLENSTEIN_DB_PATH: data/wallenstein.duckdb
-  # Backoff/Sleep für Rate-Limits (liest dein Code implizit; notfalls bei fetch_many nutzen)
-  WALLENSTEIN_YF_SLEEP: "0.6"
-  HF_HOME: ~/.cache/huggingface
+  WALLENSTEIN_YF_SLEEP: "0.6"  # Backoff for yfinance rate limits
 
 jobs:
   run:
@@ -23,7 +20,6 @@ jobs:
       contents: read
       actions: read
       id-token: write
-
     concurrency:
       group: wallenstein-${{ github.ref }}
       cancel-in-progress: true
@@ -41,59 +37,42 @@ jobs:
             requirements.txt
             **/requirements.txt
 
-      - name: Cache HuggingFace models
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HF_HOME }}
-          key: ${{ runner.os }}-hf-${{ hashFiles('requirements.txt') }}
-
       - name: Install dependencies
         run: |
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-
-      - name: Pre-download sentiment models
-        run: |
-          python - <<'PY'
-          from transformers import pipeline
-          pipeline('sentiment-analysis', model='ProsusAI/finbert')
-          pipeline('sentiment-analysis', model='oliverguhr/german-sentiment-bert')
-          PY
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Prepare folders
         run: |
           mkdir -p data stockOverview
 
-      - name: Export env from Secrets
-        # Wir schreiben KEINE .env-Datei — main.py liest direkt os.getenv(...).
-        run: |
-          echo "Env ready"
+      - name: Export env from secrets
+        run: echo "Env ready"
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          REDDIT_CLIENT_ID:   ${{ secrets.REDDIT_CLIENT_ID }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-          REDDIT_USER_AGENT:  ${{ secrets.REDDIT_USER_AGENT }}
+          REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
 
-      - name: Run Wallenstein (with retries)
+      - name: Run Wallenstein with retries
         id: run_wallenstein
         shell: bash
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          REDDIT_CLIENT_ID:   ${{ secrets.REDDIT_CLIENT_ID }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-          REDDIT_USER_AGENT:  ${{ secrets.REDDIT_USER_AGENT }}
+          REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
         run: |
           set -e
-          echo "Start Wallenstein…"
-          # Einfacher 3x-Retry, falls yfinance kurz ratelimited:
+          echo "Start Wallenstein..."
           n=0
           until [ $n -ge 3 ]
           do
             python main.py && break
             n=$((n+1))
-            echo "Run failed ($n). Sleeping & retrying…"
+            echo "Run failed ($n). Sleeping and retrying..."
             sleep $((30*n))
           done
 
@@ -107,7 +86,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Persist DuckDB (optional)
+      - name: Persist DuckDB optional
         if: always()
         uses: actions/upload-artifact@v4
         with:
