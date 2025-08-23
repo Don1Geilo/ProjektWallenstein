@@ -66,16 +66,30 @@ def _fmp_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
     params = dict(params)
     params["apikey"] = FMP_API_KEY
     url = f"{FMP_BASE_URL}/{path}"
-    r = _SESSION.get(url, params=params, timeout=10.0)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = _SESSION.get(url, params=params, timeout=10.0)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.HTTPError as exc:  # pragma: no cover - network
+        status = exc.response.status_code if exc.response else None
+        if status == 403:
+            msg = (
+                "FMP API responded with 403 Forbidden. "
+                "Your API key might be invalid, expired or lacks permission."
+            )
+            return {"error": {"status": 403, "message": msg, "url": url}}
+        raise
 
 
 # ---------------------------------------------------------------------------
 # FMP specific helpers
 # ---------------------------------------------------------------------------
-def _fmp_price_target(ticker: str) -> Dict[str, Optional[float]]:
-    """Return price targets and recommendation counts for ``ticker``."""
+def _fmp_price_target(ticker: str) -> Dict[str, Any]:
+    """Return price targets and recommendation counts for ``ticker``.
+
+    On certain errors (e.g. 403) a dictionary with an ``error`` key is
+    returned so callers can handle it explicitly.
+    """
 
     out: Dict[str, Optional[float]] = {
         "target_mean": None,
@@ -87,8 +101,12 @@ def _fmp_price_target(ticker: str) -> Dict[str, Optional[float]]:
         "sell": None,
         "strong_sell": None,
     }
+
+    data = _fmp_get("price-target", {"symbol": ticker})
+    if isinstance(data, dict) and data.get("error"):
+        return data
+
     try:
-        data = _fmp_get("price-target", {"symbol": ticker})
         item = data[0] if isinstance(data, list) and data else {}
         out["target_mean"] = _pos(
             _sf(
@@ -152,6 +170,15 @@ def fetch_broker_snapshot(ticker: str) -> Dict[str, Any]:
 
     now = int(time.time())
     data = _fmp_price_target(ticker)
+
+    if isinstance(data, dict) and data.get("error"):
+        return {
+            "ticker": ticker,
+            "error": data["error"],
+            "source": "fmp.price-target",
+            "fetched_at_utc": now,
+        }
+
     counts = {
         "strong_buy": data.get("strong_buy"),
         "buy": data.get("buy"),
