@@ -116,9 +116,9 @@ def main() -> int:
             )
             df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
             df_stock = pd.merge(df_price, df_sent, on="date", how="left")
-            acc = train_per_stock(df_stock)
+            acc, f1 = train_per_stock(df_stock)
             if acc is not None:
-                log.info(f"{ticker}: Modell-Accuracy {acc:.2%}")
+                log.info(f"{ticker}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
             else:
                 log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
         except Exception as e:

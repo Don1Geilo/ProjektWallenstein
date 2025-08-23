@@ -43,6 +43,7 @@ def test_intensity_and_negation():
     assert analyze_sentiment("Bitte nicht kaufen") < 0
 
 
+
 def test_analyze_sentiment_bert_mock():
     with patch("wallenstein.sentiment.BertSentiment") as MockBert:
         sentiment._bert_analyzer = None
@@ -62,3 +63,8 @@ def test_env_switches_to_bert(monkeypatch):
         monkeypatch.delenv("USE_BERT_SENTIMENT", raising=False)
         # ensure fallback path still works
         assert analyze_sentiment("buy") > 0
+
+def test_negation_with_filler_tokens():
+    assert analyze_sentiment("nicht so bullish") < 0
+    assert analyze_sentiment("kein kauf heute") < 0
+
