@@ -84,14 +84,18 @@ def _post_matches_ticker(title: str, body: str, patterns: List[re.Pattern]) -> b
 # -------------------------------------------------------
 # Öffentliche API: erwartet dein main.py
 # -------------------------------------------------------
-def update_reddit_data(tickers: List[str],
-                       subreddits: List[str] | None = None,
-                       limit_per_sub: int = 50) -> Dict[str, List[str]]:
+def update_reddit_data(
+    tickers: List[str],
+    subreddits: List[str] | None = None,
+    limit_per_sub: int = 50,
+) -> Dict[str, List[dict]]:
     """Scrape, persist and organise Reddit posts.
 
     Posts from every subreddit are combined into a single DataFrame before the
     ``reddit_posts`` table is replaced.  This ensures the database only holds a
-    consistent snapshot.  Returned is a mapping such as ``{"NVDA": ["text", ...]}``.
+    consistent snapshot.  Returns a mapping such as
+    ``{"NVDA": [{"created_utc": <timestamp>, "text": "..."}, ...]}`` where each
+    entry contains the post timestamp and text.
     """
     if not subreddits:
         subreddits = ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
@@ -126,10 +130,10 @@ def update_reddit_data(tickers: List[str],
     df = _load_posts_from_db()
 
     # 3) Je Ticker Texte sammeln
-    out: Dict[str, List[str]] = {}
+    out: Dict[str, List[dict]] = {}
     for tkr in tickers:
         pats = _compile_patterns(tkr)
-        bucket: List[str] = []
+        bucket: List[dict] = []
         for _, row in df.iterrows():
             title = str(row.get("title", "") or "")
             text  = str(row.get("text", "") or "")
@@ -138,7 +142,7 @@ def update_reddit_data(tickers: List[str],
                 snippet = (title + "\n" + text).strip()
                 if snippet:
                     # Längenlimit, damit analyze_sentiment nicht explodiert
-                    bucket.append(snippet[:2000])
+                    bucket.append({"created_utc": row["created_utc"], "text": snippet[:2000]})
             # leichte Obergrenze pro Ticker (Performance)
             if len(bucket) >= 100:
                 break
