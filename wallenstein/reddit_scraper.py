@@ -22,6 +22,8 @@ except Exception:  # pragma: no cover - not critical if missing
 from . import config
 
 log = logging.getLogger("wallenstein.reddit")
+if os.getenv("WALLENSTEIN_LOG_LEVEL", "").upper() == "DEBUG":
+    log.setLevel(logging.DEBUG)
 
 # Gemeinsamer DB-Pfad (ENV erlaubt Override, sonst Default)
 DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "wallenstein.duckdb")
@@ -269,5 +271,6 @@ def update_reddit_data(
             # leichte Obergrenze pro Ticker (Performance)
             if len(bucket) >= 100:
                 break
+        log.debug(f"{tkr}: {len(bucket)} matched posts")
         out[tkr] = bucket
     return out
