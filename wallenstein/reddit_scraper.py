@@ -21,6 +21,20 @@ DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "wallenstein.duckdb")
 # Anzahl Tage, die Posts in der Datenbank behalten werden
 DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", "30"))
 
+# Bekannte Firmennamen zu Tickersymbolen.  Diese Liste ist keineswegs
+# vollständig, deckt aber einige der üblichen Verdächtigen ab.  Für jeden
+# Ticker können mehrere Varianten des Firmennamens angegeben werden, die im
+# Text erkannt werden sollen.
+TICKER_NAME_MAP: Dict[str, List[str]] = {
+    "NVDA": ["nvidia"],
+    "AMZN": ["amazon"],
+    "AAPL": ["apple"],
+    "MSFT": ["microsoft"],
+    "GOOG": ["google", "alphabet"],
+    "META": ["facebook", "meta"],
+    "TSLA": ["tesla"],
+}
+
 # ----------------------------
 # Bestehende Funktion von dir
 # ----------------------------
@@ -73,6 +87,14 @@ def _compile_patterns(ticker: str) -> List[re.Pattern]:
         re.compile(rf"[\$\#]\s*{safe}\b", re.IGNORECASE),                      # $NVDA, #NVDA
         re.compile(rf"\(\s*{safe}\s*\)", re.IGNORECASE),                       # (NVDA)
     ]
+
+    for name in TICKER_NAME_MAP.get(ticker.upper(), []):
+        # Sicherstellen, dass Namen als eigene Wörter erkannt werden
+        safe_name = re.escape(name)
+        patterns.append(
+            re.compile(rf"(?<![A-Za-z0-9]){safe_name}(?![A-Za-z0-9])", re.IGNORECASE)
+        )
+
     return patterns
 
 def _post_matches_ticker(title: str, body: str, patterns: List[re.Pattern]) -> bool:
