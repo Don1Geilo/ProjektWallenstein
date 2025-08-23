@@ -46,7 +46,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # --- Projekt‑Module ---
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
-from wallenstein import aggregate_sentiment_by_ticker, derive_recommendation
+from wallenstein.sentiment import analyze_sentiment, derive_recommendation
 
 
 # ---------- Main ----------
@@ -64,7 +64,9 @@ def main() -> int:
 
     # 2) Reddit-Daten aktualisieren
     try:
-        reddit_posts = update_reddit_data(TICKERS)
+        reddit_posts = update_reddit_data(
+            TICKERS, ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
+        )
         log.info("✅ Reddit-Daten aktualisiert")
     except Exception as e:
         log.error(f"❌ Reddit-Update fehlgeschlagen: {e}")
@@ -81,19 +83,31 @@ def main() -> int:
     prices_usd = get_latest_prices(DB_PATH, TICKERS, use_eur=False)
     log.info(f"USD: {prices_usd}")
 
-    sentiments = aggregate_sentiment_by_ticker(reddit_posts)
+    sentiments = {}
+    for ticker, texts in reddit_posts.items():
+        texts = list(texts)
+        if texts:
+            scores = [analyze_sentiment(t) for t in texts]
+            sentiments[ticker] = sum(scores) / len(scores)
+        else:
+            sentiments[ticker] = 0.0
 
-    lines = []
+    price_lines = []
+    sentiment_lines = []
     for t in TICKERS:
         price = prices_usd.get(t)
+        if price is not None:
+            price_lines.append(f"{t}: {price:.2f} USD")
+        else:
+            price_lines.append(f"{t}: n/a")
+
         sent = sentiments.get(t, 0.0)
         rec = derive_recommendation(sent)
-        if price is not None:
-            lines.append(f"{t}: {price:.2f} USD | Sentiment {sent:+.2f} | {rec}")
-        else:
-            lines.append(f"{t}: n/a | Sentiment {sent:+.2f} | {rec}")
+        sentiment_lines.append(f"{t}: Sentiment {sent:+.2f} | {rec}")
 
-    notify_telegram("📊 Wallenstein Übersicht\n" + "\n".join(lines))
+    notify_telegram(
+        "📊 Wallenstein Übersicht\n" + "\n".join(price_lines + sentiment_lines)
+    )
 
     log.info(f"🏁 Fertig in {time.time() - t0:.1f}s")
     return 0
