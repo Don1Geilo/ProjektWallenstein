@@ -7,6 +7,14 @@ from __future__ import annotations
 
 from typing import Dict, Iterable
 
+# Intensifiers and negation markers used to enrich the keyword map
+INTENSITY_WEIGHTS: Dict[str, int] = {
+    "strong": 2,
+    "massiv": 2,
+}
+
+NEGATION_MARKERS = {"nicht", "kein", "no", "not"}
+
 # keyword -> sentiment score mapping used by :func:`analyze_sentiment`
 #
 # Many retail traders express their sentiment using simple words like
@@ -35,19 +43,63 @@ KEYWORD_SCORES: Dict[str, int] = {
     "bärisch": -1,
 }
 
+# extend keyword scores with simple intensity phrases and negated forms
+for _word, _score in list(KEYWORD_SCORES.items()):
+    for _intens, _mult in INTENSITY_WEIGHTS.items():
+        KEYWORD_SCORES[f"{_intens} {_word}"] = _score * _mult
+    KEYWORD_SCORES[f"not_{_word}"] = -_score
+
+
+def apply_negation(text: str) -> str:
+    """Collapse negations so that they can be scored correctly.
+
+    The function searches for occurrences of words like ``"nicht"`` or
+    ``"kein"`` that precede another token and prefixes the following word with
+    ``"not_"``.  The negation keyword itself is removed from the text.
+
+    Examples
+    --------
+    ``"nicht kaufen"`` -> ``"not_kaufen"``
+    ``"kein sell"`` -> ``"not_sell"``
+    """
+
+    words = text.split()
+    result = []
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if word in NEGATION_MARKERS and i + 1 < len(words):
+            result.append(f"not_{words[i + 1]}")
+            i += 2
+        else:
+            result.append(word)
+            i += 1
+    return " ".join(result)
+
 
 def analyze_sentiment(text: str) -> float:
     """Return a simplistic sentiment score for ``text``.
 
     Positive sentiment is counted for occurrences of words such as ``"long"``,
     ``"call"``, ``"bullish"`` or ``"buy"``.  Negative sentiment is triggered by
-    phrases like ``"short"``, ``"put"``, ``"bearish"`` or ``"sell"``.
+    phrases like ``"short"``, ``"put"``, ``"bearish"`` or ``"sell"``.  The
+    analysis also supports simple negation handling and intensity weighting
+    (e.g. ``"strong buy"`` counts double).
     """
 
-    text = text.lower()
+    text = apply_negation(text.lower())
+    tokens = text.split()
     score = 0
-    for keyword, value in KEYWORD_SCORES.items():
-        score += text.count(keyword) * value
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        multiplier = 1
+        if token in INTENSITY_WEIGHTS and i + 1 < len(tokens):
+            multiplier = INTENSITY_WEIGHTS[token]
+            i += 1
+            token = tokens[i]
+        score += KEYWORD_SCORES.get(token, 0) * multiplier
+        i += 1
     return score
 
 
