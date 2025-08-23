@@ -102,34 +102,15 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
         "strong_sell": None,
     }
 
-    data = _fmp_get("price-target", {"symbol": ticker})
+    data = _fmp_get("price-target-consensus", {"symbol": ticker})
     if isinstance(data, dict) and data.get("error"):
         return data
 
     try:
         item = data[0] if isinstance(data, list) and data else {}
-        out["target_mean"] = _pos(
-            _sf(
-                item.get("targetMean")
-                or item.get("priceTargetAverage")
-                or item.get("targetConsensus")
-            )
-        )
-        out["target_high"] = _pos(
-            _sf(item.get("targetHigh") or item.get("priceTargetHigh"))
-        )
-        out["target_low"] = _pos(
-            _sf(item.get("targetLow") or item.get("priceTargetLow"))
-        )
-        out["strong_buy"] = (
-            item.get("strongBuy") or item.get("ratingStrongBuy")
-        )
-        out["buy"] = item.get("buy") or item.get("ratingBuy")
-        out["hold"] = item.get("hold") or item.get("ratingHold")
-        out["sell"] = item.get("sell") or item.get("ratingSell")
-        out["strong_sell"] = (
-            item.get("strongSell") or item.get("ratingStrongSell")
-        )
+        out["target_mean"] = _pos(_sf(item.get("targetConsensus")))
+        out["target_high"] = _pos(_sf(item.get("targetHigh")))
+        out["target_low"] = _pos(_sf(item.get("targetLow")))
     except Exception as e:
         log.warning(f"[{ticker}] price-target error: {e}")
     return out
@@ -175,7 +156,7 @@ def fetch_broker_snapshot(ticker: str) -> Dict[str, Any]:
         return {
             "ticker": ticker,
             "error": data["error"],
-            "source": "fmp.price-target",
+            "source": "fmp.price-target-consensus",
             "fetched_at_utc": now,
         }
 
@@ -201,7 +182,7 @@ def fetch_broker_snapshot(ticker: str) -> Dict[str, Any]:
         "hold": counts.get("hold"),
         "sell": counts.get("sell"),
         "strong_sell": counts.get("strong_sell"),
-        "source": "fmp.price-target",
+        "source": "fmp.price-target-consensus",
         "fetched_at_utc": now,
     }
 
