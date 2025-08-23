@@ -29,3 +29,8 @@ def test_aggregate_and_recommendation():
     assert derive_recommendation(scores["NVDA"]) == "Buy"
     assert derive_recommendation(scores["AMZN"]) == "Sell"
     assert derive_recommendation(0.0) == "Hold"
+
+
+def test_intensity_and_negation():
+    assert analyze_sentiment("This is a strong buy signal") == 2
+    assert analyze_sentiment("Bitte nicht kaufen") < 0
