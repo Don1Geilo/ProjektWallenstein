@@ -16,10 +16,16 @@ DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "wallenstein.duckdb")
 # Bestehende Funktion von dir
 # ----------------------------
 def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd.DataFrame:
+    """Return hot posts from ``subreddit`` as a ``DataFrame``.
+
+    Only interacts with the Reddit API; no database reads or writes occur here.
+    Callers can persist the resulting frame if needed.
+    """
+
     reddit = praw.Reddit(
         client_id=config.CLIENT_ID,
         client_secret=config.CLIENT_SECRET,
-        user_agent=config.USER_AGENT
+        user_agent=config.USER_AGENT,
     )
 
     posts = []
@@ -28,12 +34,10 @@ def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd
             "id": post.id,
             "title": post.title or "",
             "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
-            "text": post.selftext or ""
+            "text": post.selftext or "",
         })
 
-    df = pd.DataFrame(posts)
-
-    return df
+    return pd.DataFrame(posts)
 
 
 # --------------------------------------
@@ -77,9 +81,11 @@ def _post_matches_ticker(title: str, body: str, patterns: List[re.Pattern]) -> b
 def update_reddit_data(tickers: List[str],
                        subreddits: List[str] | None = None,
                        limit_per_sub: int = 50) -> Dict[str, List[str]]:
-    """
-    Scraped neue Posts (pro Subreddit) -> schreibt DB -> liest DB -> mappt Texte je Ticker.
-    Rückgabe: { "NVDA": ["titel + text", "..."], "AMZN": [...], ... }
+    """Scrape, persist and organise Reddit posts.
+
+    Posts from every subreddit are combined into a single DataFrame before the
+    ``reddit_posts`` table is replaced.  This ensures the database only holds a
+    consistent snapshot.  Returned is a mapping such as ``{"NVDA": ["text", ...]}``.
     """
     if not subreddits:
         subreddits = ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
