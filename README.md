@@ -31,11 +31,9 @@ python main.py
    ├─ __init__.py
    ├─ stock_data.py
    ├─ db_utils.py
-   ├─ db_targets.py
    ├─ broker_targets.py
    ├─ reddit_scraper.py
-   ├─ sentiment.py
-   └─ export_targets.py
+   └─ sentiment.py
 ```
 
 ### Notes
