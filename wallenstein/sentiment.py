@@ -125,15 +125,38 @@ class BertSentiment:
         return self.pipe(text)
 
 
-def analyze_sentiment(text: str) -> float:
-    """Return a simplistic sentiment score for ``text``.
+_bert_analyzer: BertSentiment | None = None
 
-    Positive sentiment is counted for occurrences of words such as ``"long"``,
-    ``"call"``, ``"bullish"`` or ``"buy"``.  Negative sentiment is triggered by
-    phrases like ``"short"``, ``"put"``, ``"bearish"`` or ``"sell"``.  The
-    analysis also supports simple negation handling and intensity weighting
-    (e.g. ``"strong buy"`` counts double).
+
+def analyze_sentiment_bert(text: str) -> float:
+    """Analyse sentiment using a BERT based model."""
+
+    global _bert_analyzer
+    if _bert_analyzer is None:
+        _bert_analyzer = BertSentiment()
+    result = _bert_analyzer(text)
+    if not result:
+        return 0.0
+    data = result[0]
+    label = str(data.get("label", "")).lower()
+    score = float(data.get("score", 0.0))
+    if "positive" in label:
+        return score
+    if "negative" in label:
+        return -score
+    return 0.0
+
+
+def analyze_sentiment(text: str) -> float:
+    """Return a sentiment score for ``text``.
+
+    The function defaults to a lightweight keyword approach but can switch to a
+    BERT based model when the ``USE_BERT_SENTIMENT`` environment variable is
+    set to a truthy value.
     """
+
+    if os.getenv("USE_BERT_SENTIMENT", "").lower() in {"1", "true", "yes"}:
+        return analyze_sentiment_bert(text)
 
     text = apply_negation(text.lower())
     tokens = text.split()
@@ -195,6 +218,7 @@ def derive_recommendation(score: float) -> str:
 
 __all__ = [
     "analyze_sentiment",
+    "analyze_sentiment_bert",
     "aggregate_sentiment_by_ticker",
     "derive_recommendation",
     "BertSentiment",
