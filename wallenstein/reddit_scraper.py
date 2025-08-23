@@ -142,7 +142,9 @@ def update_reddit_data(
                 """
             )
             con.register("df_all", df_all)
-            con.execute("INSERT OR REPLACE INTO reddit_posts SELECT * FROM df_all")
+            con.execute(
+                "INSERT INTO reddit_posts SELECT * FROM df_all ON CONFLICT(id) DO NOTHING"
+            )
         log.info(f"Wrote {len(df_all)} posts to reddit_posts")
 
     # Alte Einträge entfernen
