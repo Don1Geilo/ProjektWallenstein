@@ -93,8 +93,10 @@ def main() -> int:
         if texts:
             df_posts = pd.DataFrame(texts)
             df_posts["sentiment"] = df_posts["text"].apply(analyze_sentiment)
-            df_posts["date"] = pd.to_datetime(df_posts["created_utc"]).dt.date
-            sentiment_frames[ticker] = df_posts.groupby("date")["sentiment"].mean().reset_index()
+            df_posts["date"] = pd.to_datetime(df_posts["created_utc"]).dt.normalize()
+            sentiment_frames[ticker] = (
+                df_posts.groupby("date")["sentiment"].mean().reset_index()
+            )
             sentiments[ticker] = df_posts["sentiment"].mean()
         else:
             sentiments[ticker] = 0.0
@@ -108,7 +110,10 @@ def main() -> int:
                     "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
                     [ticker],
                 ).fetchdf()
-            df_sent = sentiment_frames.get(ticker, pd.DataFrame(columns=["date", "sentiment"]))
+            df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
+            df_sent = sentiment_frames.get(
+                ticker, pd.DataFrame(columns=["date", "sentiment"])
+            )
             df_stock = pd.merge(df_price, df_sent, on="date", how="left")
             acc = train_per_stock(df_stock)
             if acc is not None:
