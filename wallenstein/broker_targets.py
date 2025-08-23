@@ -85,12 +85,25 @@ def _fmp_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
 # FMP specific helpers
 # ---------------------------------------------------------------------------
 def _parse_price_target_item(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
-    """Map raw FMP price target item to our internal structure."""
+    """Map raw FMP price target item to our internal structure.
+
+    The FMP API exposes slightly different field names depending on the
+    endpoint or plan. We therefore try a couple of alternatives for each
+    value so the function works with both price-target and
+    price-target-consensus responses.
+    """
+
+    def _first(*keys: str) -> Any:
+        for k in keys:
+            if k in item:
+                return item[k]
+        return None
 
     return {
-        "target_mean": _pos(_sf(item.get("targetConsensus"))),
-        "target_high": _pos(_sf(item.get("targetHigh"))),
-        "target_low": _pos(_sf(item.get("targetLow"))),
+        "target_mean": _pos(_sf(_first("targetConsensus", "priceTargetAverage"))),
+        "target_high": _pos(_sf(_first("targetHigh", "priceTargetHigh"))),
+        "target_low": _pos(_sf(_first("targetLow", "priceTargetLow"))),
+        "target_median": _pos(_sf(_first("targetMedian", "priceTargetMedian"))),
     }
 
 
@@ -105,6 +118,7 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
         "target_mean": None,
         "target_high": None,
         "target_low": None,
+        "target_median": None,
         "strong_buy": None,
         "buy": None,
         "hold": None,
@@ -117,7 +131,6 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
         return data
 
     try:
-       codex/update-broker_targets.py-for-price-target-changes-v9e8r5
         if isinstance(data, list) and data:
             item = data[0]
         elif isinstance(data, dict):
@@ -125,15 +138,18 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
         else:
             item = {}
         out.update(_parse_price_target_item(item))
+        out.update(
+            {
+                "strong_buy": _sf(item.get("strongBuy")),
+                "buy": _sf(item.get("buy")),
+                "hold": _sf(item.get("hold")),
+                "sell": _sf(item.get("sell")),
+                "strong_sell": _sf(item.get("strongSell")),
+            }
+        )
     except Exception as e:  # pragma: no cover - defensive
-
-        item = data[0] if isinstance(data, list) and data else {}
-        out["target_mean"] = _pos(_sf(item.get("targetConsensus")))
-        out["target_high"] = _pos(_sf(item.get("targetHigh")))
-        out["target_low"] = _pos(_sf(item.get("targetLow")))
-    except Exception as e:
-       main
         log.warning(f"[{ticker}] price-target error: {e}")
+
     return out
 
 
@@ -153,7 +169,15 @@ def _fmp_price_targets(tickers: List[str]) -> Dict[str, Dict[str, Any]]:
 
     # Ensure every requested ticker has an entry
     for t in tickers:
-        out.setdefault(t, {"target_mean": None, "target_high": None, "target_low": None})
+        out.setdefault(
+            t,
+            {
+                "target_mean": None,
+                "target_high": None,
+                "target_low": None,
+                "target_median": None,
+            },
+        )
     return out
 
 
