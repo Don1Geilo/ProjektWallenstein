@@ -4,12 +4,19 @@ from __future__ import annotations
 import logging
 import os
 import re
+import json
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 import duckdb
 import pandas as pd
 import praw
+
+try:  # Optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - not critical if missing
+    yaml = None
 
 from . import config
 
@@ -34,6 +41,45 @@ TICKER_NAME_MAP: Dict[str, List[str]] = {
     "META": ["facebook", "meta"],
     "TSLA": ["tesla"],
 }
+
+
+def _load_aliases_from_file() -> None:
+    """Merge additional ticker aliases from JSON/YAML file."""
+
+    root = Path(__file__).resolve().parents[1]
+    candidates = [
+        root / "data" / "ticker_aliases.json",
+        root / "data" / "ticker_aliases.yaml",
+        root / "data" / "ticker_aliases.yml",
+    ]
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                if path.suffix == ".json":
+                    data = json.load(fh)
+                elif path.suffix in {".yaml", ".yml"} and yaml:
+                    data = yaml.safe_load(fh)
+                else:
+                    log.warning("Unsupported ticker alias file format: %s", path)
+                    data = {}
+
+            for tkr, names in data.items():
+                if not isinstance(names, list):
+                    continue
+                bucket = TICKER_NAME_MAP.setdefault(tkr.upper(), [])
+                for name in names:
+                    name = str(name).lower()
+                    if name not in bucket:
+                        bucket.append(name)
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("Could not load ticker aliases from %s: %s", path, exc)
+        break  # use first existing file only
+
+
+_load_aliases_from_file()
 
 # ----------------------------
 # Bestehende Funktion von dir

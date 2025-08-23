@@ -1,0 +1,9 @@
+{
+    "NVDA": ["nvidia"],
+    "AMZN": ["amazon"],
+    "AAPL": ["apple"],
+    "MSFT": ["microsoft"],
+    "GOOG": ["google", "alphabet"],
+    "META": ["facebook", "meta"],
+    "TSLA": ["tesla"]
+}

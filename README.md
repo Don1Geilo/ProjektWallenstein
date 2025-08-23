@@ -34,6 +34,22 @@ python main.py
    └─ sentiment.py
 ```
 
+### Ticker aliases
+
+Extra company name variants can be maintained in `data/ticker_aliases.json`
+or a YAML equivalent.  The file contains a mapping of ticker symbols to a
+list of additional names that should be recognised in Reddit posts:
+
+```json
+{
+  "NVDA": ["nvidia"],
+  "MSFT": ["microsoft"]
+}
+```
+
+`reddit_scraper` loads this file on startup and merges it with its built-in
+defaults. If the file is missing, the internal map is used unchanged.
+
 ### Notes
 - If you already have your own `stock_data.py`, you can keep it. This repo’s version is robust and compatible with `update_prices(TICKERS)` signature.
 - GitHub push safe: no secrets, data folder is empty (with `.gitkeep`).
