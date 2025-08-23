@@ -114,6 +114,7 @@ def main() -> int:
             df_sent = sentiment_frames.get(
                 ticker, pd.DataFrame(columns=["date", "sentiment"])
             )
+            df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
             df_stock = pd.merge(df_price, df_sent, on="date", how="left")
             acc = train_per_stock(df_stock)
             if acc is not None:
