@@ -2,7 +2,7 @@
 
 This is a ready-to-push bundle. It includes:
 - Robust price updater with DuckDB storage
-- Reddit sentiment integration (PRAW)
+- Reddit sentiment integration (PRAW) with basic English/German keyword analysis
 - Telegram alerts (optional)
 
 Broker-target support is temporarily disabled pending a new data provider.

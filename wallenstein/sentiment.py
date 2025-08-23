@@ -1,4 +1,7 @@
-"""Utility functions for simplistic sentiment analysis."""
+"""Utility functions for simplistic sentiment analysis.
+
+The keyword map supports both common English and German trading slang
+allowing rudimentary multilingual sentiment detection."""
 
 from __future__ import annotations
 
@@ -20,12 +23,16 @@ KEYWORD_SCORES: Dict[str, int] = {
     "bull": 1,
     "bullish": 1,
     "buy": 1,
+    "kaufen": 1,
+    "bullisch": 1,
     # negative
     "short": -1,
     "put": -1,
     "bear": -1,
     "bearish": -1,
     "sell": -1,
+    "verkaufen": -1,
+    "bärisch": -1,
 }
 
 
