@@ -13,7 +13,11 @@ if not env_loaded:
     load_dotenv(dotenv_path=alt_path, override=True)
 
 # --- Logging ---
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+LOG_LEVEL = os.getenv("WALLENSTEIN_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 log = logging.getLogger("wallenstein")
 
 try:
