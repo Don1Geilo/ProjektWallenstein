@@ -38,6 +38,20 @@ def test_company_name_bucketed(monkeypatch):
     assert "amazon" in out["AMZN"][0]["text"].lower()
 
 
+
+def test_aliases_loaded_from_file():
+    import json, importlib
+
+    alias_path = ROOT / "data" / "ticker_aliases.json"
+    original = alias_path.read_text()
+    try:
+        alias_path.write_text(json.dumps({"XYZ": ["some corp"]}))
+        importlib.reload(reddit_scraper)
+        assert "some corp" in reddit_scraper.TICKER_NAME_MAP["XYZ"]
+    finally:
+        alias_path.write_text(original)
+        importlib.reload(reddit_scraper)
+
 def test_comment_bucketed(monkeypatch):
     now = datetime.now(timezone.utc)
     df = pd.DataFrame([
@@ -91,3 +105,4 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
     df = reddit_scraper.fetch_reddit_posts("dummy", limit=1)
     ids = set(df["id"]) if not df.empty else set()
     assert ids == {"h1", "n1", "h1_c1"}
+
