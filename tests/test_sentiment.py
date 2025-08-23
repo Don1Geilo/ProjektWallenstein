@@ -12,12 +12,16 @@ def test_analyze_sentiment_keywords():
     assert analyze_sentiment(text) > 0
     text2 = "Time to sell and go short, very bearish"
     assert analyze_sentiment(text2) < 0
+    text3 = "Lasst uns jetzt kaufen, das ist sehr bullisch"
+    assert analyze_sentiment(text3) > 0
+    text4 = "Vielleicht sollten wir verkaufen, es wirkt bärisch"
+    assert analyze_sentiment(text4) < 0
 
 
 def test_aggregate_and_recommendation():
     data = {
-        "NVDA": [{"text": "buy the dip"}, {"text": "bullish"}],
-        "AMZN": [{"text": "sell now"}]
+        "NVDA": [{"text": "buy the dip"}, {"text": "bullish"}, {"text": "kaufen"}],
+        "AMZN": [{"text": "sell now"}, {"text": "verkaufen"}]
     }
     scores = aggregate_sentiment_by_ticker(data)
     assert scores["NVDA"] > 0
