@@ -22,5 +22,9 @@ def notify_telegram(text: str) -> bool:
             log.warning(f"⚠️ Telegram-API Response: {r.text}")
         return ok
     except Exception as e:
+
         log.error(f"❌ Telegram-Error: {e}")
+
+        print(f"❌ Telegram-Error: {e}")
+
         return False
