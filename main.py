@@ -3,6 +3,8 @@ import time
 import logging
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
+import pandas as pd
+import duckdb
 
 # --- .env laden ---
 env_loaded = load_dotenv(find_dotenv(usecwd=True), override=True)
@@ -47,6 +49,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
 from wallenstein.sentiment import analyze_sentiment, derive_recommendation
+from wallenstein.models import train_per_stock
 
 
 # ---------- Main ----------
@@ -84,14 +87,36 @@ def main() -> int:
     log.info(f"USD: {prices_usd}")
 
     sentiments = {}
+    sentiment_frames = {}
     for ticker, texts in reddit_posts.items():
         texts = list(texts)
         if texts:
-            # update_reddit_data returns dicts with keys {"created_utc", "text"}
-            scores = [analyze_sentiment(t["text"]) for t in texts]
-            sentiments[ticker] = sum(scores) / len(scores)
+            df_posts = pd.DataFrame(texts)
+            df_posts["sentiment"] = df_posts["text"].apply(analyze_sentiment)
+            df_posts["date"] = pd.to_datetime(df_posts["created_utc"]).dt.date
+            sentiment_frames[ticker] = df_posts.groupby("date")["sentiment"].mean().reset_index()
+            sentiments[ticker] = df_posts["sentiment"].mean()
         else:
             sentiments[ticker] = 0.0
+            sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
+
+    # Train simple model per stock
+    for ticker in TICKERS:
+        try:
+            with duckdb.connect(DB_PATH) as con:
+                df_price = con.execute(
+                    "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
+                    [ticker],
+                ).fetchdf()
+            df_sent = sentiment_frames.get(ticker, pd.DataFrame(columns=["date", "sentiment"]))
+            df_stock = pd.merge(df_price, df_sent, on="date", how="left")
+            acc = train_per_stock(df_stock)
+            if acc is not None:
+                log.info(f"{ticker}: Modell-Accuracy {acc:.2%}")
+            else:
+                log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
+        except Exception as e:
+            log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
 
     price_lines = []
     sentiment_lines = []
