@@ -34,3 +34,8 @@ def test_aggregate_and_recommendation():
 def test_intensity_and_negation():
     assert analyze_sentiment("This is a strong buy signal") == 2
     assert analyze_sentiment("Bitte nicht kaufen") < 0
+
+
+def test_negation_with_filler_tokens():
+    assert analyze_sentiment("nicht so bullish") < 0
+    assert analyze_sentiment("kein kauf heute") < 0
