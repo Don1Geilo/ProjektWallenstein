@@ -36,3 +36,29 @@ def test_company_name_bucketed(monkeypatch):
     assert len(out["AMZN"]) == 1
     assert "nvidia" in out["NVDA"][0]["text"].lower()
     assert "amazon" in out["AMZN"][0]["text"].lower()
+
+
+def test_extra_subs_env(monkeypatch):
+    called = []
+
+    def fake_fetch(subreddit, limit, top_comments=0):
+        called.append(subreddit)
+        raise RuntimeError("network disabled")
+
+    monkeypatch.setenv("EXTRA_SUBS", "foo, bar")
+    monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", fake_fetch)
+    monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: pd.DataFrame())
+    monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
+
+    reddit_scraper.update_reddit_data([], subreddits=None)
+
+    expected = {
+        "wallstreetbets",
+        "wallstreetbetsGer",
+        "mauerstrassenwetten",
+        "stockmarket",
+        "investing",
+        "foo",
+        "bar",
+    }
+    assert set(called) == expected
