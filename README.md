@@ -34,6 +34,7 @@ python main.py
    └─ sentiment.py
 ```
 
+
 ### Ticker aliases
 
 Extra company name variants can be maintained in `data/ticker_aliases.json`
@@ -49,6 +50,21 @@ list of additional names that should be recognised in Reddit posts:
 
 `reddit_scraper` loads this file on startup and merges it with its built-in
 defaults. If the file is missing, the internal map is used unchanged.
+
+## Sentiment evaluation
+
+The repository ships with a tiny labelled dataset in
+`data/sentiment_labels.csv`. To compare the keyword based sentiment analysis
+with a transformer model, run:
+
+```bash
+python scripts/evaluate_sentiment.py
+```
+
+The script prints accuracy, precision and recall for both approaches. Use the
+`SENTIMENT_BACKEND` environment variable to select the BERT model (default
+`finbert`).
+
 
 ### Notes
 - If you already have your own `stock_data.py`, you can keep it. This repo’s version is robust and compatible with `update_prices(TICKERS)` signature.

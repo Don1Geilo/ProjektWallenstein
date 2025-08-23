@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
+import itertools
 
 import duckdb
 import pandas as pd
@@ -85,10 +86,11 @@ _load_aliases_from_file()
 # Bestehende Funktion von dir
 # ----------------------------
 def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd.DataFrame:
-    """Return hot posts from ``subreddit`` as a ``DataFrame``.
+    """Return hot **and new** posts from ``subreddit`` as a ``DataFrame``.
 
-    Only interacts with the Reddit API; no database reads or writes occur here.
-    Callers can persist the resulting frame if needed.
+    Additionally, the top comments for each post are fetched and returned as
+    separate rows. Only interacts with the Reddit API; no database reads or
+    writes occur here. Callers can persist the resulting frame if needed.
     """
 
     reddit = praw.Reddit(
@@ -98,13 +100,30 @@ def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd
     )
 
     posts = []
-    for post in reddit.subreddit(subreddit).hot(limit=limit):
+    sub = reddit.subreddit(subreddit)
+    for post in itertools.chain(sub.hot(limit=limit), sub.new(limit=limit)):
         posts.append({
             "id": post.id,
             "title": post.title or "",
             "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
             "text": post.selftext or "",
         })
+
+        try:
+            post.comments.replace_more(limit=0)
+        except Exception:
+            continue
+
+        for comment in post.comments[:3]:
+            posts.append({
+                "id": f"{post.id}_{comment.id}",
+                "title": "",
+                "created_utc": datetime.fromtimestamp(
+                    getattr(comment, "created_utc", post.created_utc),
+                    tz=timezone.utc,
+                ),
+                "text": comment.body or "",
+            })
 
     return pd.DataFrame(posts)
 

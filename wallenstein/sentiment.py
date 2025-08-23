@@ -33,6 +33,7 @@ KEYWORD_SCORES: Dict[str, int] = {
     "bullish": 1,
     "buy": 1,
     "kaufen": 1,
+    "kauf": 1,
     "bullisch": 1,
     # negative
     "short": -1,
@@ -55,13 +56,15 @@ def apply_negation(text: str) -> str:
     """Collapse negations so that they can be scored correctly.
 
     The function searches for occurrences of words like ``"nicht"`` or
-    ``"kein"`` that precede another token and prefixes the following word with
-    ``"not_"``.  The negation keyword itself is removed from the text.
+    ``"kein"`` and prefixes a sentiment keyword within the next two tokens
+    with ``"not_"``.  Intermediate filler words are preserved while the
+    negation marker itself is dropped.
 
     Examples
     --------
     ``"nicht kaufen"`` -> ``"not_kaufen"``
     ``"kein sell"`` -> ``"not_sell"``
+    ``"nicht so bullish"`` -> ``"so not_bullish"``
     """
 
     words = text.split()
@@ -69,12 +72,24 @@ def apply_negation(text: str) -> str:
     i = 0
     while i < len(words):
         word = words[i]
-        if word in NEGATION_MARKERS and i + 1 < len(words):
-            result.append(f"not_{words[i + 1]}")
-            i += 2
-        else:
-            result.append(word)
+        if word in NEGATION_MARKERS:
+            target = None
+            for offset in (1, 2):
+                j = i + offset
+                if j < len(words):
+                    candidate = words[j]
+                    if candidate in KEYWORD_SCORES or candidate in INTENSITY_WEIGHTS:
+                        target = j
+                        break
+            if target is not None:
+                result.extend(words[i + 1 : target])
+                result.append(f"not_{words[target]}")
+                i = target + 1
+                continue
             i += 1
+            continue
+        result.append(word)
+        i += 1
     return " ".join(result)
 
 

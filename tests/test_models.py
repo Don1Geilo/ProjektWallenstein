@@ -17,9 +17,12 @@ def test_train_per_stock_basic():
         "close": [1, 2, 1.5, 1.8, 2.2, 2.1, 2.3, 2.5, 2.4, 2.6],
         "sentiment": [0.1, -0.2, 0.0, 0.3, 0.5, -0.1, 0.2, 0.1, -0.2, 0.3],
     })
-    acc = train_per_stock(df)
+    acc, f1 = train_per_stock(df, use_kfold=True, n_splits=3)
+    print(f"Accuracy: {acc:.3f}, F1: {f1:.3f}")
     assert acc is not None
+    assert f1 is not None
     assert 0.0 <= acc <= 1.0
+    assert 0.0 <= f1 <= 1.0
 
 
 def test_train_per_stock_insufficient_classes():
@@ -29,5 +32,5 @@ def test_train_per_stock_insufficient_classes():
         "close": [1, 1, 1, 1, 1],  # no variation -> only one class
         "sentiment": [0, 0, 0, 0, 0],
     })
-    acc = train_per_stock(df)
-    assert acc is None
+    acc, f1 = train_per_stock(df)
+    assert acc is None and f1 is None
