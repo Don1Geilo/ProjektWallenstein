@@ -18,6 +18,10 @@ python main.py
 - `WALLENSTEIN_DB_PATH` = path to DuckDB (default `data/wallenstein.duckdb`)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (optional alerts)
 - `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` (optional for true Reddit scraping)
+- `USE_BERT_SENTIMENT` = choose sentiment backend. When unset the app uses a
+  BERT model if the `transformers` package is available, otherwise a lightweight
+  keyword approach. Set to `1`/`true` to force BERT or `0`/`false` to force the
+  keyword method.
 
 ### Structure
 ```
@@ -63,7 +67,9 @@ python scripts/evaluate_sentiment.py
 
 The script prints accuracy, precision and recall for both approaches. Use the
 `SENTIMENT_BACKEND` environment variable to select the BERT model (default
-`finbert`).
+`finbert`). Sentiment analysis uses a BERT model automatically when
+`transformers` is installed. Set `USE_BERT_SENTIMENT=0` to force the lightweight
+keyword approach or `USE_BERT_SENTIMENT=1` to explicitly enable the BERT path.
 
 
 ### Notes
