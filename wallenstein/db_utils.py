@@ -21,13 +21,6 @@ def _ensure_fx_table(con: duckdb.DuckDBPyConnection) -> None:
             rate_usd_per_eur DOUBLE
         )
     """)
-def _view_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
-    q = "SELECT COUNT(*) FROM information_schema.views WHERE lower(table_name) = ?"
-    return bool(con.execute(q, [name.lower()]).fetchone()[0])
-
-def _table_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
-    q = "SELECT COUNT(*) FROM information_schema.tables WHERE lower(table_name) = ?"
-    return bool(con.execute(q, [name.lower()]).fetchone()[0])
 
 def _resolve_prices_view_name(con: duckdb.DuckDBPyConnection) -> Optional[str]:
     """Gibt 'stocks' oder 'stocks_view' zurück, wenn View existiert; sonst None."""
