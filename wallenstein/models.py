@@ -26,7 +26,7 @@ def train_per_stock(df_stock: pd.DataFrame) -> Optional[float]:
         return None
 
     df = df_stock.sort_values("date").copy()
-    df["sentiment"] = df["sentiment"].fillna(0)
+    df["sentiment"] = df["sentiment"].fillna(0).infer_objects(copy=False)
 
     # Lagged features
     df["Close_lag1"] = df["close"].shift(1)
