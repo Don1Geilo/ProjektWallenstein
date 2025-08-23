@@ -30,9 +30,6 @@ TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # --- Projekt‑Module ---
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
-from wallenstein.broker_targets import fetch_many
-from wallenstein.db_targets import save_snapshots
-from wallenstein.export_targets import export_latest_targets
 
 # ---------- Utils ----------
 def send_telegram(text: str) -> None:
@@ -74,11 +71,11 @@ def main() -> int:
     except Exception as e:
         log.error(f"❌ FX-Update fehlgeschlagen: {e}")
 
-    snapshots = fetch_many(TICKERS)
-    for snap in snapshots:
-        print(snap)        # or use log.info(snap)
-    save_snapshots(DB_PATH, snapshots)
-    df = export_latest_targets(DB_PATH, Path(STOCK_OVERVIEW_DIR) / "targets.csv", TICKERS)
+    # snapshots = fetch_many(TICKERS)
+    # for snap in snapshots:
+    #     print(snap)        # or use log.info(snap)
+    # save_snapshots(DB_PATH, snapshots)
+    # df = export_latest_targets(DB_PATH, Path(STOCK_OVERVIEW_DIR) / "targets.csv", TICKERS)
 
     ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
     prices_usd = get_latest_prices(DB_PATH, TICKERS, use_eur=False)
@@ -95,14 +92,14 @@ def main() -> int:
         )
     )
 
-    def _fmt(v: float) -> str:
-        return f"{v:.0f}" if isinstance(v, (int, float)) and v == v else "n/a"
+    # def _fmt(v: float) -> str:
+    #     return f"{v:.0f}" if isinstance(v, (int, float)) and v == v else "n/a"
 
-    lines = [
-        f"{r.ticker}: {_fmt(r.target_mean)} USD (High {_fmt(r.target_high)} / Low {_fmt(r.target_low)}) – {r.rec_text or 'n/a'}"
-        for r in df.itertuples()
-    ]
-    send_telegram("🎯 Analyst Targets\n" + "\n".join(lines))
+    # lines = [
+    #     f"{r.ticker}: {_fmt(r.target_mean)} USD (High {_fmt(r.target_high)} / Low {_fmt(r.target_low)}) – {r.rec_text or 'n/a'}"
+    #     for r in df.itertuples()
+    # ]
+    # send_telegram("🎯 Analyst Targets\n" + "\n".join(lines))
 
     log.info(f"🏁 Fertig in {time.time() - t0:.1f}s")
     return 0
