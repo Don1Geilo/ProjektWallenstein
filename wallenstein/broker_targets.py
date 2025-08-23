@@ -117,6 +117,7 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
         return data
 
     try:
+       codex/update-broker_targets.py-for-price-target-changes-v9e8r5
         if isinstance(data, list) and data:
             item = data[0]
         elif isinstance(data, dict):
@@ -125,6 +126,13 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
             item = {}
         out.update(_parse_price_target_item(item))
     except Exception as e:  # pragma: no cover - defensive
+
+        item = data[0] if isinstance(data, list) and data else {}
+        out["target_mean"] = _pos(_sf(item.get("targetConsensus")))
+        out["target_high"] = _pos(_sf(item.get("targetHigh")))
+        out["target_low"] = _pos(_sf(item.get("targetLow")))
+    except Exception as e:
+       main
         log.warning(f"[{ticker}] price-target error: {e}")
     return out
 
