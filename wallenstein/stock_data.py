@@ -13,18 +13,14 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import yfinance as yf
 
-# ===============================
-# Konfiguration
-# ===============================
+# ---- Configuration ----
 MAX_RETRIES = 3
 CHUNK_SIZE = 20
 
 # Datenquelle: stooq (default) | hybrid | yahoo
 DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "stooq").strip().lower()
 
-# ===============================
-# DuckDB Helpers
-# ===============================
+# ---- DuckDB Helpers ----
 def _connect(db_path: str) -> duckdb.DuckDBPyConnection:
     return duckdb.connect(db_path)
 
@@ -74,9 +70,7 @@ def _latest_dates_per_ticker(con: duckdb.DuckDBPyConnection, tickers: List[str])
 def _retry_sleep(attempt: int):
     time.sleep(1.0 * (2 ** attempt))  # 1s, 2s, 4s
 
-# ===============================
-# Stooq (stabil, CSV)
-# ===============================
+# ---- Stooq (stable, CSV) ----
 def _stooq_symbol(t: str) -> str:
     # Stooq erwartet z.B. nvda.us, amzn.us, smci.us
     return f"{t.lower()}.us"
@@ -116,9 +110,7 @@ def _stooq_fetch_many(tickers: List[str], start: Optional[pd.Timestamp] = None) 
         return pd.DataFrame(columns=["date","ticker","open","high","low","close","adj_close","volume"])
     return pd.concat(out, ignore_index=True)
 
-# ===============================
-# Yahoo (nur als optionaler Fallback)
-# ===============================
+# ---- Yahoo (optional fallback) ----
 def _make_session(user_agent: Optional[str] = None) -> requests.Session:
     s = requests.Session()
     s.headers.update({
@@ -186,9 +178,7 @@ def _yahoo_fetch_many(tickers: List[str], start: Optional[pd.Timestamp] = None) 
         return pd.DataFrame()
     return pd.concat(results, ignore_index=True)
 
-# ===============================
-# Public API
-# ===============================
+# ---- Public API ----
 def update_prices(db_path: str, tickers: List[str]) -> int:
     """
     Schreibt Daily‑Kurse ins DuckDB‑Schema 'prices'.
