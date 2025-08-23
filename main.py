@@ -75,6 +75,8 @@ def main() -> int:
         log.error(f"❌ FX-Update fehlgeschlagen: {e}")
 
     snapshots = fetch_many(TICKERS)
+    for snap in snapshots:
+        print(snap)        # or use log.info(snap)
     save_snapshots(DB_PATH, snapshots)
     df = export_latest_targets(DB_PATH, Path(STOCK_OVERVIEW_DIR) / "targets.csv", TICKERS)
 
