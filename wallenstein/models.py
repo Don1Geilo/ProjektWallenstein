@@ -26,6 +26,7 @@ def train_per_stock(df_stock: pd.DataFrame) -> Optional[float]:
         return None
 
     df = df_stock.sort_values("date").copy()
+    # Convert sentiment to numeric and replace invalid entries with 0
     df["sentiment"] = pd.to_numeric(df["sentiment"], errors="coerce").fillna(0)
 
     # Lagged features
