@@ -134,12 +134,24 @@ def update_reddit_data(
             con.execute(
                 """
                 CREATE TABLE IF NOT EXISTS reddit_posts (
-                    id VARCHAR PRIMARY KEY,
+                    id VARCHAR,
                     title VARCHAR,
                     created_utc TIMESTAMP,
                     text VARCHAR
                 )
                 """
+            )
+            # Ensure uniqueness on id for existing tables
+            con.execute(
+                """
+                DELETE FROM reddit_posts
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM reddit_posts GROUP BY id
+                )
+                """
+            )
+            con.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)"
             )
             con.register("df_all", df_all)
             con.execute(
