@@ -12,7 +12,7 @@ Broker-target support is temporarily disabled pending a new data provider.
 pip install -r requirements.txt
 cp .env.example .env   # and fill values
 python main.py
-python telegram_bot.py  # optional: interactive Telegram bot
+python telegram_bot.py  # optional: interactive Telegram bot; use !<ticker>
 ```
 
 ### ENV (via `.env` or system env)
@@ -76,16 +76,18 @@ picked up immediately.
 
 ## Telegram Bot
 
-Start a small bot that reacts to messages like ``!NVDA`` and returns the number
-of matching Reddit posts:
+Start a small bot that reacts to messages like ``!NVDA`` and returns a price
+and sentiment overview for the requested ticker:
 
 ```bash
 python telegram_bot.py
 ```
 
-The bot uses ``reddit_scraper.update_reddit_data`` internally.  Set
-``TELEGRAM_BOT_TOKEN`` (and optionally ``TELEGRAM_CHAT_ID`` for the broadcast
-helper ``notify_telegram``) in your environment or ``.env`` file.
+In Telegram chat send ``!<ticker>`` to get the latest Wallenstein overview.
+`main.py` continues to run independently (manually or via GitHub Actions) to
+update the data. Configure ``TELEGRAM_BOT_TOKEN`` (and optionally
+``TELEGRAM_CHAT_ID`` for the broadcast helper ``notify_telegram``) in your
+environment or ``.env`` file.
 
 ## Sentiment evaluation
 

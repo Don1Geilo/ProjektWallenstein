@@ -52,7 +52,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # --- Projekt‑Module ---
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
-from wallenstein.sentiment import analyze_sentiment_batch, derive_recommendation
+from wallenstein.sentiment import analyze_sentiment_batch
+from wallenstein.overview import generate_overview
 from wallenstein.models import train_per_stock
 
 
@@ -128,22 +129,7 @@ def main() -> int:
         except Exception as e:
             log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
 
-    price_lines = []
-    sentiment_lines = []
-    for t in TICKERS:
-        price = prices_usd.get(t)
-        if price is not None:
-            price_lines.append(f"{t}: {price:.2f} USD")
-        else:
-            price_lines.append(f"{t}: n/a")
-
-        sent = sentiments.get(t, 0.0)
-        rec = derive_recommendation(sent)
-        sentiment_lines.append(f"{t}: Sentiment {sent:+.2f} | {rec}")
-
-    notify_telegram(
-        "📊 Wallenstein Übersicht\n" + "\n".join(price_lines + sentiment_lines)
-    )
+    notify_telegram(generate_overview(TICKERS))
 
     log.info(f"🏁 Fertig in {time.time() - t0:.1f}s")
     return 0
