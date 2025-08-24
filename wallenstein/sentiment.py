@@ -9,10 +9,22 @@ import importlib.util
 import logging
 import os
 from typing import Dict, Iterable
+import re
+from functools import lru_cache
 
 
 logger = logging.getLogger(__name__)
 _keyword_hint_logged = False
+
+_url_re = re.compile(r"https?://\S+")
+
+
+@lru_cache(maxsize=1024)
+def _preprocess(text: str) -> str:
+    """Return a normalised version of ``text`` suitable for analysis."""
+
+    text = _url_re.sub(" ", text)
+    return text.lower().strip()
 
 
 def _transformers_available() -> bool:
@@ -58,6 +70,10 @@ KEYWORD_SCORES: Dict[str, int] = {
     "bullisch": 1,
     "moon": 1,
     "pump": 1,
+    "yolo": 1,
+    "fomo": 1,
+    "hodl": 1,
+    "btfd": 1,
     # negative
     "short": -1,
     "put": -1,
@@ -68,6 +84,8 @@ KEYWORD_SCORES: Dict[str, int] = {
     "bärisch": -1,
     "dip": -1,
     "dump": -1,
+    "fud": -1,
+    "crash": -1,
 }
 
 # extend keyword scores with simple intensity phrases and negated forms
@@ -201,7 +219,11 @@ def analyze_sentiment(text: str) -> float:
         else:
             _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
 
-    text = apply_negation(text.lower())
+    return _keyword_score_cached(_preprocess(text))
+
+
+def _keyword_score(text: str) -> float:
+    text = apply_negation(text)
     tokens = text.split()
     score = 0
     i = 0
@@ -215,6 +237,9 @@ def analyze_sentiment(text: str) -> float:
         score += KEYWORD_SCORES.get(token, 0) * multiplier
         i += 1
     return score
+
+
+_keyword_score_cached = lru_cache(maxsize=2048)(_keyword_score)
 
 
 def analyze_sentiment_batch(texts: list[str]) -> list[float]:
@@ -238,10 +263,10 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
                 _log_keyword_hint(
                     "BERT sentiment requested but unavailable; using keyword approach"
                 )
-                return [analyze_sentiment(t) for t in texts]
+                return [_keyword_score_cached(_preprocess(t)) for t in texts]
         else:
             _log_keyword_hint("Keyword sentiment forced via USE_BERT_SENTIMENT")
-            return [analyze_sentiment(t) for t in texts]
+            return [_keyword_score_cached(_preprocess(t)) for t in texts]
     else:
         if _transformers_available():
             try:
@@ -250,12 +275,12 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
                 results = _bert_analyzer(texts)
             except Exception:  # pragma: no cover - defensive
                 _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
-                return [analyze_sentiment(t) for t in texts]
+                return [_keyword_score_cached(_preprocess(t)) for t in texts]
         else:
             _log_keyword_hint(
                 "transformers not installed; using keyword sentiment analysis"
             )
-            return [analyze_sentiment(t) for t in texts]
+            return [_keyword_score_cached(_preprocess(t)) for t in texts]
 
     scores: list[float] = []
     for data in results:
