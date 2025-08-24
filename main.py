@@ -131,9 +131,11 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
             # Erwartete Spalte: "created_utc" (Unix oder ISO)
             if "created_utc" in df_posts:
-                df_posts["date"] = pd.to_datetime(
-                    df_posts["created_utc"], errors="coerce", utc=True
-                ).dt.tz_localize(None).normalize()
+                df_posts["date"] = (
+                    pd.to_datetime(df_posts["created_utc"], errors="coerce", utc=True)
+                    .dt.tz_localize(None)
+                    .dt.normalize()
+                )
             else:
                 df_posts["date"] = pd.NaT
 
