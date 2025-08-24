@@ -2,6 +2,7 @@ import os
 import io
 import json
 import time
+import logging
 from typing import List, Optional
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,8 @@ CHUNK_SIZE = 20
 # Datenquelle: stooq (default, mit Yahoo-Fallback) | yahoo
 # 'hybrid' bleibt aus Kompatibilitätsgründen als Alias zu stooq bestehen
 DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "stooq").strip().lower()
+
+log = logging.getLogger(__name__)
 
 # ---- DuckDB Helpers ----
 def _connect(db_path: str) -> duckdb.DuckDBPyConnection:
@@ -180,6 +183,9 @@ def _download_single_safe(ticker: str, session: requests.Session, start=None, pe
                         df[c] = pd.NA
                 df["date"] = pd.to_datetime(df["date"]).dt.date
                 return df[["date","ticker","open","high","low","close","adj_close","volume"]]
+            else:
+                log.warning(f"{ticker}: no trading data for start date {use_start}")
+                return pd.DataFrame(columns=["date","ticker","open","high","low","close","adj_close","volume"])
         except json.JSONDecodeError:
             _retry_sleep(attempt); continue
         except Exception:
@@ -218,18 +224,29 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
     last_map = _latest_dates_per_ticker(con, tickers)
     all_rows = []
 
+    session = None
+    if DATA_SOURCE in ("yahoo", "hybrid"):
+        session = _make_session()
+
+    today = pd.Timestamp.utcnow().normalize()
+    last_trading_day = pd.bdate_range(end=today, periods=1)[0]
+
     for i in range(0, len(tickers), CHUNK_SIZE):
         chunk = tickers[i:i + CHUNK_SIZE]
-
-        # Chunk‑Start = min(last_date+1) über Ticker (falls vorhanden)
-        starts = []
         for t in chunk:
             ld = last_map.get(t)
-            if pd.notna(ld):
-                starts.append(pd.to_datetime(ld).date() + timedelta(days=1))
-        start = min(starts) if starts else None
+            start = pd.to_datetime(ld).date() + timedelta(days=1) if pd.notna(ld) else None
+            if start is not None and pd.to_datetime(start) > last_trading_day:
+                continue
+            df_t = pd.DataFrame()
+            if DATA_SOURCE in ("stooq", "hybrid", ""):
+                df_t = _stooq_fetch_one(t, start=start)
 
-        df_chunk = pd.DataFrame()
+            if DATA_SOURCE == "hybrid" and (df_t is None or df_t.empty):
+                df_t = _download_single_safe(t, session, start=start, period="1mo")
+
+            if DATA_SOURCE == "yahoo":
+                df_t = _download_single_safe(t, session, start=start, period="1mo")
 
         if DATA_SOURCE == "yahoo":
             df_chunk = _yahoo_fetch_many(chunk, start=start)
@@ -245,23 +262,17 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
                 elif df_fb is not None and not df_fb.empty:
                     df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
 
-        if df_chunk is None or df_chunk.empty:
-            continue
+            if df_t is None or df_t.empty:
+                continue
 
-        # Delta-Filter sicherheitshalber je Ticker
-        out = []
-        for t in chunk:
-            sub = df_chunk[df_chunk["ticker"].eq(t)].copy()
-            ld = last_map.get(t)
             if pd.notna(ld):
-                sub = sub[pd.to_datetime(sub["date"]) > pd.to_datetime(ld)]
-            if not sub.empty:
-                out.append(sub[["date","ticker","open","high","low","close","adj_close","volume"]])
-
-        if out:
-            all_rows.append(pd.concat(out, ignore_index=True))
+                df_t = df_t[pd.to_datetime(df_t["date"]) > pd.to_datetime(ld)]
+            if not df_t.empty:
+                all_rows.append(df_t[["date","ticker","open","high","low","close","adj_close","volume"]])
 
     if not all_rows:
+        if session is not None:
+            session.close()
         con.close()
         return 0
 
@@ -277,6 +288,8 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
     """)
 
     n = len(df_all)
+    if session is not None:
+        session.close()
     con.close()
     return n
 def _ensure_fx_table(con):

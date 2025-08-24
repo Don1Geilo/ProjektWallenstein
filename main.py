@@ -69,6 +69,20 @@ from wallenstein.models import train_per_stock
 def main() -> int:
     t0 = time.time()
     log.info("🚀 Start Wallenstein: Pipeline-Run")
+
+
+    # 1) Kurse aktualisieren
+    try:
+        added = update_prices(DB_PATH, TICKERS)
+        if added:
+            log.info(f"✅ Kursdaten aktualisiert: +{added} neue Zeilen")
+    except Exception as e:
+        log.error(f"❌ Kursupdate fehlgeschlagen: {e}")
+
+    # 2) Reddit-Daten aktualisieren
+    try:
+        reddit_posts = update_reddit_data(
+
     reddit_posts = {t: [] for t in TICKERS}
     added = 0
     fx_added = 0
