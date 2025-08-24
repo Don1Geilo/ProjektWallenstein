@@ -20,8 +20,9 @@ from wallenstein import reddit_scraper
 def test_company_name_bucketed(monkeypatch):
     now = datetime.now(timezone.utc)
     df = pd.DataFrame([
-        {"id": "1", "title": "Nvidia launches new GPU", "created_utc": now, "text": ""},
-        {"id": "2", "title": "", "created_utc": now, "text": "I ordered something on Amazon"},
+        {"id": "1", "title": "Nividia launches new GPU", "created_utc": now, "text": ""},
+        {"id": "2", "title": "", "created_utc": now, "text": "I ordered something on Amzon"},
+        {"id": "3", "title": "", "created_utc": now, "text": "Rheiner secures big contract"},
     ])
 
     def fake_fetch(*args, **kwargs):
@@ -31,12 +32,13 @@ def test_company_name_bucketed(monkeypatch):
     monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df)
     monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
 
-    out = reddit_scraper.update_reddit_data(["NVDA", "AMZN"], subreddits=None)
+    out = reddit_scraper.update_reddit_data(["NVDA", "AMZN", "RHM"], subreddits=None)
     assert len(out["NVDA"]) == 1
     assert len(out["AMZN"]) == 1
-    assert "nvidia" in out["NVDA"][0]["text"].lower()
-    assert "amazon" in out["AMZN"][0]["text"].lower()
-
+    assert len(out["RHM"]) == 1
+    assert "nividia" in out["NVDA"][0]["text"].lower()
+    assert "amzon" in out["AMZN"][0]["text"].lower()
+    assert "rheiner" in out["RHM"][0]["text"].lower()
 
 
 def test_aliases_loaded_from_file():
@@ -52,11 +54,12 @@ def test_aliases_loaded_from_file():
         alias_path.write_text(original)
         importlib.reload(reddit_scraper)
 
+
 def test_comment_bucketed(monkeypatch):
     now = datetime.now(timezone.utc)
     df = pd.DataFrame([
         {"id": "10", "title": "", "created_utc": now, "text": ""},
-        {"id": "10_c1", "title": "", "created_utc": now, "text": "Tesla to the moon"},
+        {"id": "10_c1", "title": "", "created_utc": now, "text": "Tesler to the moon"},
     ])
 
     monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", lambda *a, **k: df)
@@ -65,7 +68,7 @@ def test_comment_bucketed(monkeypatch):
 
     out = reddit_scraper.update_reddit_data(["TSLA"], subreddits=None)
     assert len(out["TSLA"]) == 1
-    assert "tesla" in out["TSLA"][0]["text"].lower()
+    assert "tesler" in out["TSLA"][0]["text"].lower()
 
 
 def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
@@ -105,4 +108,3 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
     df = reddit_scraper.fetch_reddit_posts("dummy", limit=1, include_comments=True)
     ids = set(df["id"]) if not df.empty else set()
     assert ids == {"h1", "n1", "h1_c1"}
-
