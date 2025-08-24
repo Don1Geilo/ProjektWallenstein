@@ -112,15 +112,22 @@ def _stooq_fetch_one(ticker: str,
         return pd.DataFrame()
 
 
-def _stooq_fetch_many(tickers: List[str],
-                      start: Optional[pd.Timestamp] = None) -> pd.DataFrame:
-    """Fetch multiple tickers from Stooq concurrently."""
+def _stooq_fetch_many(
+    tickers: List[str], start_map: Optional[dict[str, pd.Timestamp]] = None
+) -> pd.DataFrame:
+    """Fetch multiple tickers from Stooq concurrently.
+
+    Each ticker can have its own start date via ``start_map``.
+    """
     if not tickers:
-        return pd.DataFrame(columns=["date","ticker","open","high","low","close","adj_close","volume"])
+        return pd.DataFrame(
+            columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
+        )
 
     results: List[pd.DataFrame] = []
 
     def _fetch(t: str) -> pd.DataFrame:
+        start = start_map.get(t) if start_map else None
         return _stooq_fetch_one(t, start=start)
 
     with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as ex:
@@ -131,7 +138,9 @@ def _stooq_fetch_many(tickers: List[str],
                 results.append(df)
 
     if not results:
-        return pd.DataFrame(columns=["date","ticker","open","high","low","close","adj_close","volume"])
+        return pd.DataFrame(
+            columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
+        )
     return pd.concat(results, ignore_index=True)
 
 # ---- Yahoo (optional fallback) ----
@@ -192,11 +201,29 @@ def _download_single_safe(ticker: str, session: requests.Session, start=None, pe
             _retry_sleep(attempt); continue
     return pd.DataFrame(columns=["date","ticker","open","high","low","close","adj_close","volume"])
 
-def _yahoo_fetch_many(tickers: List[str], start: Optional[pd.Timestamp] = None) -> pd.DataFrame:
-    session = _make_session()
+def _yahoo_fetch_many(
+    tickers: List[str],
+    start_map: Optional[dict[str, pd.Timestamp]] = None,
+    session: Optional[requests.Session] = None,
+) -> pd.DataFrame:
+    """Fetch multiple tickers from Yahoo concurrently.
+
+    A shared ``session`` can be supplied and each ticker may have its own
+    start date via ``start_map``.
+    """
+    sess = session or _make_session()
     results = []
     with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as ex:
-        futures = {ex.submit(_download_single_safe, t, session, start=start, period="1mo"): t for t in tickers}
+        futures = {
+            ex.submit(
+                _download_single_safe,
+                t,
+                sess,
+                start=start_map.get(t) if start_map else None,
+                period="1mo",
+            ): t
+            for t in tickers
+        }
         for fut in as_completed(futures):
             df = fut.result()
             if df is not None and not df.empty:
@@ -228,45 +255,57 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
     if DATA_SOURCE in ("yahoo", "hybrid"):
         session = _make_session()
 
-    today = pd.Timestamp.utcnow().normalize()
-    last_trading_day = pd.bdate_range(end=today, periods=1)[0]
+    today = pd.Timestamp.utcnow().tz_localize(None).normalize()
+    last_trading_day = pd.bdate_range(end=today, periods=1)[0].tz_localize(None)
+
+    # Vorbereiten: Start-Datum pro Ticker normalisieren
+    start_map: dict[str, Optional[pd.Timestamp]] = {}
+    for t in tickers:
+        ld = last_map.get(t)
+        if pd.notna(ld):
+            ld_ts = pd.to_datetime(ld).tz_localize(None)
+            start_map[t] = ld_ts.date() + timedelta(days=1)
+        else:
+            start_map[t] = None
 
     for i in range(0, len(tickers), CHUNK_SIZE):
         chunk = tickers[i:i + CHUNK_SIZE]
+
+        # Start-Tage, die nach dem letzten Handelstag liegen, überspringen
+        chunk_valid = []
         for t in chunk:
-            ld = last_map.get(t)
-            start = pd.to_datetime(ld).date() + timedelta(days=1) if pd.notna(ld) else None
-            if start is not None and pd.to_datetime(start) > last_trading_day:
+            start = start_map.get(t)
+            if start is not None and pd.to_datetime(start).tz_localize(None) > last_trading_day:
                 continue
-            df_t = pd.DataFrame()
-            if DATA_SOURCE in ("stooq", "hybrid", ""):
-                df_t = _stooq_fetch_one(t, start=start)
-
-            if DATA_SOURCE == "hybrid" and (df_t is None or df_t.empty):
-                df_t = _download_single_safe(t, session, start=start, period="1mo")
-
-            if DATA_SOURCE == "yahoo":
-                df_t = _download_single_safe(t, session, start=start, period="1mo")
+            chunk_valid.append(t)
+        if not chunk_valid:
+            continue
 
         if DATA_SOURCE == "yahoo":
-            df_chunk = _yahoo_fetch_many(chunk, start=start)
+            df_chunk = _yahoo_fetch_many(chunk_valid, start_map=start_map, session=session)
         else:
-            df_chunk = _stooq_fetch_many(chunk, start=start)
+            df_chunk = _stooq_fetch_many(chunk_valid, start_map=start_map)
 
             # Fallback: fehlende Ticker via Yahoo nachladen
-            missing = [t for t in chunk if df_chunk[df_chunk["ticker"].eq(t)].empty]
+            missing = [t for t in chunk_valid if df_chunk[df_chunk["ticker"].eq(t)].empty]
             if missing:
-                df_fb = _yahoo_fetch_many(missing, start=start)
+                df_fb = _yahoo_fetch_many(missing, start_map=start_map, session=session)
                 if df_chunk is None or df_chunk.empty:
                     df_chunk = df_fb
                 elif df_fb is not None and not df_fb.empty:
                     df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
 
-            if df_t is None or df_t.empty:
-                continue
+        if df_chunk is None or df_chunk.empty:
+            continue
 
+        for t in chunk_valid:
+            df_t = df_chunk[df_chunk["ticker"].eq(t)]
+            if df_t.empty:
+                continue
+            ld = last_map.get(t)
             if pd.notna(ld):
-                df_t = df_t[pd.to_datetime(df_t["date"]) > pd.to_datetime(ld)]
+                ld_ts = pd.to_datetime(ld).tz_localize(None)
+                df_t = df_t[pd.to_datetime(df_t["date"]).dt.tz_localize(None) > ld_ts]
             if not df_t.empty:
                 all_rows.append(df_t[["date","ticker","open","high","low","close","adj_close","volume"]])
 
