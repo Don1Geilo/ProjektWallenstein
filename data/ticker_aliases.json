@@ -1,9 +1,10 @@
 {
-    "NVDA": ["nvidia"],
-    "AMZN": ["amazon"],
-    "AAPL": ["apple"],
-    "MSFT": ["microsoft"],
-    "GOOG": ["google", "alphabet"],
-    "META": ["facebook", "meta"],
-    "TSLA": ["tesla"]
+    "NVDA": ["nvidia", "nividia", "nvidea"],
+    "AMZN": ["amazon", "amzon", "amazn"],
+    "AAPL": ["apple", "aple", "appl"],
+    "MSFT": ["microsoft", "micosoft", "micro soft"],
+    "GOOG": ["google", "alphabet", "googel", "gogle"],
+    "META": ["facebook", "meta", "metta", "facebok"],
+    "TSLA": ["tesla", "tesler", "tesal"],
+    "RHM": ["rheinmetall", "rheiner"]
 }
