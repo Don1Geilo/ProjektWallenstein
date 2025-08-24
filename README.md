@@ -72,6 +72,18 @@ The script prints accuracy, precision and recall for both approaches. Use the
 keyword approach or `USE_BERT_SENTIMENT=1` to explicitly enable the BERT path.
 
 
+## Saving Reddit snapshots
+
+To store the raw Reddit data for offline inspection or to feed the model
+without network access, run:
+
+```bash
+python scripts/fetch_reddit_posts.py --subreddit wallstreetbets --limit 50
+```
+
+The command writes a JSON file to `data/reddit_posts.json` containing the
+queried posts and comments.
+
 ### Notes
 - If you already have your own `stock_data.py`, you can keep it. This repo’s version is robust and compatible with `update_prices(TICKERS)` signature.
 - GitHub push safe: no secrets, data folder is empty (with `.gitkeep`).
