@@ -102,7 +102,7 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
 
     monkeypatch.setattr(reddit_scraper.praw, "Reddit", lambda **k: FakeReddit())
 
-    df = reddit_scraper.fetch_reddit_posts("dummy", limit=1)
+    df = reddit_scraper.fetch_reddit_posts("dummy", limit=1, include_comments=True)
     ids = set(df["id"]) if not df.empty else set()
     assert ids == {"h1", "n1", "h1_c1"}
 
