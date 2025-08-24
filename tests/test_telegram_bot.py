@@ -16,14 +16,13 @@ class DummyMessage:
 def test_handle_ticker(monkeypatch):
     called = {}
 
-    def fake_update(tickers):
+    def fake_overview(tickers):
         called['tickers'] = tickers
-        return {tickers[0]: [1, 2]}
+        return 'OVERVIEW'
 
-    monkeypatch.setattr('telegram_bot.update_reddit_data', fake_update)
-    monkeypatch.setattr('telegram_bot.notify_telegram', lambda msg: None)
+    monkeypatch.setattr('telegram_bot.generate_overview', fake_overview)
     update = types.SimpleNamespace(message=DummyMessage('!nvda'))
     context = types.SimpleNamespace()
     asyncio.run(handle_ticker(update, context))
     assert called['tickers'] == ['NVDA']
-    assert update.message.replies == ['NVDA: 2 Reddit posts gefunden.']
+    assert update.message.replies == ['OVERVIEW']
