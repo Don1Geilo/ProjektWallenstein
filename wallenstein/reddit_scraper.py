@@ -48,27 +48,53 @@ TICKER_NAME_MAP: Dict[str, List[str]] = {
 }
 
 
-def _load_aliases_from_file() -> None:
-    """Merge additional ticker aliases from JSON/YAML file."""
+def _load_aliases_from_file(
+    path: str | Path | None = None, aliases: Dict[str, List[str]] | None = None
+) -> None:
+    """Merge additional ticker aliases from a dict or JSON/YAML file.
 
+    Parameters
+    ----------
+    path:
+        Optional file path pointing to a JSON or YAML file containing alias
+        mappings. When provided the file is parsed on every call.
+    aliases:
+        Optional in-memory mapping ``{"TICKER": ["alias1", ...]}`` that is
+        merged directly into :data:`TICKER_NAME_MAP`.
+    """
+
+    # 1) Merge explicit alias mapping first
+    if aliases:
+        for tkr, names in aliases.items():
+            if not isinstance(names, list):
+                continue
+            bucket = TICKER_NAME_MAP.setdefault(tkr.upper(), [])
+            for name in names:
+                name = str(name).lower()
+                if name not in bucket:
+                    bucket.append(name)
+
+    # 2) Determine candidate file paths
     root = Path(__file__).resolve().parents[1]
-    candidates = [
+    candidates = [Path(path)] if path else [
         root / "data" / "ticker_aliases.json",
         root / "data" / "ticker_aliases.yaml",
         root / "data" / "ticker_aliases.yml",
     ]
 
-    for path in candidates:
-        if not path.exists():
+    for candidate in candidates:
+        if not candidate.exists():
             continue
         try:
-            with path.open("r", encoding="utf-8") as fh:
-                if path.suffix == ".json":
+            with candidate.open("r", encoding="utf-8") as fh:
+                if candidate.suffix == ".json":
                     data = json.load(fh)
-                elif path.suffix in {".yaml", ".yml"} and yaml:
+                elif candidate.suffix in {".yaml", ".yml"} and yaml:
                     data = yaml.safe_load(fh)
                 else:
-                    log.warning("Unsupported ticker alias file format: %s", path)
+                    log.warning(
+                        "Unsupported ticker alias file format: %s", candidate
+                    )
                     data = {}
 
             for tkr, names in data.items():
@@ -80,7 +106,9 @@ def _load_aliases_from_file() -> None:
                     if name not in bucket:
                         bucket.append(name)
         except Exception as exc:  # pragma: no cover - defensive
-            log.warning("Could not load ticker aliases from %s: %s", path, exc)
+            log.warning(
+                "Could not load ticker aliases from %s: %s", candidate, exc
+            )
         break  # use first existing file only
 
 
@@ -203,16 +231,35 @@ def update_reddit_data(
     subreddits: List[str] | None = None,
     limit_per_sub: int = 50,
     include_comments: bool = False,
+    aliases_path: str | Path | None = None,
+    aliases: Dict[str, List[str]] | None = None,
 ) -> Dict[str, List[dict]]:
     """Scrape, persist and organise Reddit posts.
 
-    Posts from every subreddit are combined into a single DataFrame before new
-    entries are merged into the ``reddit_posts`` table.  Afterwards, rows older
-    than ``DATA_RETENTION_DAYS`` are purged to keep the table small.  Returns a
-    mapping such as
-    ``{"NVDA": [{"created_utc": <timestamp>, "text": "..."}, ...]}`` where each
-    entry contains the post timestamp and text.
+    Parameters
+    ----------
+    tickers:
+        Symbols that should be matched in the collected posts.
+    subreddits:
+        Optional list of subreddits. Falls back to a small default set.
+    limit_per_sub:
+        Number of posts to fetch per subreddit.
+    include_comments:
+        Whether to also scan a few top-level comments.
+    aliases_path / aliases:
+        Extra ticker alias definitions.  ``aliases_path`` points to a JSON/YAML
+        file that is reloaded on every call. ``aliases`` is an in-memory mapping
+        in the same format.  Both are merged into
+        :data:`TICKER_NAME_MAP` before processing.
+
+    Returns
+    -------
+    dict
+        Mapping such as ``{"NVDA": [{"created_utc": <timestamp>, "text": "..."},
+        ...]}`` where each entry contains the post timestamp and text.
     """
+    # Refresh alias data if provided
+    _load_aliases_from_file(aliases_path, aliases)
     if not subreddits:
         subreddits = ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
 

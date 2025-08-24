@@ -108,3 +108,59 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
     df = reddit_scraper.fetch_reddit_posts("dummy", limit=1, include_comments=True)
     ids = set(df["id"]) if not df.empty else set()
     assert ids == {"h1", "n1", "h1_c1"}
+
+
+
+def test_aliases_passed_as_dict(monkeypatch):
+    """Custom alias mapping can be merged directly."""
+    now = datetime.now(timezone.utc)
+    df = pd.DataFrame([
+        {"id": "1", "title": "", "created_utc": now, "text": "Some Corp news"}
+    ])
+
+    monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", lambda *a, **k: df)
+    monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df)
+    monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
+
+    aliases = {"ABC": ["some corp"]}
+    out = reddit_scraper.update_reddit_data(
+        ["ABC"], subreddits=None, aliases=aliases
+    )
+    assert len(out["ABC"]) == 1
+    assert "some corp" in out["ABC"][0]["text"].lower()
+
+
+def test_alias_file_reloaded_each_call(monkeypatch, tmp_path):
+    """Alias file is read for every update."""
+    import json
+
+    now = datetime.now(timezone.utc)
+    df1 = pd.DataFrame([
+        {"id": "1", "title": "", "created_utc": now, "text": "Corp1 rises"}
+    ])
+    df2 = pd.DataFrame([
+        {"id": "2", "title": "", "created_utc": now, "text": "Corp2 rises"}
+    ])
+
+    alias_file = tmp_path / "aliases.json"
+    alias_file.write_text(json.dumps({"ZZZ": ["corp1"]}))
+
+    empty = pd.DataFrame(columns=["id", "title", "created_utc", "text"])
+    monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", lambda *a, **k: empty)
+    monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
+    monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df1)
+
+    out1 = reddit_scraper.update_reddit_data(
+        ["ZZZ"], subreddits=None, aliases_path=alias_file
+    )
+    assert out1["ZZZ"] and "corp1" in out1["ZZZ"][0]["text"].lower()
+
+    alias_file.write_text(json.dumps({"ZZZ": ["corp2"]}))
+    monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df2)
+
+    out2 = reddit_scraper.update_reddit_data(
+        ["ZZZ"], subreddits=None, aliases_path=alias_file
+    )
+    assert out2["ZZZ"] and "corp2" in out2["ZZZ"][0]["text"].lower()
+
+

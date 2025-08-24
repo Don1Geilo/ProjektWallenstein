@@ -55,6 +55,23 @@ list of additional names that should be recognised in Reddit posts:
 `reddit_scraper` loads this file on startup and merges it with its built-in
 defaults. If the file is missing, the internal map is used unchanged.
 
+Aliases can also be supplied dynamically when calling
+``update_reddit_data``. Pass either a path to a JSON/YAML file via
+``aliases_path`` or an in-memory mapping via ``aliases``:
+
+```python
+from wallenstein import reddit_scraper
+
+# reload aliases from a custom file before each update
+reddit_scraper.update_reddit_data(["NVDA"], aliases_path="my_aliases.json")
+
+# or merge a dict directly
+reddit_scraper.update_reddit_data(["NVDA"], aliases={"NVDA": ["nvidia corp"]})
+```
+
+The file specified by ``aliases_path`` is read on every call so changes are
+picked up immediately.
+
 ## Sentiment evaluation
 
 The repository ships with a tiny labelled dataset in
