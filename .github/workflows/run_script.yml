@@ -22,7 +22,7 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-      REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+      REDDIT_USER_AGENT: ${{ secrets.USER_AGENT }}
     permissions:
       contents: read
       actions: read
