@@ -91,19 +91,31 @@ environment or ``.env`` file.
 
 ## Sentiment evaluation
 
-The repository ships with a tiny labelled dataset in
-`data/sentiment_labels.csv`. To compare the keyword based sentiment analysis
-with a transformer model, run:
+The repository ships with a labelled dataset in
+`data/sentiment_labels.csv`. This file now contains 500 synthetic sentences
+balanced between positive and negative labels. To compare the keyword based
+sentiment analysis with transformer models, run:
 
 ```bash
 python scripts/evaluate_sentiment.py
 ```
 
-The script prints accuracy, precision and recall for both approaches. Use the
-`SENTIMENT_BACKEND` environment variable to select the BERT model (default
+The script prints accuracy, precision and recall for the keyword baseline, the
+pretrained FinBERT model and, if available, a locally fine‑tuned variant. Use
+the `SENTIMENT_BACKEND` environment variable to select the BERT model (default
 `finbert`). Sentiment analysis uses a BERT model automatically when
 `transformers` is installed. Set `USE_BERT_SENTIMENT=0` to force the lightweight
 keyword approach or `USE_BERT_SENTIMENT=1` to explicitly enable the BERT path.
+
+To fine‑tune FinBERT on the extended dataset run:
+
+```bash
+python scripts/train_finbert.py
+```
+
+The resulting model and tokenizer are saved under
+`models/finetuned-finbert`. Evaluation of this model requires that the directory
+contains trained weights.
 
 
 ## Model training
