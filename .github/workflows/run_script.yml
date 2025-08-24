@@ -22,13 +22,13 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # Reddit – mappe Secrets auf beide Varianten
-      CLIENT_ID:          ${{ secrets.CLIENT_ID }}
-      CLIENT_SECRET:      ${{ secrets.CLIENT_SECRET }}
-      USER_AGENT:         ${{ secrets.USER_AGENT }}
-      REDDIT_CLIENT_ID:   ${{ secrets.CLIENT_ID }}
+      # Reddit – mappe Secrets auf beide Namensräume
+      CLIENT_ID:            ${{ secrets.CLIENT_ID }}
+      CLIENT_SECRET:        ${{ secrets.CLIENT_SECRET }}
+      USER_AGENT:           ${{ secrets.USER_AGENT }}
+      REDDIT_CLIENT_ID:     ${{ secrets.CLIENT_ID }}
       REDDIT_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-      REDDIT_USER_AGENT:  ${{ secrets.USER_AGENT }}
+      REDDIT_USER_AGENT:    ${{ secrets.USER_AGENT }}
 
     steps:
       - name: Checkout
