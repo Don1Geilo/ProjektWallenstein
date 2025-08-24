@@ -37,13 +37,14 @@ DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", "30"))
 # Ticker können mehrere Varianten des Firmennamens angegeben werden, die im
 # Text erkannt werden sollen.
 TICKER_NAME_MAP: Dict[str, List[str]] = {
-    "NVDA": ["nvidia"],
-    "AMZN": ["amazon"],
-    "AAPL": ["apple"],
-    "MSFT": ["microsoft"],
-    "GOOG": ["google", "alphabet"],
-    "META": ["facebook", "meta"],
-    "TSLA": ["tesla"],
+    "NVDA": ["nvidia", "nividia", "nvidea"],
+    "AMZN": ["amazon", "amzon", "amazn"],
+    "AAPL": ["apple", "aple", "appl"],
+    "MSFT": ["microsoft", "micosoft", "micro soft"],
+    "GOOG": ["google", "alphabet", "googel", "gogle"],
+    "META": ["facebook", "meta", "metta", "facebok"],
+    "TSLA": ["tesla", "tesler", "tesal"],
+    "RHM": ["rheinmetall", "rheiner"],
 }
 
 
