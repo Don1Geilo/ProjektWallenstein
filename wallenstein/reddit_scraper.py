@@ -255,24 +255,20 @@ def update_reddit_data(
 
     # 2) Posts aus DB lesen
     df = _load_posts_from_db()
+    df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     # 3) Je Ticker Texte sammeln
     out: Dict[str, List[dict]] = {}
     for tkr in tickers:
-        pats = _compile_patterns(tkr)
-        bucket: List[dict] = []
-        for _, row in df.iterrows():
-            title = str(row.get("title", "") or "")
-            text  = str(row.get("text", "") or "")
-            if _post_matches_ticker(title, text, pats):
-                # knapper Text-Chunk
-                snippet = (title + "\n" + text).strip()
-                if snippet:
-                    # Längenlimit, damit analyze_sentiment nicht explodiert
-                    bucket.append({"created_utc": row["created_utc"], "text": snippet[:2000]})
-            # leichte Obergrenze pro Ticker (Performance)
-            if len(bucket) >= 100:
-                break
+        pattern = "|".join(p.pattern for p in _compile_patterns(tkr))
+        mask = df["combined"].str.contains(pattern, regex=True, case=False, na=False)
+        bucket_df = (
+            df.loc[mask, ["created_utc", "combined"]]
+            .head(100)
+            .rename(columns={"combined": "text"})
+        )
+        bucket_df["text"] = bucket_df["text"].str[:2000]
+        bucket = bucket_df.to_dict(orient="records")
         log.debug(f"{tkr}: {len(bucket)} matched posts")
         out[tkr] = bucket
     return out
