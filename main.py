@@ -65,20 +65,23 @@ from wallenstein.models import train_per_stock
 
 
 # ---------- Main ----------
-def main() -> int:
+def run_pipeline(tickers: list[str] | None = None) -> int:
     t0 = time.time()
     log.info("🚀 Start Wallenstein: Pipeline-Run")
 
-    reddit_posts = {t: [] for t in TICKERS}
+    if tickers is None:
+        tickers = TICKERS
+
+    reddit_posts = {t: [] for t in tickers}
     added = 0
     fx_added = 0
 
     # Parallel: Preise, Reddit, FX
     with ThreadPoolExecutor() as executor:
-        fut_prices = executor.submit(update_prices, DB_PATH, TICKERS)
+        fut_prices = executor.submit(update_prices, DB_PATH, tickers)
         fut_reddit = executor.submit(
             update_reddit_data,
-            TICKERS,
+            tickers,
             ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
             include_comments=True,
         )
@@ -96,7 +99,7 @@ def main() -> int:
             log.info("✅ Reddit-Daten aktualisiert")
         except Exception as e:
             log.error(f"❌ Reddit-Update fehlgeschlagen: {e}")
-            reddit_posts = {t: [] for t in TICKERS}
+            reddit_posts = {t: [] for t in tickers}
 
         try:
             fx_added = fut_fx.result()
@@ -106,7 +109,7 @@ def main() -> int:
 
     # View sicherstellen & Preise ziehen
     ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
-    prices_usd = get_latest_prices(DB_PATH, TICKERS, use_eur=False)
+    prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
     log.info(f"USD: {prices_usd}")
 
     # Sentiment je Ticker aus Reddit-Posts
@@ -145,7 +148,7 @@ def main() -> int:
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
 
     # Per‑Stock‑Modell trainieren
-    for ticker in TICKERS:
+    for ticker in tickers:
         try:
             with duckdb.connect(DB_PATH) as con:
                 df_price = con.execute(
@@ -175,7 +178,7 @@ def main() -> int:
 
     # Übersicht & Notify
     try:
-        msg = generate_overview(TICKERS)
+        msg = generate_overview(tickers)
         notify_telegram(msg)
     except Exception as e:
         log.warning(f"Übersicht/Telegram fehlgeschlagen: {e}")
@@ -185,4 +188,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    run_pipeline()
