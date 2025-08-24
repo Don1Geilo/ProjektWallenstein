@@ -18,7 +18,8 @@ import yfinance as yf
 MAX_RETRIES = 3
 CHUNK_SIZE = 20
 
-# Datenquelle: stooq (default) | hybrid | yahoo
+# Datenquelle: stooq (default, mit Yahoo-Fallback) | yahoo
+# 'hybrid' bleibt aus Kompatibilitätsgründen als Alias zu stooq bestehen
 DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "stooq").strip().lower()
 
 log = logging.getLogger(__name__)
@@ -78,11 +79,18 @@ def _stooq_symbol(t: str) -> str:
     # Stooq erwartet z.B. nvda.us, amzn.us, smci.us
     return f"{t.lower()}.us"
 
-def _stooq_fetch_one(ticker: str, start: Optional[pd.Timestamp] = None) -> pd.DataFrame:
+def _stooq_fetch_one(ticker: str,
+                     start: Optional[pd.Timestamp] = None,
+                     session: Optional[requests.Session] = None) -> pd.DataFrame:
+    """Fetch a single ticker from Stooq.
+
+    A session can be supplied to reuse connections when called repeatedly.
+    """
     sym = _stooq_symbol(ticker)
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
+    sess = session or requests
     try:
-        r = requests.get(url, timeout=20)
+        r = sess.get(url, timeout=20)
         if not r.ok or not r.text:
             return pd.DataFrame()
         df = pd.read_csv(io.StringIO(r.text))
@@ -103,15 +111,28 @@ def _stooq_fetch_one(ticker: str, start: Optional[pd.Timestamp] = None) -> pd.Da
     except Exception:
         return pd.DataFrame()
 
-def _stooq_fetch_many(tickers: List[str], start: Optional[pd.Timestamp] = None) -> pd.DataFrame:
-    out = []
-    for t in tickers:
-        df = _stooq_fetch_one(t, start=start)
-        if not df.empty:
-            out.append(df)
-    if not out:
+
+def _stooq_fetch_many(tickers: List[str],
+                      start: Optional[pd.Timestamp] = None) -> pd.DataFrame:
+    """Fetch multiple tickers from Stooq concurrently."""
+    if not tickers:
         return pd.DataFrame(columns=["date","ticker","open","high","low","close","adj_close","volume"])
-    return pd.concat(out, ignore_index=True)
+
+    results: List[pd.DataFrame] = []
+
+    def _fetch(t: str) -> pd.DataFrame:
+        return _stooq_fetch_one(t, start=start)
+
+    with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as ex:
+        futures = {ex.submit(_fetch, t): t for t in tickers}
+        for fut in as_completed(futures):
+            df = fut.result()
+            if not df.empty:
+                results.append(df)
+
+    if not results:
+        return pd.DataFrame(columns=["date","ticker","open","high","low","close","adj_close","volume"])
+    return pd.concat(results, ignore_index=True)
 
 # ---- Yahoo (optional fallback) ----
 def _make_session(user_agent: Optional[str] = None) -> requests.Session:
@@ -189,9 +210,9 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
     """
     Schreibt Daily‑Kurse ins DuckDB‑Schema 'prices'.
     Quelle per ENV (WALLENSTEIN_DATA_SOURCE):
-      - 'stooq'  (default, stabil)
-      - 'hybrid' (Stooq → bei Lücken Yahoo‑Fallback)
+      - 'stooq'  (default, Stooq mit Yahoo‑Fallback)
       - 'yahoo'  (nur Yahoo; nicht empfohlen bei deinen Logs)
+    'hybrid' funktioniert weiterhin als Alias für 'stooq'.
     Analysten-Daten sind komplett deaktiviert.
     """
     if not tickers:
@@ -217,7 +238,6 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
             start = pd.to_datetime(ld).date() + timedelta(days=1) if pd.notna(ld) else None
             if start is not None and pd.to_datetime(start) > last_trading_day:
                 continue
-
             df_t = pd.DataFrame()
             if DATA_SOURCE in ("stooq", "hybrid", ""):
                 df_t = _stooq_fetch_one(t, start=start)
@@ -227,6 +247,20 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
 
             if DATA_SOURCE == "yahoo":
                 df_t = _download_single_safe(t, session, start=start, period="1mo")
+
+        if DATA_SOURCE == "yahoo":
+            df_chunk = _yahoo_fetch_many(chunk, start=start)
+        else:
+            df_chunk = _stooq_fetch_many(chunk, start=start)
+
+            # Fallback: fehlende Ticker via Yahoo nachladen
+            missing = [t for t in chunk if df_chunk[df_chunk["ticker"].eq(t)].empty]
+            if missing:
+                df_fb = _yahoo_fetch_many(missing, start=start)
+                if df_chunk is None or df_chunk.empty:
+                    df_chunk = df_fb
+                elif df_fb is not None and not df_fb.empty:
+                    df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
 
             if df_t is None or df_t.empty:
                 continue
