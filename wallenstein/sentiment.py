@@ -217,6 +217,59 @@ def analyze_sentiment(text: str) -> float:
     return score
 
 
+def analyze_sentiment_batch(texts: list[str]) -> list[float]:
+    """Return sentiment scores for multiple texts.
+
+    When a BERT backend is available the underlying pipeline processes the
+    whole ``texts`` list in a single call to avoid repeated model invocations.
+    If keyword based sentiment analysis is active, the function simply maps
+    :func:`analyze_sentiment` over the inputs.
+    """
+
+    global _bert_analyzer
+    use_env = os.getenv("USE_BERT_SENTIMENT")
+    if use_env is not None:
+        if use_env.lower() in {"1", "true", "yes"}:
+            try:
+                if _bert_analyzer is None:
+                    _bert_analyzer = BertSentiment()
+                results = _bert_analyzer(texts)
+            except Exception:  # pragma: no cover - defensive
+                _log_keyword_hint(
+                    "BERT sentiment requested but unavailable; using keyword approach"
+                )
+                return [analyze_sentiment(t) for t in texts]
+        else:
+            _log_keyword_hint("Keyword sentiment forced via USE_BERT_SENTIMENT")
+            return [analyze_sentiment(t) for t in texts]
+    else:
+        if _transformers_available():
+            try:
+                if _bert_analyzer is None:
+                    _bert_analyzer = BertSentiment()
+                results = _bert_analyzer(texts)
+            except Exception:  # pragma: no cover - defensive
+                _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
+                return [analyze_sentiment(t) for t in texts]
+        else:
+            _log_keyword_hint(
+                "transformers not installed; using keyword sentiment analysis"
+            )
+            return [analyze_sentiment(t) for t in texts]
+
+    scores: list[float] = []
+    for data in results:
+        label = str(data.get("label", "")).lower()
+        score = float(data.get("score", 0.0))
+        if "positive" in label:
+            scores.append(score)
+        elif "negative" in label:
+            scores.append(-score)
+        else:
+            scores.append(0.0)
+    return scores
+
+
 def aggregate_sentiment_by_ticker(
     ticker_texts: Dict[str, Iterable[dict]]
 ) -> Dict[str, float]:
@@ -261,6 +314,7 @@ def derive_recommendation(score: float) -> str:
 
 __all__ = [
     "analyze_sentiment",
+    "analyze_sentiment_batch",
     "analyze_sentiment_bert",
     "aggregate_sentiment_by_ticker",
     "derive_recommendation",

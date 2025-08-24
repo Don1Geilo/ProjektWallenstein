@@ -12,6 +12,7 @@ import wallenstein.sentiment as sentiment
 from wallenstein.sentiment import (
     analyze_sentiment,
     analyze_sentiment_bert,
+    analyze_sentiment_batch,
     aggregate_sentiment_by_ticker,
     derive_recommendation,
 )
@@ -76,4 +77,11 @@ def test_env_switches_to_bert(monkeypatch):
 def test_negation_with_filler_tokens():
     assert analyze_sentiment("nicht so bullish") < 0
     assert analyze_sentiment("kein kauf heute") < 0
+
+
+def test_analyze_sentiment_batch_keyword():
+    texts = ["bullish", "verkaufen"]
+    scores = analyze_sentiment_batch(texts)
+    assert scores[0] > 0
+    assert scores[1] < 0
 
