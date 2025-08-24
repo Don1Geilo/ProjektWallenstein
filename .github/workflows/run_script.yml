@@ -18,20 +18,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
+      # Telegram (optional)
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      # Reddit – mappe Secrets auf beide Varianten
       CLIENT_ID:          ${{ secrets.CLIENT_ID }}
       CLIENT_SECRET:      ${{ secrets.CLIENT_SECRET }}
-      # Wir setzen beide Varianten, damit config.py flexibel ist:
       USER_AGENT:         ${{ secrets.USER_AGENT }}
+      REDDIT_CLIENT_ID:   ${{ secrets.CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
       REDDIT_USER_AGENT:  ${{ secrets.USER_AGENT }}
-    permissions:
-      contents: read
-      actions: read
-      id-token: write
-    concurrency:
-      group: wallenstein-${{ github.ref }}
-      cancel-in-progress: true
 
     steps:
       - name: Checkout
