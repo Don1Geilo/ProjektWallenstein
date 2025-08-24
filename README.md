@@ -12,6 +12,7 @@ Broker-target support is temporarily disabled pending a new data provider.
 pip install -r requirements.txt
 cp .env.example .env   # and fill values
 python main.py
+python telegram_bot.py  # optional: interactive Telegram bot
 ```
 
 ### ENV (via `.env` or system env)
@@ -30,6 +31,7 @@ python main.py
 ├─ requirements.txt
 ├─ .env.example
 ├─ data/                  # DuckDB lives here
+├─ telegram_bot.py       # listens for `!TICKER` messages on Telegram
 └─ wallenstein/
    ├─ __init__.py
    ├─ stock_data.py
@@ -71,6 +73,19 @@ reddit_scraper.update_reddit_data(["NVDA"], aliases={"NVDA": ["nvidia corp"]})
 
 The file specified by ``aliases_path`` is read on every call so changes are
 picked up immediately.
+
+## Telegram Bot
+
+Start a small bot that reacts to messages like ``!NVDA`` and returns the number
+of matching Reddit posts:
+
+```bash
+python telegram_bot.py
+```
+
+The bot uses ``reddit_scraper.update_reddit_data`` internally.  Set
+``TELEGRAM_BOT_TOKEN`` (and optionally ``TELEGRAM_CHAT_ID`` for the broadcast
+helper ``notify_telegram``) in your environment or ``.env`` file.
 
 ## Sentiment evaluation
 
