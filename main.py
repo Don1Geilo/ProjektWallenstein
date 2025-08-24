@@ -52,7 +52,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # --- Projekt‑Module ---
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
-from wallenstein.sentiment import analyze_sentiment, derive_recommendation
+from wallenstein.sentiment import analyze_sentiment_batch, derive_recommendation
 from wallenstein.models import train_per_stock
 
 
@@ -96,7 +96,7 @@ def main() -> int:
         texts = list(texts)
         if texts:
             df_posts = pd.DataFrame(texts)
-            df_posts["sentiment"] = df_posts["text"].apply(analyze_sentiment)
+            df_posts["sentiment"] = analyze_sentiment_batch(df_posts["text"].tolist())
             df_posts["date"] = pd.to_datetime(df_posts["created_utc"]).dt.normalize()
             sentiment_frames[ticker] = (
                 df_posts.groupby("date")["sentiment"].mean().reset_index()
