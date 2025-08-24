@@ -1,41 +1,33 @@
+# wallenstein/config.py
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-# .env laden
-load_dotenv()
+# .env lokal laden, CI-Secrets NICHT überschreiben
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
+def _env(name: str, alt: str | None = None, default=None):
+    """Hole ENV[name], optional Fallback alt, sonst default."""
+    v = os.getenv(name)
+    if not v and alt:
+        v = os.getenv(alt)
+    return v if v is not None else default
 
-def _require(name: str, alt_name: str | None = None) -> str:
-    """Return the value of an environment variable.
+# --- Reddit (anonymer Zugriff reicht: client_id/secret/user_agent) ---
+CLIENT_ID = _env("CLIENT_ID", "REDDIT_CLIENT_ID")
+CLIENT_SECRET = _env("CLIENT_SECRET", "REDDIT_CLIENT_SECRET")
+USER_AGENT = _env("USER_AGENT", "REDDIT_USER_AGENT", default="Wallenstein/1.0 (bot)")
 
-    Parameters
-    ----------
-    name:
-        Primary environment variable name.
-    alt_name:
-        Optional fallback name that is checked when ``name`` is unset.
-    """
+def has_reddit() -> bool:
+    """True, wenn anonymer Reddit-Zugriff möglich ist."""
+    return bool(CLIENT_ID and CLIENT_SECRET and USER_AGENT)
 
-    val = os.getenv(name)
-    if not val and alt_name:
-        val = os.getenv(alt_name)
-    if not val:
-        raise RuntimeError(f"Missing required env var: {name}")
-    return val
+# --- Google ---
+GOOGLE_API_KEYFILE = _env("GOOGLE_API_KEYFILE")
+GOOGLE_SHEETS_ID   = _env("GOOGLE_SHEETS_ID")
 
-# Support Reddit-specific variable names for backwards compatibility
-CLIENT_ID = _require("CLIENT_ID", "REDDIT_CLIENT_ID")
-CLIENT_SECRET = _require("CLIENT_SECRET", "REDDIT_CLIENT_SECRET")
+# --- Telegram (optional) ---
+TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID   = _env("TELEGRAM_CHAT_ID")  # später zu int casten, nicht hier
 
-# Environment variables are accessed lazily so that modules only using
-# Telegram notifications don't require Reddit credentials at import time.
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-
-USER_AGENT = os.getenv("USER_AGENT", "Wallenstein")
-
-GOOGLE_API_KEYFILE = os.getenv("GOOGLE_API_KEYFILE")
-GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID")
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "0"))
+def has_telegram() -> bool:
+    return bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
