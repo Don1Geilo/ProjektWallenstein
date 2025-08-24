@@ -333,6 +333,14 @@ def update_reddit_data(
     df = _load_posts_from_db()
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
+    # Nur Posts weiterverarbeiten, die überhaupt einen der Ticker erwähnen
+    patterns: List[str] = []
+    for tkr in tickers:
+        patterns.extend(p.pattern for p in _compile_patterns(tkr))
+    if patterns:
+        combined_pattern = "|".join(patterns)
+        df = df[df["combined"].str.contains(combined_pattern, regex=True, case=False, na=False)]
+
     # 3) Je Ticker Texte sammeln
     out: Dict[str, List[dict]] = {}
     for tkr in tickers:
