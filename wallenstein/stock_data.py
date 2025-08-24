@@ -3,8 +3,8 @@ import io
 import json
 import time
 import logging
-from typing import List, Optional
-from datetime import timedelta
+from typing import List, Optional, Dict
+from datetime import timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import duckdb
@@ -56,7 +56,7 @@ def _ensure_prices_table(con: duckdb.DuckDBPyConnection):
         )
     """)
 
-def _latest_dates_per_ticker(con: duckdb.DuckDBPyConnection, tickers: List[str]):
+def _latest_dates_per_ticker(con: duckdb.DuckDBPyConnection, tickers: List[str]) -> Dict[str, Optional[date]]:
     if not tickers:
         return {}
     q = """
@@ -67,6 +67,7 @@ def _latest_dates_per_ticker(con: duckdb.DuckDBPyConnection, tickers: List[str])
     """.format(", ".join("'" + t + "'" for t in tickers))
     try:
         df = con.execute(q).fetchdf()
+        # last_date kommt als datetime.date (DuckDB DATE)
         return {row["ticker"]: row["last_date"] for _, row in df.iterrows()}
     except Exception:
         return {}
@@ -79,13 +80,12 @@ def _stooq_symbol(t: str) -> str:
     # Stooq erwartet z.B. nvda.us, amzn.us, smci.us
     return f"{t.lower()}.us"
 
-def _stooq_fetch_one(ticker: str,
-                     start: Optional[pd.Timestamp] = None,
-                     session: Optional[requests.Session] = None) -> pd.DataFrame:
-    """Fetch a single ticker from Stooq.
-
-    A session can be supplied to reuse connections when called repeatedly.
-    """
+def _stooq_fetch_one(
+    ticker: str,
+    start: Optional[pd.Timestamp] = None,
+    session: Optional[requests.Session] = None
+) -> pd.DataFrame:
+    """Fetch a single ticker from Stooq."""
     sym = _stooq_symbol(ticker)
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
     sess = session or requests
@@ -104,21 +104,19 @@ def _stooq_fetch_one(ticker: str,
         df["ticker"] = ticker
         df["date"] = pd.to_datetime(df["date"]).dt.date
         if start is not None:
-            df = df[pd.to_datetime(df["date"]) >= pd.to_datetime(start)]
+            start_d = pd.to_datetime(start).date()
+            df = df[df["date"] >= start_d]
         # adj_close nicht vorhanden
         df["adj_close"] = pd.NA
         return df[["date","ticker","open","high","low","close","adj_close","volume"]]
     except Exception:
         return pd.DataFrame()
 
-
 def _stooq_fetch_many(
-    tickers: List[str], start_map: Optional[dict[str, pd.Timestamp]] = None
+    tickers: List[str],
+    start_map: Optional[Dict[str, pd.Timestamp]] = None
 ) -> pd.DataFrame:
-    """Fetch multiple tickers from Stooq concurrently.
-
-    Each ticker can have its own start date via ``start_map``.
-    """
+    """Fetch multiple tickers from Stooq concurrently."""
     if not tickers:
         return pd.DataFrame(
             columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
@@ -168,7 +166,12 @@ def _make_session(user_agent: Optional[str] = None) -> requests.Session:
     s.mount("http://", adapter)
     return s
 
-def _download_single_safe(ticker: str, session: requests.Session, start=None, period="1mo") -> pd.DataFrame:
+def _download_single_safe(
+    ticker: str,
+    session: requests.Session,
+    start=None,
+    period="1mo"
+) -> pd.DataFrame:
     today_utc = pd.Timestamp.utcnow().date()
     for attempt in range(MAX_RETRIES):
         try:
@@ -186,7 +189,7 @@ def _download_single_safe(ticker: str, session: requests.Session, start=None, pe
                 df = hist.reset_index().rename(columns={"Date": "date"})
                 df["ticker"] = ticker
                 colmap = {"Open":"open","High":"high","Low":"low","Close":"close","Adj Close":"adj_close","Volume":"volume"}
-                df.rename(columns={k:v for k,v in colmap.items() if k in df.columns}, inplace=True)
+                df.rename(columns={k: v for k, v in colmap.items() if k in df.columns}, inplace=True)
                 for c in ("adj_close","volume"):
                     if c not in df.columns:
                         df[c] = pd.NA
@@ -203,16 +206,12 @@ def _download_single_safe(ticker: str, session: requests.Session, start=None, pe
 
 def _yahoo_fetch_many(
     tickers: List[str],
-    start_map: Optional[dict[str, pd.Timestamp]] = None,
+    start_map: Optional[Dict[str, pd.Timestamp]] = None,
     session: Optional[requests.Session] = None,
 ) -> pd.DataFrame:
-    """Fetch multiple tickers from Yahoo concurrently.
-
-    A shared ``session`` can be supplied and each ticker may have its own
-    start date via ``start_map``.
-    """
+    """Fetch multiple tickers from Yahoo concurrently."""
     sess = session or _make_session()
-    results = []
+    results: List[pd.DataFrame] = []
     with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as ex:
         futures = {
             ex.submit(
@@ -229,7 +228,9 @@ def _yahoo_fetch_many(
             if df is not None and not df.empty:
                 results.append(df)
     if not results:
-        return pd.DataFrame()
+        return pd.DataFrame(
+            columns=["date","ticker","open","high","low","close","adj_close","volume"]
+        )
     return pd.concat(results, ignore_index=True)
 
 # ---- Public API ----
@@ -238,9 +239,8 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
     Schreibt Daily‑Kurse ins DuckDB‑Schema 'prices'.
     Quelle per ENV (WALLENSTEIN_DATA_SOURCE):
       - 'stooq'  (default, Stooq mit Yahoo‑Fallback)
-      - 'yahoo'  (nur Yahoo; nicht empfohlen bei deinen Logs)
+      - 'yahoo'  (nur Yahoo)
     'hybrid' funktioniert weiterhin als Alias für 'stooq'.
-    Analysten-Daten sind komplett deaktiviert.
     """
     if not tickers:
         raise ValueError("Keine Ticker übergeben.")
@@ -249,32 +249,23 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
     _ensure_prices_table(con)
 
     last_map = _latest_dates_per_ticker(con, tickers)
-    all_rows = []
+    all_rows: List[pd.DataFrame] = []
 
     session = None
     if DATA_SOURCE in ("yahoo", "hybrid"):
         session = _make_session()
 
-    today = pd.Timestamp.utcnow().tz_localize(None).normalize()
-    last_trading_day = pd.bdate_range(end=today, periods=1)[0].tz_localize(None)
+    # letzter (Börsen-)Tag bis heute (naiv ok, da reine Tagesdaten)
+    today = pd.Timestamp.utcnow().normalize()
+    last_trading_day = pd.bdate_range(end=today, periods=1)[0].date()
 
-    # Vorbereiten: Start-Datum pro Ticker normalisieren
-    start_map: dict[str, Optional[pd.Timestamp]] = {}
+    # Start-Datum je Ticker vorbereiten (None => Voll-Download)
+    start_map: Dict[str, Optional[pd.Timestamp]] = {}
     for t in tickers:
-        ld = last_map.get(t)
+        ld = last_map.get(t)  # datetime.date oder None
         if pd.notna(ld):
-            ld_ts = pd.to_datetime(ld).tz_localize(None)
-            start_map[t] = ld_ts.date() + timedelta(days=1)
-        else:
-            start_map[t] = None
-
-    # Vorbereiten: Start-Datum pro Ticker normalisieren
-    start_map: dict[str, Optional[pd.Timestamp]] = {}
-    for t in tickers:
-        ld = last_map.get(t)
-        if pd.notna(ld):
-            ld_ts = pd.to_datetime(ld).tz_localize(None)
-            start_map[t] = ld_ts.date() + timedelta(days=1)
+            # ab dem Tag NACH dem letzten gespeicherten Tag laden
+            start_map[t] = pd.Timestamp(ld) + pd.Timedelta(days=1)
         else:
             start_map[t] = None
 
@@ -282,15 +273,13 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
         chunk = tickers[i:i + CHUNK_SIZE]
 
         # Start-Tage, die nach dem letzten Handelstag liegen, überspringen
-        chunk_valid = []
+        chunk_valid: List[str] = []
         for t in chunk:
-            start = start_map.get(t)
-
-            if start is not None and pd.to_datetime(start).tz_localize(None) > last_trading_day:
-
-            if start is not None and pd.to_datetime(start) > last_trading_day:
-
-                continue
+            s = start_map.get(t)
+            if s is not None:
+                s_d = pd.to_datetime(s).date()
+                if s_d > last_trading_day:
+                    continue
             chunk_valid.append(t)
         if not chunk_valid:
             continue
@@ -312,18 +301,15 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
         if df_chunk is None or df_chunk.empty:
             continue
 
+        # Nur neue Zeilen (nach last_map[t]) anhängen
         for t in chunk_valid:
             df_t = df_chunk[df_chunk["ticker"].eq(t)]
             if df_t.empty:
                 continue
             ld = last_map.get(t)
             if pd.notna(ld):
-                ld_ts = pd.to_datetime(ld).tz_localize(None)
-
-                df_t = df_t[pd.to_datetime(df_t["date"]).dt.tz_localize(None) > ld_ts]
-
-                df_t = df_t[pd.to_datetime(df_t["date"]) > ld_ts]
-
+                ld_d = pd.to_datetime(ld).date()
+                df_t = df_t[pd.to_datetime(df_t["date"]).dt.date > ld_d]
             if not df_t.empty:
                 all_rows.append(df_t[["date","ticker","open","high","low","close","adj_close","volume"]])
 
@@ -349,7 +335,8 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
         session.close()
     con.close()
     return n
-def _ensure_fx_table(con):
+
+def _ensure_fx_table(con: duckdb.DuckDBPyConnection):
     con.execute("""
         CREATE TABLE IF NOT EXISTS fx_rates (
             date DATE,
@@ -358,7 +345,7 @@ def _ensure_fx_table(con):
         )
     """)
 
-def _fx_latest_date(con, pair: str):
+def _fx_latest_date(con: duckdb.DuckDBPyConnection, pair: str):
     try:
         row = con.execute("SELECT max(date) FROM fx_rates WHERE pair = ?", [pair]).fetchone()
         return row[0]
@@ -381,7 +368,8 @@ def _stooq_fetch_fx_eurusd(start: Optional[pd.Timestamp] = None) -> pd.DataFrame
         df = df.rename(columns={"Date": "date", "Close": "close"})
         df["date"] = pd.to_datetime(df["date"]).dt.date
         if start is not None:
-            df = df[pd.to_datetime(df["date"]) >= pd.to_datetime(start)]
+            start_d = pd.to_datetime(start).date()
+            df = df[df["date"] >= start_d]
         df["pair"] = "EURUSD"
         df["rate_usd_per_eur"] = pd.to_numeric(df["close"], errors="coerce")
         return df[["date", "pair", "rate_usd_per_eur"]].dropna()
@@ -392,13 +380,13 @@ def update_fx_rates(db_path: str) -> int:
     """
     Aktualisiert fx_rates mit EURUSD (Stooq).
     """
-    con = _connect(db_path)  # _connect hast du ja schon in stock_data.py
+    con = _connect(db_path)
     _ensure_fx_table(con)
 
     last = _fx_latest_date(con, "EURUSD")
     start = None
     if pd.notna(last):
-        start = pd.to_datetime(last).date() + pd.Timedelta(days=1)
+        start = pd.Timestamp(last) + pd.Timedelta(days=1)
 
     df = _stooq_fetch_fx_eurusd(start=start)
     if df is None or df.empty:
