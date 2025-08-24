@@ -88,12 +88,17 @@ _load_aliases_from_file()
 # ----------------------------
 # Bestehende Funktion von dir
 # ----------------------------
-def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd.DataFrame:
+def fetch_reddit_posts(
+    subreddit: str = "wallstreetbets",
+    limit: int = 50,
+    include_comments: bool = False,
+) -> pd.DataFrame:
     """Return hot **and new** posts from ``subreddit`` as a ``DataFrame``.
 
-    Additionally, the top comments for each post are fetched and returned as
-    separate rows. Only interacts with the Reddit API; no database reads or
-    writes occur here. Callers can persist the resulting frame if needed.
+    If ``include_comments`` is ``True`` the top comments for each post are
+    fetched and returned as separate rows. Only interacts with the Reddit API;
+    no database reads or writes occur here. Callers can persist the resulting
+    frame if needed.
     """
 
     reddit = praw.Reddit(
@@ -112,21 +117,22 @@ def fetch_reddit_posts(subreddit: str = "wallstreetbets", limit: int = 50) -> pd
             "text": post.selftext or "",
         })
 
-        try:
-            post.comments.replace_more(limit=0)
-        except Exception:
-            continue
+        if include_comments:
+            try:
+                post.comments.replace_more(limit=0)
+            except Exception:
+                continue
 
-        for comment in post.comments[:3]:
-            posts.append({
-                "id": f"{post.id}_{comment.id}",
-                "title": "",
-                "created_utc": datetime.fromtimestamp(
-                    getattr(comment, "created_utc", post.created_utc),
-                    tz=timezone.utc,
-                ),
-                "text": comment.body or "",
-            })
+            for comment in post.comments[:3]:
+                posts.append({
+                    "id": f"{post.id}_{comment.id}",
+                    "title": "",
+                    "created_utc": datetime.fromtimestamp(
+                        getattr(comment, "created_utc", post.created_utc),
+                        tz=timezone.utc,
+                    ),
+                    "text": comment.body or "",
+                })
 
     return pd.DataFrame(posts)
 
@@ -195,6 +201,7 @@ def update_reddit_data(
     tickers: List[str],
     subreddits: List[str] | None = None,
     limit_per_sub: int = 50,
+    include_comments: bool = False,
 ) -> Dict[str, List[dict]]:
     """Scrape, persist and organise Reddit posts.
 
@@ -210,6 +217,7 @@ def update_reddit_data(
 
     # 1) neue Posts je Subreddit holen (Hot reicht als MVP; kann leicht auf 'new' umgestellt werden)
     frames = []
+
     with ThreadPoolExecutor() as executor:
         futures = [
             executor.submit(fetch_reddit_posts, subreddit=sub, limit=limit_per_sub)
@@ -221,6 +229,20 @@ def update_reddit_data(
             except Exception:
                 # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
                 pass
+
+    for sub in subreddits:
+        try:
+            frames.append(
+                fetch_reddit_posts(
+                    subreddit=sub,
+                    limit=limit_per_sub,
+                    include_comments=include_comments,
+                )
+            )
+        except Exception:
+            # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
+            pass
+
 
     if frames:
         df_all = pd.concat(frames, ignore_index=True)
@@ -261,24 +283,20 @@ def update_reddit_data(
 
     # 2) Posts aus DB lesen
     df = _load_posts_from_db()
+    df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     # 3) Je Ticker Texte sammeln
     out: Dict[str, List[dict]] = {}
     for tkr in tickers:
-        pats = _compile_patterns(tkr)
-        bucket: List[dict] = []
-        for _, row in df.iterrows():
-            title = str(row.get("title", "") or "")
-            text  = str(row.get("text", "") or "")
-            if _post_matches_ticker(title, text, pats):
-                # knapper Text-Chunk
-                snippet = (title + "\n" + text).strip()
-                if snippet:
-                    # Längenlimit, damit analyze_sentiment nicht explodiert
-                    bucket.append({"created_utc": row["created_utc"], "text": snippet[:2000]})
-            # leichte Obergrenze pro Ticker (Performance)
-            if len(bucket) >= 100:
-                break
+        pattern = "|".join(p.pattern for p in _compile_patterns(tkr))
+        mask = df["combined"].str.contains(pattern, regex=True, case=False, na=False)
+        bucket_df = (
+            df.loc[mask, ["created_utc", "combined"]]
+            .head(100)
+            .rename(columns={"combined": "text"})
+        )
+        bucket_df["text"] = bucket_df["text"].str[:2000]
+        bucket = bucket_df.to_dict(orient="records")
         log.debug(f"{tkr}: {len(bucket)} matched posts")
         out[tkr] = bucket
     return out
