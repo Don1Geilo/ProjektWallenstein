@@ -43,7 +43,14 @@ STOCK_OVERVIEW_DIR = "stockOverview"
 os.makedirs(STOCK_OVERVIEW_DIR, exist_ok=True)
 
 # Ticker
-TICKERS = [t.strip().upper() for t in os.getenv("WALLENSTEIN_TICKERS", "NVDA,AMZN,SMCI").split(",") if t.strip()]
+# Standardmäßig auch Tesla (TSLA) berücksichtigen
+TICKERS = [
+    t.strip().upper()
+    for t in os.getenv(
+        "WALLENSTEIN_TICKERS", "NVDA,AMZN,SMCI,TSLA"
+    ).split(",")
+    if t.strip()
+]
 
 # Telegram (nicht direkt genutzt, aber zur Rückwärtskompatibilität beibehalten)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -73,7 +80,9 @@ def main() -> int:
     # 2) Reddit-Daten aktualisieren
     try:
         reddit_posts = update_reddit_data(
-            TICKERS, ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
+            TICKERS,
+            ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
+            include_comments=True,
         )
         log.info("✅ Reddit-Daten aktualisiert")
     except Exception as e:
