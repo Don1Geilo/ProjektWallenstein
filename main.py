@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv, find_dotenv
 import pandas as pd
 import duckdb
@@ -23,7 +23,7 @@ log = logging.getLogger("wallenstein")
 
 try:
     from wallenstein.notify import notify_telegram
-except Exception as e:  # pragma: no cover - fehlende ENV-Variablen o.Ä.
+except Exception as e:  # pragma: no cover
     log.warning(f"notify_telegram nicht verfügbar: {e}")
 
     def notify_telegram(text: str) -> bool:
@@ -32,7 +32,7 @@ except Exception as e:  # pragma: no cover - fehlende ENV-Variablen o.Ä.
 
 try:
     from wallenstein.reddit_scraper import update_reddit_data
-except Exception as e:  # pragma: no cover - fehlende ENV-Variablen o.Ä.
+except Exception as e:  # pragma: no cover
     log.warning(f"update_reddit_data nicht verfügbar: {e}")
 
     # Fallback: akzeptiert zusätzliche Keyword-Args wie include_comments
@@ -56,7 +56,7 @@ TICKERS = [
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# --- Projekt‑Module ---
+# --- Projekt-Module ---
 from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
 from wallenstein.sentiment import analyze_sentiment_batch
@@ -113,13 +113,14 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     log.info(f"USD: {prices_usd}")
 
     # Sentiment je Ticker aus Reddit-Posts
-    sentiments = {}
-    sentiment_frames = {}
+    sentiments: dict[str, float] = {}
+    sentiment_frames: dict[str, pd.DataFrame] = {}
 
     for ticker, texts in reddit_posts.items():
         texts = list(texts) if texts is not None else []
         if texts:
             df_posts = pd.DataFrame(texts)
+
             # Erwartete Spalte: "text" (ansonsten leere Sentiments)
             if "text" in df_posts:
                 df_posts["sentiment"] = analyze_sentiment_batch(
@@ -130,7 +131,9 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
             # Erwartete Spalte: "created_utc" (Unix oder ISO)
             if "created_utc" in df_posts:
-                df_posts["date"] = pd.to_datetime(df_posts["created_utc"], errors="coerce").dt.normalize()
+                df_posts["date"] = pd.to_datetime(
+                    df_posts["created_utc"], errors="coerce", utc=True
+                ).dt.tz_localize(None).normalize()
             else:
                 df_posts["date"] = pd.NaT
 
@@ -139,7 +142,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 sentiment_frames[ticker] = (
                     df_valid.groupby("date")["sentiment"].mean().reset_index()
                 )
-                sentiments[ticker] = df_valid["sentiment"].mean()
+                sentiments[ticker] = float(df_valid["sentiment"].mean())
             else:
                 sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
                 sentiments[ticker] = 0.0
@@ -147,51 +150,21 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             sentiments[ticker] = 0.0
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
 
-
-    # Per‑Stock‑Modell trainieren
-    with duckdb.connect(DB_PATH) as con:
-        for ticker in tickers:
-            try:
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    def _train(ticker: str):
+    # --- Per-Stock-Modell trainieren (parallel, read-only Zugriffe auf DuckDB sind ok) ---
+    def _train(t: str):
         try:
             with duckdb.connect(DB_PATH) as con:
-
                 df_price = con.execute(
                     "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
-                    [ticker],
+                    [t],
                 ).fetchdf()
-
-
-                if df_price.empty:
-                    log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
-                    continue
-
-                df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
-                df_sent = sentiment_frames.get(
-                    ticker, pd.DataFrame(columns=["date", "sentiment"])
-                ).copy()
-                if not df_sent.empty:
-                    df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
-
-                df_stock = pd.merge(df_price, df_sent, on="date", how="left")
-                acc, f1 = train_per_stock(df_stock)
-                if acc is not None:
-                    log.info(f"{ticker}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
-                else:
-                    log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
-            except Exception as e:
-                log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
-
             if df_price.empty:
-                log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
-                return ticker, None, None
+                log.info(f"{t}: Keine Preisdaten – Training übersprungen")
+                return t, None, None
 
             df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
             df_sent = sentiment_frames.get(
-                ticker, pd.DataFrame(columns=["date", "sentiment"])
+                t, pd.DataFrame(columns=["date", "sentiment"])
             ).copy()
             if not df_sent.empty:
                 df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
@@ -199,18 +172,16 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             df_stock = pd.merge(df_price, df_sent, on="date", how="left")
             acc, f1 = train_per_stock(df_stock)
             if acc is None:
-                log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
-            return ticker, acc, f1
+                log.info(f"{t}: Zu wenige Daten für Modelltraining")
+            return t, acc, f1
         except Exception as e:
-            log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
-            return ticker, None, None
+            log.warning(f"{t}: Modelltraining fehlgeschlagen: {e}")
+            return t, None, None
 
-    # Per‑Stock‑Modell trainieren
     with ThreadPoolExecutor() as ex:
-        for ticker, acc, f1 in ex.map(_train, tickers):
+        for t, acc, f1 in ex.map(_train, tickers):
             if acc is not None:
-                log.info(f"{ticker}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
-
+                log.info(f"{t}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
 
     # Übersicht & Notify
     try:
