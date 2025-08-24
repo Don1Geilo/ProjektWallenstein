@@ -2,6 +2,7 @@ import os
 import time
 import logging
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv, find_dotenv
 import pandas as pd
 import duckdb
@@ -68,33 +69,35 @@ from wallenstein.models import train_per_stock
 def main() -> int:
     t0 = time.time()
     log.info("🚀 Start Wallenstein: Pipeline-Run")
-
-    # 1) Kurse aktualisieren
-    try:
-        added = update_prices(DB_PATH, TICKERS)
-        if added:
-            log.info(f"✅ Kursdaten aktualisiert: +{added} neue Zeilen")
-    except Exception as e:
-        log.error(f"❌ Kursupdate fehlgeschlagen: {e}")
-
-    # 2) Reddit-Daten aktualisieren
-    try:
-        reddit_posts = update_reddit_data(
+    reddit_posts = {t: [] for t in TICKERS}
+    added = 0
+    fx_added = 0
+    with ThreadPoolExecutor() as executor:
+        fut_prices = executor.submit(update_prices, DB_PATH, TICKERS)
+        fut_reddit = executor.submit(
+            update_reddit_data,
             TICKERS,
             ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
             include_comments=True,
         )
-        log.info("✅ Reddit-Daten aktualisiert")
-    except Exception as e:
-        log.error(f"❌ Reddit-Update fehlgeschlagen: {e}")
-        reddit_posts = {t: [] for t in TICKERS}
-
-    # 3) FX-Rates aktualisieren
-    try:
-        fx_added = update_fx_rates(DB_PATH)
-        log.info(f"FX-Update: +{fx_added} neue EURUSD-Zeilen")
-    except Exception as e:
-        log.error(f"❌ FX-Update fehlgeschlagen: {e}")
+        fut_fx = executor.submit(update_fx_rates, DB_PATH)
+        try:
+            added = fut_prices.result()
+            if added:
+                log.info(f"✅ Kursdaten aktualisiert: +{added} neue Zeilen")
+        except Exception as e:
+            log.error(f"❌ Kursupdate fehlgeschlagen: {e}")
+        try:
+            reddit_posts = fut_reddit.result()
+            log.info("✅ Reddit-Daten aktualisiert")
+        except Exception as e:
+            log.error(f"❌ Reddit-Update fehlgeschlagen: {e}")
+            reddit_posts = {t: [] for t in TICKERS}
+        try:
+            fx_added = fut_fx.result()
+            log.info(f"FX-Update: +{fx_added} neue EURUSD-Zeilen")
+        except Exception as e:
+            log.error(f"❌ FX-Update fehlgeschlagen: {e}")
 
     ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
     prices_usd = get_latest_prices(DB_PATH, TICKERS, use_eur=False)

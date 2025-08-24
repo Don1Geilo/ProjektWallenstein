@@ -264,11 +264,16 @@ def update_reddit_data(
         subreddits = ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
 
     # 1) neue Posts je Subreddit holen (Hot reicht als MVP; kann leicht auf 'new' umgestellt werden)
-    frames = []
+    frames: List[pd.DataFrame] = []
 
     with ThreadPoolExecutor() as executor:
         futures = [
-            executor.submit(fetch_reddit_posts, subreddit=sub, limit=limit_per_sub)
+            executor.submit(
+                fetch_reddit_posts,
+                subreddit=sub,
+                limit=limit_per_sub,
+                include_comments=include_comments,
+            )
             for sub in subreddits
         ]
         for future in as_completed(futures):
@@ -278,53 +283,51 @@ def update_reddit_data(
                 # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
                 pass
 
-    for sub in subreddits:
-        try:
-            frames.append(
-                fetch_reddit_posts(
-                    subreddit=sub,
-                    limit=limit_per_sub,
-                    include_comments=include_comments,
-                )
-            )
-        except Exception:
-            # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
-            pass
-
 
     if frames:
         df_all = pd.concat(frames, ignore_index=True)
         df_all.drop_duplicates(subset="id", inplace=True)
-        with duckdb.connect(DB_PATH) as con:
-            con.execute(
-                """
-                CREATE TABLE IF NOT EXISTS reddit_posts (
-                    id VARCHAR,
-                    title VARCHAR,
-                    created_utc TIMESTAMP,
-                    text VARCHAR
+
+        # Nur neue IDs zur Datenbank hinzufügen
+        existing_ids: set[str] = set()
+        try:
+            existing_ids = set(_load_posts_from_db()["id"].tolist())
+        except Exception:
+            existing_ids = set()
+        if existing_ids:
+            df_all = df_all[~df_all["id"].isin(existing_ids)]
+
+        if not df_all.empty:
+            with duckdb.connect(DB_PATH) as con:
+                con.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS reddit_posts (
+                        id VARCHAR,
+                        title VARCHAR,
+                        created_utc TIMESTAMP,
+                        text VARCHAR
+                    )
+                    """
                 )
-                """
-            )
-            # Ensure uniqueness on id for existing tables
-            con.execute(
-                """
-                DELETE FROM reddit_posts
-                WHERE rowid NOT IN (
-                    SELECT MIN(rowid) FROM reddit_posts GROUP BY id
+                # Ensure uniqueness on id for existing tables
+                con.execute(
+                    """
+                    DELETE FROM reddit_posts
+                    WHERE rowid NOT IN (
+                        SELECT MIN(rowid) FROM reddit_posts GROUP BY id
+                    )
+                    """
                 )
-                """
+                con.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)"
+                )
+                con.register("df_all", df_all)
+                cur = con.execute(
+                    "INSERT INTO reddit_posts SELECT * FROM df_all ON CONFLICT(id) DO NOTHING"
+                )
+            log.info(
+                f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
             )
-            con.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)"
-            )
-            con.register("df_all", df_all)
-            cur = con.execute(
-                "INSERT INTO reddit_posts SELECT * FROM df_all ON CONFLICT(id) DO NOTHING"
-            )
-        log.info(
-            f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
-        )
 
     # Alte Einträge entfernen
     purge_old_posts()
