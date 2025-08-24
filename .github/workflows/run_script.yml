@@ -5,6 +5,7 @@ on:
   schedule:
     - cron: "0 7-15 * * 1-5"  # stündlich 08:00–16:00 CET (UTC-Umrechnung beachten)
     - cron: "0 6-14 * * 1-5"  # stündlich 08:00–16:00 CEST (Sommerzeit)
+    - cron: "30 14-21 * * 1-5" # stündlich 15:30–22:30 CET / 16:30–23:30 CEST
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
