@@ -147,15 +147,43 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             sentiments[ticker] = 0.0
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
 
+
+    # Per‑Stock‑Modell trainieren
+    with duckdb.connect(DB_PATH) as con:
+        for ticker in tickers:
+            try:
+
     from concurrent.futures import ThreadPoolExecutor
 
     def _train(ticker: str):
         try:
             with duckdb.connect(DB_PATH) as con:
+
                 df_price = con.execute(
                     "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
                     [ticker],
                 ).fetchdf()
+
+
+                if df_price.empty:
+                    log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
+                    continue
+
+                df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
+                df_sent = sentiment_frames.get(
+                    ticker, pd.DataFrame(columns=["date", "sentiment"])
+                ).copy()
+                if not df_sent.empty:
+                    df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
+
+                df_stock = pd.merge(df_price, df_sent, on="date", how="left")
+                acc, f1 = train_per_stock(df_stock)
+                if acc is not None:
+                    log.info(f"{ticker}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
+                else:
+                    log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
+            except Exception as e:
+                log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
 
             if df_price.empty:
                 log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
@@ -182,6 +210,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
         for ticker, acc, f1 in ex.map(_train, tickers):
             if acc is not None:
                 log.info(f"{ticker}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
+
 
     # Übersicht & Notify
     try:
