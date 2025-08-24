@@ -268,6 +268,16 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
         else:
             start_map[t] = None
 
+    # Vorbereiten: Start-Datum pro Ticker normalisieren
+    start_map: dict[str, Optional[pd.Timestamp]] = {}
+    for t in tickers:
+        ld = last_map.get(t)
+        if pd.notna(ld):
+            ld_ts = pd.to_datetime(ld).tz_localize(None)
+            start_map[t] = ld_ts.date() + timedelta(days=1)
+        else:
+            start_map[t] = None
+
     for i in range(0, len(tickers), CHUNK_SIZE):
         chunk = tickers[i:i + CHUNK_SIZE]
 
@@ -275,7 +285,11 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
         chunk_valid = []
         for t in chunk:
             start = start_map.get(t)
+
             if start is not None and pd.to_datetime(start).tz_localize(None) > last_trading_day:
+
+            if start is not None and pd.to_datetime(start) > last_trading_day:
+
                 continue
             chunk_valid.append(t)
         if not chunk_valid:
@@ -305,7 +319,11 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
             ld = last_map.get(t)
             if pd.notna(ld):
                 ld_ts = pd.to_datetime(ld).tz_localize(None)
+
                 df_t = df_t[pd.to_datetime(df_t["date"]).dt.tz_localize(None) > ld_ts]
+
+                df_t = df_t[pd.to_datetime(df_t["date"]) > ld_ts]
+
             if not df_t.empty:
                 all_rows.append(df_t[["date","ticker","open","high","low","close","adj_close","volume"]])
 
