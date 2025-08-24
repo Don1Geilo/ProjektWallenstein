@@ -19,12 +19,12 @@ jobs:
     timeout-minutes: 25
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      CLIENT_ID: ${{ secrets.CLIENT_ID }}
-      CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-      # Du nutzt ein Secret "USER_AGENT", leitest es hier auf REDDIT_USER_AGENT um;
-      # config.py darf beide lesen (USER_AGENT oder REDDIT_USER_AGENT).
-      REDDIT_USER_AGENT: ${{ secrets.USER_AGENT }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+      CLIENT_ID:          ${{ secrets.CLIENT_ID }}
+      CLIENT_SECRET:      ${{ secrets.CLIENT_SECRET }}
+      # Wir setzen beide Varianten, damit config.py flexibel ist:
+      USER_AGENT:         ${{ secrets.USER_AGENT }}
+      REDDIT_USER_AGENT:  ${{ secrets.USER_AGENT }}
     permissions:
       contents: read
       actions: read
@@ -54,10 +54,15 @@ jobs:
       - name: Prepare folders
         run: mkdir -p data stockOverview
 
-      # Falls im Repo versehentlich eine .env liegt, könnte sie Secrets überschreiben
+      # Falls versehentlich eine .env im Repo liegt: nicht die Secrets überschreiben lassen
       - name: Neutralize local .env on CI
         run: |
-          [ -f .env ] && { echo "Found .env -> removing to avoid overriding secrets"; rm .env; } || echo "No .env present."
+          if [ -f .env ]; then
+            echo "Found .env -> removing to avoid overriding secrets"
+            rm .env
+          else
+            echo "No .env present."
+          fi
 
       # --- DEBUG 1: Branch, Commit, Tree
       - name: Show branch & tree
@@ -89,12 +94,14 @@ jobs:
       - name: Python import probe (wallenstein.config)
         run: |
           python - <<'PY'
-          import importlib, sys, pprint, os
+          import importlib, os
           m = importlib.import_module("wallenstein.config")
           print("Imported module:", m.__name__)
           print("From file      :", getattr(m, "__file__", "?"))
           print("Values preview :")
-          for k in ("CLIENT_ID", "CLIENT_SECRET", "USER_AGENT", "GOOGLE_API_KEYFILE", "GOOGLE_SHEETS_ID", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+          for k in ("CLIENT_ID", "CLIENT_SECRET", "USER_AGENT",
+                    "GOOGLE_API_KEYFILE", "GOOGLE_SHEETS_ID",
+                    "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
               print(f"  {k:18} ", "SET" if bool(getattr(m, k, None)) else "MISSING")
           print("has_reddit()   :", getattr(m, "has_reddit", lambda: None)())
           print("has_telegram() :", getattr(m, "has_telegram", lambda: None)())
@@ -102,7 +109,14 @@ jobs:
 
       # --- DEBUG 5 (optional): PRAW-Version
       - name: Show PRAW version
-        run: python -c "import pkg_resources; print('PRAW:', pkg_resources.get_distribution('praw').version)"
+        run: |
+          python - <<'PY'
+          try:
+              import pkg_resources
+              print("PRAW:", pkg_resources.get_distribution('praw').version)
+          except Exception as e:
+              print("PRAW not installed or unknown version:", e)
+          PY
 
       - name: Run Wallenstein with retries
         id: run_wallenstein
@@ -111,8 +125,7 @@ jobs:
           set -e
           echo "Start Wallenstein..."
           n=0
-          until [ $n -ge 3 ]
-          do
+          until [ $n -ge 3 ]; do
             python main.py && break
             n=$((n+1))
             echo "Run failed ($n). Sleeping and retrying..."
