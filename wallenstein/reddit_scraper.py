@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 import itertools
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import duckdb
 import pandas as pd
@@ -216,6 +217,19 @@ def update_reddit_data(
 
     # 1) neue Posts je Subreddit holen (Hot reicht als MVP; kann leicht auf 'new' umgestellt werden)
     frames = []
+
+    with ThreadPoolExecutor() as executor:
+        futures = [
+            executor.submit(fetch_reddit_posts, subreddit=sub, limit=limit_per_sub)
+            for sub in subreddits
+        ]
+        for future in as_completed(futures):
+            try:
+                frames.append(future.result())
+            except Exception:
+                # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
+                pass
+
     for sub in subreddits:
         try:
             frames.append(
@@ -228,6 +242,7 @@ def update_reddit_data(
         except Exception:
             # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
             pass
+
 
     if frames:
         df_all = pd.concat(frames, ignore_index=True)
