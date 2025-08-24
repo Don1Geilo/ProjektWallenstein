@@ -3,19 +3,21 @@ from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, GridSearchCV
 
 log = logging.getLogger(__name__)
 
 
 def train_per_stock(
     df_stock: pd.DataFrame,
-    use_kfold: bool = False,
+    use_kfold: bool = True,
     n_splits: int = 5,
+    model_type: str = "logistic",
 ) -> Optional[Tuple[float, float]]:
-    """Train a simple LogisticRegression on lagged close and sentiment data.
+    """Train a classifier on lagged close and sentiment data.
 
     Parameters
     ----------
@@ -31,6 +33,14 @@ def train_per_stock(
         Tuple of (accuracy, F1-score) of the model on the evaluation set. ``None``
         is returned for both metrics if there are insufficient samples or only
         one class in the training data.
+
+    Notes
+    -----
+    The function supports several model types (``logistic``, ``random_forest``
+    and ``gradient_boosting``) and performs a GridSearchCV for basic
+    hyperparameter optimisation. K-fold cross validation is enabled by default
+    and falls back to a simple train/test split when there are too few
+    samples.
     """
 
     if df_stock.empty:
@@ -40,15 +50,24 @@ def train_per_stock(
     # Convert sentiment to numeric and replace invalid entries with 0
     df["sentiment"] = pd.to_numeric(df["sentiment"], errors="coerce").fillna(0)
 
-    # Lagged features
+    # Lagged features for close and sentiment
     df["Close_lag1"] = df["close"].shift(1)
+    df["Close_lag2"] = df["close"].shift(2)
+    df["Close_lag3"] = df["close"].shift(3)
     df["Sentiment_lag1"] = df["sentiment"].shift(1)
+    df["Sentiment_lag2"] = df["sentiment"].shift(2)
+    df["Sentiment_lag3"] = df["sentiment"].shift(3)
 
     # Rolling features for close and sentiment
     df["Close_MA3"] = df["close"].rolling(window=3).mean().shift(1)
     df["Close_STD3"] = df["close"].rolling(window=3).std().shift(1)
     df["Sentiment_MA3"] = df["sentiment"].rolling(window=3).mean().shift(1)
     df["Sentiment_STD3"] = df["sentiment"].rolling(window=3).std().shift(1)
+
+    df["Close_MA7"] = df["close"].rolling(window=7).mean().shift(1)
+    df["Close_STD7"] = df["close"].rolling(window=7).std().shift(1)
+    df["Sentiment_MA7"] = df["sentiment"].rolling(window=7).mean().shift(1)
+    df["Sentiment_STD7"] = df["sentiment"].rolling(window=7).std().shift(1)
 
     df["y"] = (df["close"] > df["Close_lag1"]).astype(int)
     df.dropna(inplace=True)
@@ -58,39 +77,59 @@ def train_per_stock(
 
     features = [
         "Close_lag1",
+        "Close_lag2",
+        "Close_lag3",
         "Sentiment_lag1",
+        "Sentiment_lag2",
+        "Sentiment_lag3",
         "Close_MA3",
         "Close_STD3",
         "Sentiment_MA3",
         "Sentiment_STD3",
+        "Close_MA7",
+        "Close_STD7",
+        "Sentiment_MA7",
+        "Sentiment_STD7",
     ]
 
     X = df[features]
     y = df["y"]
 
-    model = LogisticRegression()
+    if y.nunique() < 2:
+        return None, None
+
+    if model_type == "logistic":
+        model = LogisticRegression(max_iter=1000)
+        param_grid = {"C": [0.01, 0.1, 1.0, 10.0]}
+    elif model_type == "random_forest":
+        model = RandomForestClassifier(random_state=42)
+        param_grid = {
+            "n_estimators": [50, 100, 200],
+            "max_depth": [3, 5, None],
+        }
+    elif model_type == "gradient_boosting":
+        model = GradientBoostingClassifier(random_state=42)
+        param_grid = {
+            "n_estimators": [50, 100, 200],
+            "learning_rate": [0.01, 0.1, 0.2],
+            "max_depth": [3, 5],
+        }
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
 
     if use_kfold and len(df) >= n_splits:
-        kf = KFold(n_splits=n_splits)
-        accuracies = []
-        f1_scores = []
-        for train_idx, test_idx in kf.split(X):
-            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-            y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-
-            if y_train.nunique() < 2 or y_test.nunique() < 2:
-                continue
-
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            accuracies.append(accuracy_score(y_test, y_pred))
-            f1_scores.append(f1_score(y_test, y_pred, zero_division=0))
-
-        if not accuracies:
-            return None, None
-
-        accuracy = float(np.mean(accuracies))
-        f1 = float(np.mean(f1_scores))
+        cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+        search = GridSearchCV(
+            model,
+            param_grid,
+            cv=cv,
+            scoring={"accuracy": "accuracy", "f1": "f1"},
+            refit="accuracy",
+        )
+        search.fit(X, y)
+        accuracy = float(search.cv_results_["mean_test_accuracy"][search.best_index_])
+        f1 = float(search.cv_results_["mean_test_f1"][search.best_index_])
+        log.info(f"{model_type} best params: {search.best_params_}")
     else:
         train_size = max(int(len(df) * 0.8), 1)
         df_train = df.iloc[:train_size]
@@ -99,20 +138,29 @@ def train_per_stock(
         X_train = df_train[features]
         y_train = df_train["y"]
 
-        # Need at least two classes to train logistic regression
         if y_train.nunique() < 2:
             return None, None
 
-        model.fit(X_train, y_train)
+        cv = min(3, len(y_train))
+        search = GridSearchCV(
+            model,
+            param_grid,
+            cv=cv,
+            scoring={"accuracy": "accuracy", "f1": "f1"},
+            refit="accuracy",
+        )
+        search.fit(X_train, y_train)
+        best_model = search.best_estimator_
+        log.info(f"{model_type} best params: {search.best_params_}")
 
         if df_test.empty:
-            y_pred = model.predict(X_train)
+            y_pred = best_model.predict(X_train)
             accuracy = accuracy_score(y_train, y_pred)
             f1 = f1_score(y_train, y_pred, zero_division=0)
         else:
             X_test = df_test[features]
             y_test = df_test["y"]
-            y_pred = model.predict(X_test)
+            y_pred = best_model.predict(X_test)
             accuracy = accuracy_score(y_test, y_pred)
             f1 = f1_score(y_test, y_pred, zero_division=0)
 
