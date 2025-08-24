@@ -10,3 +10,4 @@ scikit-learn
 pandas-datareader
 transformers
 torch
+python-telegram-bot
