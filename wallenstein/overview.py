@@ -47,4 +47,4 @@ def generate_overview(tickers: List[str]) -> str:
         rec = derive_recommendation(sent)
         sentiment_lines.append(f"{t}: Sentiment {sent:+.2f} | {rec}")
 
-    return "\ud83d\udcca Wallenstein Übersicht\n" + "\n".join(price_lines + sentiment_lines)
+    return "📊 Wallenstein Übersicht\n" + "\n".join(price_lines + sentiment_lines)
