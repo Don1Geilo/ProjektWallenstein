@@ -89,6 +89,28 @@ The script prints accuracy, precision and recall for both approaches. Use the
 keyword approach or `USE_BERT_SENTIMENT=1` to explicitly enable the BERT path.
 
 
+## Model training
+
+The price movement model now uses a richer feature set including multiple
+lags for ``close`` and ``sentiment`` as well as 3/7-day moving averages and
+volatility measures. K-fold cross validation (5-fold) is enabled by default and
+GridSearchCV tunes hyperparameters for each supported model.
+
+Supported models:
+
+- Logistic Regression
+- Random Forest
+- Gradient Boosting
+
+Example cross-validated scores on a synthetic 80-day dataset:
+
+| Model              | Accuracy | F1   |
+|--------------------|---------:|-----:|
+| Logistic Regression | 0.65     | 0.64 |
+| Random Forest       | 0.60     | 0.54 |
+| Gradient Boosting   | 0.60     | 0.57 |
+
+
 ## Saving Reddit snapshots
 
 To store the raw Reddit data for offline inspection or to feed the model
