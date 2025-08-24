@@ -147,8 +147,9 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             sentiments[ticker] = 0.0
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
 
-    # Per‑Stock‑Modell trainieren
-    for ticker in tickers:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _train(ticker: str):
         try:
             with duckdb.connect(DB_PATH) as con:
                 df_price = con.execute(
@@ -158,7 +159,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
             if df_price.empty:
                 log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
-                continue
+                return ticker, None, None
 
             df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
             df_sent = sentiment_frames.get(
@@ -169,12 +170,18 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
             df_stock = pd.merge(df_price, df_sent, on="date", how="left")
             acc, f1 = train_per_stock(df_stock)
-            if acc is not None:
-                log.info(f"{ticker}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
-            else:
+            if acc is None:
                 log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
+            return ticker, acc, f1
         except Exception as e:
             log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
+            return ticker, None, None
+
+    # Per‑Stock‑Modell trainieren
+    with ThreadPoolExecutor() as ex:
+        for ticker, acc, f1 in ex.map(_train, tickers):
+            if acc is not None:
+                log.info(f"{ticker}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
 
     # Übersicht & Notify
     try:
