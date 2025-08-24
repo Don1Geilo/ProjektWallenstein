@@ -3,6 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
+from main import run_pipeline
 from wallenstein.overview import generate_overview
 from wallenstein import config
 
@@ -17,6 +18,14 @@ async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     ticker = text[1:].split()[0].upper()
     log.info("Telegram request for %s", ticker)
+    try:
+        await context.application.run_in_executor(None, run_pipeline, [ticker])
+    except Exception as exc:  # pragma: no cover - unexpected failures
+        log.error("Pipeline run failed for %s: %s", ticker, exc)
+        await update.message.reply_text(
+            f"Fehler beim Aktualisieren von {ticker}: {exc}"
+        )
+        return
     try:
         overview = generate_overview([ticker])
     except Exception as exc:  # pragma: no cover - network failures

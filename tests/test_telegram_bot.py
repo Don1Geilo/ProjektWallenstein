@@ -35,13 +35,24 @@ class DummyMessage:
 def test_handle_ticker(monkeypatch):
     called = {}
 
+    def fake_run_pipeline(tickers):
+        called['pipeline'] = tickers
+
     def fake_overview(tickers):
-        called['tickers'] = tickers
+        called['overview'] = tickers
         return 'OVERVIEW'
 
+    async def fake_run_in_executor(executor, func, tickers):
+        func(tickers)
+
+    app = types.SimpleNamespace(run_in_executor=fake_run_in_executor)
+
+    monkeypatch.setattr('telegram_bot.run_pipeline', fake_run_pipeline)
     monkeypatch.setattr('telegram_bot.generate_overview', fake_overview)
+
     update = types.SimpleNamespace(message=DummyMessage('!nvda'))
-    context = types.SimpleNamespace()
+    context = types.SimpleNamespace(application=app)
     asyncio.run(handle_ticker(update, context))
-    assert called['tickers'] == ['NVDA']
+    assert called['pipeline'] == ['NVDA']
+    assert called['overview'] == ['NVDA']
     assert update.message.replies == ['OVERVIEW']
