@@ -22,6 +22,8 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      # Du nutzt ein Secret "USER_AGENT", leitest es hier auf REDDIT_USER_AGENT um;
+      # config.py darf beide lesen (USER_AGENT oder REDDIT_USER_AGENT).
       REDDIT_USER_AGENT: ${{ secrets.USER_AGENT }}
     permissions:
       contents: read
@@ -50,11 +52,57 @@ jobs:
           pip install -r requirements.txt
 
       - name: Prepare folders
-        run: |
-          mkdir -p data stockOverview
+        run: mkdir -p data stockOverview
 
-      - name: Export env from secrets
-        run: echo "Env ready"
+      # Falls im Repo versehentlich eine .env liegt, könnte sie Secrets überschreiben
+      - name: Neutralize local .env on CI
+        run: |
+          [ -f .env ] && { echo "Found .env -> removing to avoid overriding secrets"; rm .env; } || echo "No .env present."
+
+      # --- DEBUG 1: Branch, Commit, Tree
+      - name: Show branch & tree
+        run: |
+          echo "Branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Commit: $(git rev-parse HEAD)"
+          echo "Repo root:"
+          ls -la
+          echo "Package dir (wallenstein):"
+          ls -la wallenstein || true
+          echo "wallenstein files:"
+          find wallenstein -maxdepth 2 -type f -name "*.py" -print | sort || true
+
+      # --- DEBUG 2: ENV Sanity (ohne Werte zu leaken)
+      - name: Sanity check env (masked)
+        run: |
+          for v in CLIENT_ID CLIENT_SECRET USER_AGENT REDDIT_USER_AGENT TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
+            printf "%-20s %s\n" "$v:" "$([ -n "${!v}" ] && echo set || echo MISSING)"
+          done
+
+      # --- DEBUG 3: Zeig die tatsächliche config.py auf dem Runner
+      - name: Show wallenstein/config.py (first 160 lines)
+        run: |
+          echo "----- wallenstein/config.py (head) -----"
+          sed -n '1,160p' wallenstein/config.py || true
+          echo "----------------------------------------"
+
+      # --- DEBUG 4: Welche Datei importiert Python wirklich?
+      - name: Python import probe (wallenstein.config)
+        run: |
+          python - <<'PY'
+          import importlib, sys, pprint, os
+          m = importlib.import_module("wallenstein.config")
+          print("Imported module:", m.__name__)
+          print("From file      :", getattr(m, "__file__", "?"))
+          print("Values preview :")
+          for k in ("CLIENT_ID", "CLIENT_SECRET", "USER_AGENT", "GOOGLE_API_KEYFILE", "GOOGLE_SHEETS_ID", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+              print(f"  {k:18} ", "SET" if bool(getattr(m, k, None)) else "MISSING")
+          print("has_reddit()   :", getattr(m, "has_reddit", lambda: None)())
+          print("has_telegram() :", getattr(m, "has_telegram", lambda: None)())
+          PY
+
+      # --- DEBUG 5 (optional): PRAW-Version
+      - name: Show PRAW version
+        run: python -c "import pkg_resources; print('PRAW:', pkg_resources.get_distribution('praw').version)"
 
       - name: Run Wallenstein with retries
         id: run_wallenstein
@@ -76,8 +124,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stockOverview-${{ github.run_id }}
-          path: |
-            stockOverview/*.csv
+          path: stockOverview/*.csv
           if-no-files-found: warn
           retention-days: 7
 
