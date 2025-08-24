@@ -10,4 +10,5 @@ scikit-learn
 pandas-datareader
 transformers
 torch
+datasets
 python-telegram-bot

@@ -152,6 +152,11 @@ class BertSentiment:
             self.model = "ProsusAI/finbert"
         elif backend == "de-bert":
             self.model = "oliverguhr/german-sentiment-bert"
+        elif backend == "finetuned-finbert":
+            from pathlib import Path
+
+            # resolve path relative to repository root
+            self.model = str(Path(__file__).resolve().parent.parent / "models" / "finetuned-finbert")
         else:
             raise ValueError(f"Unsupported backend: {backend}")
         self.backend = backend

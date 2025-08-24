@@ -1,11 +1,501 @@
 text,label
-"Stocks are going up and I'm excited",positive
-"I hate losing money in the market",negative
-"Buy the dip now",positive
-"This company will crash soon",negative
-"I am very happy with the profits",positive
-"Sell everything it's over",negative
-"Bullish on tech stocks",positive
-"This is a terrible investment",negative
-"Strong buy recommendation",positive
-"Not a good time to invest",negative
+Selling all my TSLA stock,negative
+Buying more AMZN shares,positive
+Bearish outlook for TSLA,negative
+Feeling optimistic about AMZN,positive
+Feeling optimistic about NFLX,positive
+NFLX will crash soon,negative
+Disappointed in NFLX earnings,negative
+IBM continues to rise,positive
+Selling all my AMZN stock,negative
+Feeling pessimistic about NFLX,negative
+Bearish outlook for META,negative
+Amazing returns on NFLX,positive
+Feeling pessimistic about TSLA,negative
+GOOG continues to fall,negative
+NVDA continues to fall,negative
+Great bullish trend for GOOG,positive
+NVDA continues to rise,positive
+Investors love TSLA,positive
+NVDA will go to the moon,positive
+I am very happy with the profits from stock TSLA,positive
+TSLA will crash soon,negative
+IBM is a terrible investment,negative
+AMZN continues to fall,negative
+Feeling pessimistic about IBM,negative
+I am very happy with the profits from stock TSLA,positive
+Disappointed in MSFT earnings,negative
+Buying more MSFT shares,positive
+GOOG will crash soon,negative
+NVDA is a terrible investment,negative
+Feeling pessimistic about AMZN,negative
+MSFT is a strong buy,positive
+Selling all my IBM stock,negative
+Excited about BABA earnings,positive
+Feeling optimistic about IBM,positive
+I am worried about losses in META,negative
+Feeling optimistic about IBM,positive
+Investors love AAPL,positive
+I am worried about losses in MSFT,negative
+AMZN will crash soon,negative
+I am worried about losses in TSLA,negative
+Investors hate AMZN,negative
+AAPL is a terrible investment,negative
+Amazing returns on MSFT,positive
+GOOG continues to rise,positive
+GOOG will crash soon,negative
+I am very happy with the profits from stock MSFT,positive
+Feeling pessimistic about MSFT,negative
+Amazing returns on NVDA,positive
+Great bullish trend for META,positive
+AMZN will go to the moon,positive
+I am very happy with the profits from stock AMZN,positive
+GOOG will go to the moon,positive
+Selling all my NFLX stock,negative
+Great bullish trend for NVDA,positive
+Amazing returns on NVDA,positive
+AMZN is a strong buy,positive
+AMZN is a terrible investment,negative
+Bearish outlook for MSFT,negative
+AAPL will go to the moon,positive
+Disappointed in AAPL earnings,negative
+Bearish outlook for AMZN,negative
+Excited about TSLA earnings,positive
+Feeling optimistic about NFLX,positive
+IBM is a strong buy,positive
+Excited about IBM earnings,positive
+Disappointed in NFLX earnings,negative
+I am worried about losses in NFLX,negative
+Great bullish trend for NFLX,positive
+Amazing returns on TSLA,positive
+I am very happy with the profits from stock IBM,positive
+Bearish outlook for MSFT,negative
+Investors love IBM,positive
+Buying more TSLA shares,positive
+Great bullish trend for NFLX,positive
+I am very happy with the profits from stock AMZN,positive
+Disappointed in IBM earnings,negative
+IBM is a strong buy,positive
+Great bullish trend for AAPL,positive
+Feeling optimistic about AAPL,positive
+I am worried about losses in BABA,negative
+Amazing returns on META,positive
+NFLX will crash soon,negative
+Disappointed in GOOG earnings,negative
+BABA is a strong buy,positive
+META will go to the moon,positive
+Disappointed in AAPL earnings,negative
+NVDA continues to rise,positive
+MSFT will crash soon,negative
+MSFT is a strong buy,positive
+TSLA is a strong buy,positive
+META will crash soon,negative
+Excited about META earnings,positive
+Feeling optimistic about AAPL,positive
+I am worried about losses in NVDA,negative
+Feeling optimistic about TSLA,positive
+Investors hate MSFT,negative
+Feeling optimistic about TSLA,positive
+AAPL continues to rise,positive
+Disappointed in NVDA earnings,negative
+Excited about AAPL earnings,positive
+Disappointed in NFLX earnings,negative
+I am very happy with the profits from stock NVDA,positive
+Feeling pessimistic about NFLX,negative
+META will go to the moon,positive
+Investors love AAPL,positive
+Disappointed in META earnings,negative
+Investors hate BABA,negative
+Poor performance by AMZN,negative
+Buying more AMZN shares,positive
+AAPL will go to the moon,positive
+Selling all my META stock,negative
+Amazing returns on GOOG,positive
+I am very happy with the profits from stock AMZN,positive
+NVDA will crash soon,negative
+I am worried about losses in NFLX,negative
+Buying more NVDA shares,positive
+AMZN continues to fall,negative
+GOOG will go to the moon,positive
+Excited about NVDA earnings,positive
+Excited about NVDA earnings,positive
+GOOG is a terrible investment,negative
+Feeling pessimistic about MSFT,negative
+Investors love NFLX,positive
+Investors love META,positive
+AMZN continues to fall,negative
+Amazing returns on MSFT,positive
+Bearish outlook for META,negative
+NFLX will crash soon,negative
+Disappointed in GOOG earnings,negative
+Bearish outlook for TSLA,negative
+Buying more META shares,positive
+META is a terrible investment,negative
+Investors love META,positive
+I am very happy with the profits from stock AMZN,positive
+Bearish outlook for NVDA,negative
+AAPL will crash soon,negative
+META continues to rise,positive
+I am very happy with the profits from stock IBM,positive
+Selling all my NVDA stock,negative
+Amazing returns on NVDA,positive
+NFLX will go to the moon,positive
+Great bullish trend for META,positive
+AMZN continues to rise,positive
+NFLX is a strong buy,positive
+BABA is a terrible investment,negative
+Amazing returns on IBM,positive
+AAPL continues to fall,negative
+Excited about GOOG earnings,positive
+GOOG will go to the moon,positive
+AAPL continues to rise,positive
+IBM is a strong buy,positive
+Great bullish trend for IBM,positive
+AAPL will go to the moon,positive
+AMZN is a terrible investment,negative
+Bearish outlook for IBM,negative
+Bearish outlook for TSLA,negative
+I am very happy with the profits from stock MSFT,positive
+Amazing returns on NVDA,positive
+NFLX will go to the moon,positive
+Poor performance by META,negative
+TSLA is a strong buy,positive
+NVDA continues to rise,positive
+NVDA continues to fall,negative
+Great bullish trend for MSFT,positive
+META continues to fall,negative
+Great bullish trend for TSLA,positive
+META is a terrible investment,negative
+Bearish outlook for NFLX,negative
+Disappointed in BABA earnings,negative
+Bearish outlook for IBM,negative
+I am very happy with the profits from stock TSLA,positive
+Disappointed in IBM earnings,negative
+I am worried about losses in NVDA,negative
+NVDA continues to rise,positive
+I am worried about losses in AAPL,negative
+NFLX continues to fall,negative
+I am worried about losses in AMZN,negative
+Excited about BABA earnings,positive
+Poor performance by NVDA,negative
+Poor performance by TSLA,negative
+I am very happy with the profits from stock IBM,positive
+BABA is a terrible investment,negative
+IBM is a strong buy,positive
+Poor performance by NVDA,negative
+Bearish outlook for AAPL,negative
+Feeling optimistic about IBM,positive
+TSLA continues to rise,positive
+Amazing returns on GOOG,positive
+Great bullish trend for AMZN,positive
+I am worried about losses in GOOG,negative
+TSLA will go to the moon,positive
+Feeling pessimistic about TSLA,negative
+I am very happy with the profits from stock BABA,positive
+AMZN is a strong buy,positive
+Great bullish trend for GOOG,positive
+NVDA is a strong buy,positive
+Bearish outlook for META,negative
+AMZN continues to fall,negative
+TSLA will crash soon,negative
+Selling all my NFLX stock,negative
+GOOG will go to the moon,positive
+Feeling pessimistic about GOOG,negative
+Poor performance by AAPL,negative
+NVDA will crash soon,negative
+IBM will go to the moon,positive
+I am worried about losses in GOOG,negative
+NFLX continues to rise,positive
+I am very happy with the profits from stock AMZN,positive
+Feeling pessimistic about TSLA,negative
+Excited about IBM earnings,positive
+Amazing returns on TSLA,positive
+AAPL will go to the moon,positive
+Selling all my IBM stock,negative
+Feeling optimistic about TSLA,positive
+Investors hate AMZN,negative
+META continues to fall,negative
+I am very happy with the profits from stock IBM,positive
+Buying more AMZN shares,positive
+Bearish outlook for IBM,negative
+I am worried about losses in GOOG,negative
+Buying more AAPL shares,positive
+Bearish outlook for TSLA,negative
+Amazing returns on NFLX,positive
+Selling all my META stock,negative
+Excited about BABA earnings,positive
+Feeling pessimistic about NVDA,negative
+Bearish outlook for IBM,negative
+Poor performance by NVDA,negative
+I am very happy with the profits from stock MSFT,positive
+I am worried about losses in META,negative
+GOOG will crash soon,negative
+Feeling optimistic about MSFT,positive
+I am worried about losses in MSFT,negative
+Excited about GOOG earnings,positive
+TSLA continues to fall,negative
+Great bullish trend for IBM,positive
+Investors love AMZN,positive
+Selling all my AMZN stock,negative
+GOOG will go to the moon,positive
+GOOG will crash soon,negative
+Bearish outlook for NVDA,negative
+NVDA continues to rise,positive
+I am worried about losses in AAPL,negative
+I am very happy with the profits from stock AMZN,positive
+BABA continues to fall,negative
+NVDA is a terrible investment,negative
+Disappointed in NVDA earnings,negative
+Great bullish trend for AAPL,positive
+Feeling optimistic about NVDA,positive
+NFLX will go to the moon,positive
+IBM will go to the moon,positive
+AAPL is a terrible investment,negative
+Poor performance by NVDA,negative
+Investors hate NFLX,negative
+Selling all my MSFT stock,negative
+Poor performance by META,negative
+I am very happy with the profits from stock AAPL,positive
+Great bullish trend for BABA,positive
+I am worried about losses in TSLA,negative
+Bearish outlook for MSFT,negative
+Buying more IBM shares,positive
+IBM is a strong buy,positive
+Disappointed in MSFT earnings,negative
+Excited about BABA earnings,positive
+Great bullish trend for AMZN,positive
+TSLA is a strong buy,positive
+I am worried about losses in NFLX,negative
+Selling all my GOOG stock,negative
+Feeling pessimistic about MSFT,negative
+I am very happy with the profits from stock MSFT,positive
+Excited about BABA earnings,positive
+IBM continues to rise,positive
+Feeling optimistic about AMZN,positive
+Disappointed in IBM earnings,negative
+AAPL continues to fall,negative
+Poor performance by AMZN,negative
+NVDA is a strong buy,positive
+AMZN is a terrible investment,negative
+IBM is a strong buy,positive
+AMZN will go to the moon,positive
+Excited about MSFT earnings,positive
+Investors hate BABA,negative
+I am worried about losses in NVDA,negative
+I am worried about losses in NFLX,negative
+Poor performance by BABA,negative
+Investors hate MSFT,negative
+Disappointed in AMZN earnings,negative
+BABA is a terrible investment,negative
+Bearish outlook for TSLA,negative
+Great bullish trend for NVDA,positive
+NFLX is a terrible investment,negative
+NVDA will go to the moon,positive
+AAPL will crash soon,negative
+Excited about NVDA earnings,positive
+Amazing returns on NFLX,positive
+NFLX is a strong buy,positive
+I am very happy with the profits from stock BABA,positive
+Excited about TSLA earnings,positive
+BABA will go to the moon,positive
+Feeling optimistic about IBM,positive
+Amazing returns on AAPL,positive
+I am worried about losses in META,negative
+AAPL is a terrible investment,negative
+BABA will crash soon,negative
+Investors love AAPL,positive
+Disappointed in MSFT earnings,negative
+Excited about AAPL earnings,positive
+Investors hate AMZN,negative
+Great bullish trend for NVDA,positive
+AMZN continues to fall,negative
+Feeling pessimistic about NFLX,negative
+Buying more MSFT shares,positive
+NVDA is a terrible investment,negative
+Bearish outlook for BABA,negative
+Disappointed in AMZN earnings,negative
+Feeling optimistic about AAPL,positive
+TSLA continues to fall,negative
+Great bullish trend for TSLA,positive
+Poor performance by MSFT,negative
+Bearish outlook for IBM,negative
+Disappointed in NVDA earnings,negative
+TSLA continues to rise,positive
+TSLA will go to the moon,positive
+Poor performance by IBM,negative
+Investors hate TSLA,negative
+AAPL will go to the moon,positive
+Poor performance by GOOG,negative
+Amazing returns on NVDA,positive
+META is a strong buy,positive
+Buying more BABA shares,positive
+Buying more BABA shares,positive
+Feeling pessimistic about IBM,negative
+Buying more AMZN shares,positive
+IBM is a terrible investment,negative
+Amazing returns on TSLA,positive
+Buying more IBM shares,positive
+I am very happy with the profits from stock GOOG,positive
+Feeling optimistic about AMZN,positive
+Selling all my TSLA stock,negative
+MSFT will go to the moon,positive
+TSLA is a terrible investment,negative
+Bearish outlook for BABA,negative
+NVDA continues to fall,negative
+Amazing returns on BABA,positive
+Poor performance by MSFT,negative
+NVDA continues to fall,negative
+BABA continues to fall,negative
+Disappointed in META earnings,negative
+Amazing returns on NVDA,positive
+NVDA will go to the moon,positive
+BABA will crash soon,negative
+Great bullish trend for NVDA,positive
+Poor performance by MSFT,negative
+Selling all my AAPL stock,negative
+Great bullish trend for GOOG,positive
+META continues to fall,negative
+I am very happy with the profits from stock MSFT,positive
+Investors hate TSLA,negative
+Great bullish trend for TSLA,positive
+TSLA will crash soon,negative
+Bearish outlook for NFLX,negative
+Feeling optimistic about AAPL,positive
+Investors love TSLA,positive
+AMZN is a strong buy,positive
+Poor performance by GOOG,negative
+AAPL continues to fall,negative
+Great bullish trend for TSLA,positive
+I am very happy with the profits from stock META,positive
+MSFT is a strong buy,positive
+Selling all my NFLX stock,negative
+Feeling pessimistic about BABA,negative
+IBM will crash soon,negative
+NFLX continues to fall,negative
+Great bullish trend for TSLA,positive
+GOOG continues to rise,positive
+Feeling pessimistic about BABA,negative
+I am worried about losses in AAPL,negative
+Amazing returns on META,positive
+I am very happy with the profits from stock GOOG,positive
+Excited about MSFT earnings,positive
+META will go to the moon,positive
+TSLA continues to fall,negative
+AAPL is a strong buy,positive
+Amazing returns on TSLA,positive
+NVDA continues to rise,positive
+AAPL is a terrible investment,negative
+Investors love MSFT,positive
+Feeling pessimistic about AAPL,negative
+Selling all my AAPL stock,negative
+NFLX continues to rise,positive
+Investors love META,positive
+Feeling pessimistic about AAPL,negative
+Amazing returns on GOOG,positive
+META is a terrible investment,negative
+Feeling optimistic about IBM,positive
+Bearish outlook for NVDA,negative
+Poor performance by GOOG,negative
+Disappointed in GOOG earnings,negative
+META continues to rise,positive
+AMZN continues to fall,negative
+Investors hate BABA,negative
+I am very happy with the profits from stock TSLA,positive
+Buying more BABA shares,positive
+I am very happy with the profits from stock GOOG,positive
+BABA continues to rise,positive
+NFLX continues to fall,negative
+AAPL continues to fall,negative
+Bearish outlook for META,negative
+Disappointed in NFLX earnings,negative
+NVDA will go to the moon,positive
+Selling all my GOOG stock,negative
+Great bullish trend for META,positive
+NVDA continues to fall,negative
+TSLA will crash soon,negative
+Selling all my NFLX stock,negative
+Poor performance by AAPL,negative
+IBM is a terrible investment,negative
+Great bullish trend for NVDA,positive
+Disappointed in MSFT earnings,negative
+NFLX will crash soon,negative
+Bearish outlook for IBM,negative
+GOOG is a terrible investment,negative
+Investors love BABA,positive
+Bearish outlook for AAPL,negative
+Buying more AAPL shares,positive
+Investors love IBM,positive
+Poor performance by AMZN,negative
+Investors hate META,negative
+IBM continues to fall,negative
+I am worried about losses in AAPL,negative
+Disappointed in IBM earnings,negative
+Disappointed in MSFT earnings,negative
+Buying more GOOG shares,positive
+Disappointed in GOOG earnings,negative
+TSLA is a strong buy,positive
+IBM continues to rise,positive
+Disappointed in NFLX earnings,negative
+Buying more IBM shares,positive
+Investors love NFLX,positive
+Excited about TSLA earnings,positive
+Investors love AAPL,positive
+GOOG is a terrible investment,negative
+Amazing returns on TSLA,positive
+Selling all my AMZN stock,negative
+Bearish outlook for GOOG,negative
+MSFT is a strong buy,positive
+Poor performance by META,negative
+Poor performance by AMZN,negative
+I am worried about losses in GOOG,negative
+Buying more GOOG shares,positive
+Feeling pessimistic about AAPL,negative
+Investors love IBM,positive
+TSLA continues to rise,positive
+Poor performance by NVDA,negative
+Great bullish trend for META,positive
+GOOG will go to the moon,positive
+Bearish outlook for IBM,negative
+Feeling optimistic about BABA,positive
+IBM continues to rise,positive
+META continues to rise,positive
+Disappointed in AAPL earnings,negative
+Investors love NFLX,positive
+Investors hate IBM,negative
+Great bullish trend for GOOG,positive
+Buying more GOOG shares,positive
+Feeling pessimistic about META,negative
+AMZN is a terrible investment,negative
+I am worried about losses in TSLA,negative
+IBM is a strong buy,positive
+Feeling optimistic about TSLA,positive
+Poor performance by GOOG,negative
+META is a terrible investment,negative
+Investors hate NVDA,negative
+Bearish outlook for NVDA,negative
+Poor performance by MSFT,negative
+IBM continues to rise,positive
+Buying more META shares,positive
+Bearish outlook for GOOG,negative
+Investors hate MSFT,negative
+Feeling optimistic about AAPL,positive
+Feeling optimistic about GOOG,positive
+I am worried about losses in NFLX,negative
+Investors love GOOG,positive
+Buying more META shares,positive
+TSLA is a strong buy,positive
+Feeling pessimistic about BABA,negative
+Amazing returns on META,positive
+Selling all my NVDA stock,negative
+Selling all my GOOG stock,negative
+Feeling pessimistic about TSLA,negative
+Feeling optimistic about NFLX,positive
+IBM continues to fall,negative
+Feeling pessimistic about META,negative
+Feeling pessimistic about AAPL,negative
+AMZN will go to the moon,positive
+NFLX continues to rise,positive
+Feeling optimistic about META,positive
+IBM continues to rise,positive
+Feeling pessimistic about TSLA,negative
+Feeling optimistic about MSFT,positive
