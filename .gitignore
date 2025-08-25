@@ -1,11 +1,16 @@
 # --- Secrets & Config ---
 .env
 .env.*
+!.env.example
 Google_API.json
 reddit_data.json
 stock.cache.json
 telegram_token.txt
 config.json
+
+# --- Virtual Environments ---
+.venv/
+venv/
 
 # --- DuckDB Datenbank & Exporte ---
 *.duckdb
@@ -25,7 +30,9 @@ dist/
 build/
 
 # --- IDE / Editor ---
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
 .idea/
 
 # --- Logs ---
