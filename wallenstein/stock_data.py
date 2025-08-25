@@ -17,6 +17,14 @@ import yfinance as yf
 # ---- Configuration ----
 MAX_RETRIES = 3
 CHUNK_SIZE = 20
+# User-Agent for Stooq requests (some environments return 403 for default UA)
+STOOQ_HEADERS = {
+    "User-Agent": os.getenv(
+        "STOOQ_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    )
+}
 
 # Datenquelle: stooq (default, mit Yahoo-Fallback) | yahoo
 # 'hybrid' bleibt aus Kompatibilitätsgründen als Alias zu stooq bestehen
@@ -90,7 +98,7 @@ def _stooq_fetch_one(
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
     sess = session or requests
     try:
-        r = sess.get(url, timeout=20)
+        r = sess.get(url, timeout=20, headers=STOOQ_HEADERS)
         if not r.ok or not r.text:
             return pd.DataFrame()
         df = pd.read_csv(io.StringIO(r.text))
@@ -359,7 +367,7 @@ def _stooq_fetch_fx_eurusd(start: Optional[pd.Timestamp] = None) -> pd.DataFrame
     """
     url = "https://stooq.com/q/d/l/?s=eurusd&i=d"
     try:
-        r = requests.get(url, timeout=20)
+        r = requests.get(url, timeout=20, headers=STOOQ_HEADERS)
         if not r.ok or not r.text:
             return pd.DataFrame()
         df = pd.read_csv(io.StringIO(r.text))
