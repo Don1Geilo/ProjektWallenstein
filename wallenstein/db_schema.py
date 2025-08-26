@@ -62,6 +62,14 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
                 )
                 con.execute("DROP TABLE reddit_posts")
                 con.execute("ALTER TABLE reddit_posts_tmp RENAME TO reddit_posts")
+
+            try:
+                con.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)"
+                )
+            except duckdb.Error:  # pragma: no cover - index may exist already
+                pass
+
             con.execute("CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)")
         if table == "fx_rates":
             try:
@@ -86,6 +94,7 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS fx_rates_date_pair_idx ON fx_rates(date, pair)"
             )
+
 
 
 def validate_df(df, table_name: str):
