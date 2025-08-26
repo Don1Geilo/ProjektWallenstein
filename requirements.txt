@@ -4,8 +4,4 @@ duckdb==0.10.2
 requests==2.32.3
 python-dotenv==1.0.1
 praw==7.7.1
-nltk==3.8.1
 scikit-learn==1.4.2
-transformers==4.41.0
-torch==2.2.1
-tqdm==4.66.4

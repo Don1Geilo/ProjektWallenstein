@@ -1,29 +1,35 @@
+import sys
 import numpy as np
-from datasets import load_dataset
-from sklearn.metrics import accuracy_score, precision_score, recall_score
-from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-    Trainer,
-    TrainingArguments,
-)
 
 
 def tokenize_function(examples, tokenizer):
     return tokenizer(examples["text"], padding="max_length", truncation=True)
 
 
-def compute_metrics(p):
-    preds = np.argmax(p.predictions, axis=1)
-    labels = p.label_ids
-    return {
-        "accuracy": accuracy_score(labels, preds),
-        "precision": precision_score(labels, preds),
-        "recall": recall_score(labels, preds),
-    }
-
-
 def main():
+    try:
+        from datasets import load_dataset
+        from sklearn.metrics import accuracy_score, precision_score, recall_score
+        from transformers import (
+            AutoModelForSequenceClassification,
+            AutoTokenizer,
+            Trainer,
+            TrainingArguments,
+        )
+    except Exception as exc:
+        print("Missing optional dependencies for FinBERT training: datasets, transformers, scikit-learn")
+        print(exc)
+        return
+
+    def compute_metrics(p):
+        preds = np.argmax(p.predictions, axis=1)
+        labels = p.label_ids
+        return {
+            "accuracy": accuracy_score(labels, preds),
+            "precision": precision_score(labels, preds),
+            "recall": recall_score(labels, preds),
+        }
+
     dataset = load_dataset("csv", data_files={"data": "data/sentiment_labels.csv"})["data"]
     dataset = dataset.train_test_split(test_size=0.2, seed=42)
 
