@@ -74,6 +74,9 @@ KEYWORD_SCORES: Dict[str, int] = {
     "fomo": 1,
     "hodl": 1,
     "btfd": 1,
+    "rocket": 1,
+    "squeeze": 1,
+    "lfg": 1,
     # negative
     "short": -1,
     "put": -1,
@@ -84,8 +87,10 @@ KEYWORD_SCORES: Dict[str, int] = {
     "bärisch": -1,
     "dip": -1,
     "dump": -1,
+    "dumping": -1,
     "fud": -1,
     "crash": -1,
+    "bagholder": -1,
 }
 
 # extend keyword scores with simple intensity phrases and negated forms
