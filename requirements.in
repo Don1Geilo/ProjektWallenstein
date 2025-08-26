@@ -4,8 +4,4 @@ duckdb
 requests
 python-dotenv
 praw
-nltk
 scikit-learn
-transformers
-torch
-tqdm
