@@ -86,6 +86,20 @@ def test_stooq_fetch_one_retries(monkeypatch):
     assert not df.empty
 
 
+def test_download_single_safe_handles_429(monkeypatch, caplog):
+    class DummyTicker:
+        def history(self, *args, **kwargs):
+            resp = requests.Response()
+            resp.status_code = 429
+            raise requests.exceptions.HTTPError(response=resp)
+
+    monkeypatch.setattr(stock_data.yf, "Ticker", lambda *_, **__: DummyTicker())
+    caplog.set_level(logging.WARNING)
+    df = stock_data._download_single_safe("FAIL", session=requests.Session())
+    assert df.empty
+    assert "skipped due to rate limiting" in caplog.text
+
+
 def test_prices_table_has_index(tmp_path):
     db = tmp_path / "idx.duckdb"
     con = duckdb.connect(str(db))

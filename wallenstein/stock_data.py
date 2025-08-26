@@ -11,7 +11,11 @@ import pandas as pd
 import requests
 import yfinance as yf
 from requests.adapters import HTTPAdapter
+
+from requests.exceptions import HTTPError, RequestException
+
 from requests.exceptions import HTTPError
+
 from urllib3.util.retry import Retry
 
 from wallenstein.config import settings
@@ -202,9 +206,10 @@ def _make_session(user_agent: str | None = None) -> requests.Session:
 
 
 def _download_single_safe(
-    ticker: str, session: requests.Session, start=None, period="1mo"
+    ticker: str, session: requests.Session, start=None, period="1mo",
 ) -> pd.DataFrame:
     today_utc = pd.Timestamp.utcnow().date()
+    last_err: Exception | None = None
     for attempt in range(MAX_RETRIES):
         try:
             tk = yf.Ticker(ticker, session=session)
@@ -241,7 +246,7 @@ def _download_single_safe(
                 df["date"] = pd.to_datetime(df["date"]).dt.date
                 return df[["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]]
             else:
-                log.warning(f"{ticker}: no trading data for start date {use_start}")
+                log.warning(f"{ticker}: ticker not found")
                 return pd.DataFrame(
                     columns=[
                         "date",
@@ -254,6 +259,32 @@ def _download_single_safe(
                         "volume",
                     ]
                 )
+
+        except json.JSONDecodeError as e:
+            last_err = e
+        except HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status == 429:
+                log.warning(f"{ticker}: skipped due to rate limiting (HTTP 429)")
+                return pd.DataFrame(
+                    columns=[
+                        "date",
+                        "ticker",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "adj_close",
+                        "volume",
+                    ]
+                )
+            last_err = e
+        except RequestException as e:
+            last_err = e
+        except Exception as e:  # pragma: no cover - defensive catch-all
+            last_err = e
+        if attempt < MAX_RETRIES - 1:
+
         except json.JSONDecodeError:
             _retry_sleep(attempt)
             continue
@@ -264,12 +295,13 @@ def _download_single_safe(
             _retry_sleep(attempt)
             continue
         except Exception:
+
             _retry_sleep(attempt)
-            continue
+    if last_err is not None:
+        log.warning(f"{ticker}: network error ({last_err.__class__.__name__})")
     return pd.DataFrame(
         columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
     )
-
 
 def _yahoo_fetch_many(
     tickers: list[str],
