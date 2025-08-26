@@ -32,7 +32,6 @@ class Settings:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     )
-    FMP_API_KEY = os.getenv("FMP_API_KEY", "demo")
     DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", "30"))
     SENTIMENT_BACKEND = os.getenv("SENTIMENT_BACKEND", "finbert").lower()
 
