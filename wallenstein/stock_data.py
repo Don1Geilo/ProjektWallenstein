@@ -72,7 +72,8 @@ def _ensure_prices_table(con: duckdb.DuckDBPyConnection):
             low DOUBLE,
             close DOUBLE,
             adj_close DOUBLE,
-            volume BIGINT
+            volume BIGINT,
+            PRIMARY KEY(date, ticker)
         )
     """
     )
@@ -462,15 +463,9 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
     df_all["date"] = pd.to_datetime(df_all["date"]).dt.date
     df_all = df_all.sort_values(["ticker", "date"])
 
-    # Append + DISTINCT‑Refresh
+    # Append while skipping duplicates
     validate_df(df_all, "prices")
-    con.execute("INSERT INTO prices SELECT * FROM df_all")
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE prices AS
-        SELECT DISTINCT * FROM prices
-    """
-    )
+    con.execute("INSERT INTO prices SELECT * FROM df_all ON CONFLICT DO NOTHING")
 
     n = len(df_all)
     if session is not None:
