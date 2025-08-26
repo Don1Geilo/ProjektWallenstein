@@ -3,6 +3,7 @@ import logging
 import duckdb
 import pandas as pd
 import pytest
+import requests
 
 from wallenstein import stock_data
 
@@ -61,3 +62,25 @@ def test_update_prices_skips_weekend(monkeypatch, tmp_path, caplog):
     assert n == 0
     assert called["stooq"] == 0
     assert "no trading data" not in caplog.text
+
+
+def test_stooq_fetch_one_retries(monkeypatch):
+    class DummyResp:
+        def __init__(self, ok, text):
+            self.ok = ok
+            self.text = text
+
+    class DummySession:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url, timeout=20, headers=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise requests.exceptions.ConnectionError("boom")
+            return DummyResp(True, "Date,Open,High,Low,Close,Volume\n2024-01-02,1,1,1,1,100")
+
+    sess = DummySession()
+    df = stock_data._stooq_fetch_one("TEST", session=sess)
+    assert sess.calls == 2
+    assert not df.empty
