@@ -12,17 +12,11 @@ DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "data/wallenstein.duckdb").strip()
 
 
 def _fetch_latest_price(ticker: str) -> Optional[float]:
-    """Fetch the latest USD price for ``ticker`` via yfinance.
-
-    Returns ``None`` if the price cannot be retrieved. This is used as a
-    fallback when the DuckDB database has no entry for the requested ticker,
-    e.g. on weekends or for tickers that were never updated before.
-    """
+    """Fetch the latest USD price for ``ticker`` via yfinance."""
     try:
         import yfinance as yf
 
         tk = yf.Ticker(ticker)
-        # Try fast_info first (no additional network call); fall back to history
         price = getattr(getattr(tk, "fast_info", None), "last_price", None)
         if price is None:
             hist = tk.history(period="1d", interval="1d", auto_adjust=False,
@@ -34,20 +28,41 @@ def _fetch_latest_price(ticker: str) -> Optional[float]:
         return None
 
 
+def _fetch_usd_per_eur_rate() -> Optional[float]:
+    """Return USD per 1 EUR via yfinance."""
+    try:
+        import yfinance as yf
+
+        tk = yf.Ticker("EURUSD=X")
+        rate = getattr(getattr(tk, "fast_info", None), "last_price", None)
+        if rate is None:
+            hist = tk.history(period="1d", interval="1d", auto_adjust=False,
+                              actions=False)
+            if hist is not None and not hist.empty:
+                rate = float(hist["Close"].iloc[-1])
+        return float(rate) if rate is not None else None
+    except Exception:  # pragma: no cover - network issues
+        return None
+
+
 def generate_overview(tickers: List[str]) -> str:
     """Return a formatted overview for ``tickers``.
 
-    The overview lists the latest USD prices and a simple Reddit-based
+    The overview lists the latest USD and EUR prices and a simple Reddit-based
     sentiment score with a derived recommendation for each ticker.
     """
 
     prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
-    # Fallback: fetch missing prices via yfinance
+    prices_eur = get_latest_prices(DB_PATH, tickers, use_eur=True)
+    # Fallback: fetch missing USD prices via yfinance and convert to EUR
     missing = [t for t in tickers if prices_usd.get(t) is None]
+    usd_per_eur = _fetch_usd_per_eur_rate() if missing else None
     for t in missing:
         px = _fetch_latest_price(t)
         if px is not None:
             prices_usd[t] = px
+            if usd_per_eur:
+                prices_eur[t] = px / usd_per_eur
     try:
         reddit_posts = update_reddit_data(tickers)
     except Exception:  # pragma: no cover - network or config issues
@@ -66,9 +81,14 @@ def generate_overview(tickers: List[str]) -> str:
     price_lines = []
     sentiment_lines = []
     for t in tickers:
-        price = prices_usd.get(t)
-        if price is not None:
-            price_lines.append(f"{t}: {price:.2f} USD")
+        usd = prices_usd.get(t)
+        eur = prices_eur.get(t)
+        if usd is not None and eur is not None:
+            price_lines.append(f"{t}: {usd:.2f} USD ({eur:.2f} EUR)")
+        elif usd is not None:
+            price_lines.append(f"{t}: {usd:.2f} USD")
+        elif eur is not None:
+            price_lines.append(f"{t}: {eur:.2f} EUR")
         else:
             price_lines.append(f"{t}: n/a")
 
