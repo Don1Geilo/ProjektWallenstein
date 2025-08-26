@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import re
 from collections.abc import Iterable
 from functools import lru_cache
@@ -40,6 +41,15 @@ def _log_keyword_hint(message: str = "Using keyword-based sentiment analysis") -
     if not _keyword_hint_logged:
         logger.info(message)
         _keyword_hint_logged = True
+
+
+def _use_bert_sentiment() -> bool:
+    """Return ``True`` if BERT sentiment analysis is requested."""
+
+    env = os.getenv("USE_BERT_SENTIMENT")
+    if env is not None:
+        return env.lower() in ("1", "true", "yes")
+    return settings.USE_BERT_SENTIMENT
 
 
 # Intensifiers and negation markers used to enrich the keyword map
@@ -214,7 +224,7 @@ def analyze_sentiment(text: str) -> float:
     keyword based implementation and logs an informational hint.
     """
 
-    if settings.USE_BERT_SENTIMENT:
+    if _use_bert_sentiment():
         try:
             return analyze_sentiment_bert(text)
         except Exception:  # pragma: no cover - defensive
@@ -261,7 +271,7 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
     """
 
     global _bert_analyzer
-    if settings.USE_BERT_SENTIMENT:
+    if _use_bert_sentiment():
         try:
             if _bert_analyzer is None:
                 _bert_analyzer = BertSentiment()
