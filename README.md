@@ -15,6 +15,31 @@ python main.py
 python telegram_bot.py  # optional: interactive Telegram bot; use !<ticker>
 ```
 
+## Install (reproducible)
+
+Pinned dependencies live in `requirements.txt`.
+
+```bash
+pip install -r requirements.txt
+```
+
+An optional `requirements.in` is provided for use with
+[`pip-tools`](https://github.com/jazzband/pip-tools). Regenerate the pinned
+file via:
+
+```bash
+pip install pip-tools
+pip-compile requirements.in
+```
+
+## Dev setup
+
+Install git hooks for consistent formatting and linting:
+
+```bash
+pre-commit install
+```
+
 ### ENV (via `.env` or system env)
 - `WALLENSTEIN_DB_PATH` = path to DuckDB (default `data/wallenstein.duckdb`)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (optional alerts)

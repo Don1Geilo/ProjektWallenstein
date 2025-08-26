@@ -1,38 +1,42 @@
 import duckdb
 import pandas as pd
-from typing import Dict, List, Optional
+
 
 # ---------- Helpers ----------
 def _view_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
     q = "SELECT COUNT(*) FROM information_schema.views WHERE lower(table_name) = ?"
     return bool(con.execute(q, [name.lower()]).fetchone()[0])
 
+
 def _table_exists(con: duckdb.DuckDBPyConnection, name: str) -> bool:
     q = "SELECT COUNT(*) FROM information_schema.tables WHERE lower(table_name) = ?"
     return bool(con.execute(q, [name.lower()]).fetchone()[0])
 
+
 def _ensure_fx_table(con: duckdb.DuckDBPyConnection) -> None:
     # Falls FX-Tabelle noch nicht existiert, eine leere Hülle anlegen,
     # damit die View-Erstellung nicht scheitert.
-    con.execute("""
+    con.execute(
+        """
         CREATE TABLE IF NOT EXISTS fx_rates (
             date DATE,
             pair VARCHAR,
             rate_usd_per_eur DOUBLE
         )
-    """)
+    """
+    )
 
-def _resolve_prices_view_name(con: duckdb.DuckDBPyConnection) -> Optional[str]:
+
+def _resolve_prices_view_name(con: duckdb.DuckDBPyConnection) -> str | None:
     """Gibt 'stocks' oder 'stocks_view' zurück, wenn View existiert; sonst None."""
     for candidate in ("stocks", "stocks_view"):
         if _view_exists(con, candidate):
             return candidate
     return None
 
+
 # ---------- View: stocks (USD + EUR) ----------
-def ensure_prices_view(db_path: str,
-                       view_name: str = "stocks",
-                       table_name: str = "prices") -> str:
+def ensure_prices_view(db_path: str, view_name: str = "stocks", table_name: str = "prices") -> str:
     """
     Erstellt eine View mit USD- und EUR-Spalten.
     Wenn unter view_name bereits eine TABLE existiert, weicht auf <view_name>_view aus.
@@ -52,7 +56,8 @@ def ensure_prices_view(db_path: str,
     _ensure_fx_table(con)
 
     # View erstellen (EUR via jüngstem EURUSD <= p.date)
-    con.execute(f"""
+    con.execute(
+        f"""
         CREATE VIEW {actual_view} AS
         SELECT
             p.date::DATE         AS date,
@@ -76,15 +81,16 @@ def ensure_prices_view(db_path: str,
             ORDER BY date DESC
             LIMIT 1
         ) fx ON TRUE
-    """)
+    """
+    )
     con.close()
     return actual_view
 
+
 # ---------- Latest prices (USD/EUR) ----------
-def _select_latest_prices(con: duckdb.DuckDBPyConnection,
-                          from_relation: str,
-                          tickers: List[str],
-                          use_eur: bool) -> Dict[str, Optional[float]]:
+def _select_latest_prices(
+    con: duckdb.DuckDBPyConnection, from_relation: str, tickers: list[str], use_eur: bool
+) -> dict[str, float | None]:
     """
     Liest je Ticker den jüngsten Schlusskurs (USD oder EUR) aus from_relation.
     Nutzt VALUES-Join (robust gegen Quoting).
@@ -109,12 +115,15 @@ def _select_latest_prices(con: duckdb.DuckDBPyConnection,
     """
     try:
         df = con.execute(q, tickers).fetchdf()
-        return {row["ticker"]: (float(row["px"]) if pd.notna(row["px"]) else None)
-                for _, row in df.iterrows()}
+        return {
+            row["ticker"]: (float(row["px"]) if pd.notna(row["px"]) else None)
+            for _, row in df.iterrows()
+        }
     except Exception:
         return {}
 
-def get_latest_prices_auto(db_path: str, tickers: List[str]) -> Dict[str, Optional[float]]:
+
+def get_latest_prices_auto(db_path: str, tickers: list[str]) -> dict[str, float | None]:
     """
     Historische Funktion: liefert USD-Schlusskurse.
     Nimmt 'stocks' (falls View existiert), sonst 'prices'.
@@ -125,9 +134,10 @@ def get_latest_prices_auto(db_path: str, tickers: List[str]) -> Dict[str, Option
     con.close()
     return out
 
-def get_latest_prices(db_path: str,
-                      tickers: List[str],
-                      use_eur: bool = False) -> Dict[str, Optional[float]]:
+
+def get_latest_prices(
+    db_path: str, tickers: list[str], use_eur: bool = False
+) -> dict[str, float | None]:
     """
     Liefert je Ticker den jüngsten Schlusskurs in USD (use_eur=False) oder EUR (use_eur=True).
     - Nutzt 'stocks' oder 'stocks_view', wenn vorhanden.
@@ -196,7 +206,9 @@ def get_latest_prices(db_path: str,
             """
             df = con.execute(q, params).fetchdf()
 
-        return {row["ticker"]: (float(row["px"]) if pd.notna(row["px"]) else None)
-                for _, row in df.iterrows()}
+        return {
+            row["ticker"]: (float(row["px"]) if pd.notna(row["px"]) else None)
+            for _, row in df.iterrows()
+        }
     finally:
         con.close()

@@ -1,12 +1,10 @@
 import logging
-from typing import Optional, Tuple
 
-import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import KFold, GridSearchCV
+from sklearn.model_selection import GridSearchCV, KFold
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +14,7 @@ def train_per_stock(
     use_kfold: bool = True,
     n_splits: int = 5,
     model_type: str = "logistic",
-) -> Optional[Tuple[float, float]]:
+) -> tuple[float, float] | None:
     """Train a classifier on lagged close and sentiment data.
 
     Parameters

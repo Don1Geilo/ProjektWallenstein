@@ -4,18 +4,19 @@ from __future__ import annotations
 """Fetch analyst price targets and recommendations using the FMP API."""
 
 import logging
-import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from wallenstein.config import settings
+
 log = logging.getLogger("wallenstein.targets")
 
 # FMP configuration
-FMP_API_KEY = os.getenv("FMP_API_KEY", "demo")
+FMP_API_KEY = settings.FMP_API_KEY
 FMP_BASE_URL = "https://financialmodelingprep.com/api/v4"
 
 
@@ -45,7 +46,7 @@ _SESSION = _build_session()
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
-def _sf(v: Any) -> Optional[float]:
+def _sf(v: Any) -> float | None:
     """Convert value to float if possible."""
 
     try:
@@ -54,13 +55,13 @@ def _sf(v: Any) -> Optional[float]:
         return None
 
 
-def _pos(x: Optional[float]) -> Optional[float]:
+def _pos(x: float | None) -> float | None:
     """Return value only if positive."""
 
     return x if (x is not None and x > 0) else None
 
 
-def _fmp_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _fmp_get(path: str, params: dict[str, Any]) -> dict[str, Any]:
     """Perform a GET request against the FMP API and return JSON."""
 
     params = dict(params)
@@ -84,7 +85,7 @@ def _fmp_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # FMP specific helpers
 # ---------------------------------------------------------------------------
-def _parse_price_target_item(item: Dict[str, Any]) -> Dict[str, Optional[float]]:
+def _parse_price_target_item(item: dict[str, Any]) -> dict[str, float | None]:
     """Map raw FMP price target item to our internal structure.
 
     The FMP API exposes slightly different field names depending on the
@@ -109,26 +110,22 @@ def _parse_price_target_item(item: Dict[str, Any]) -> Dict[str, Optional[float]]
 
     return {
         "target_mean": _pos(_sf(_first(*mean_keys))),
-        "target_high": _pos(
-            _sf(_first("targetHigh", "priceTargetHigh", "targetPriceHigh"))
-        ),
-        "target_low": _pos(
-            _sf(_first("targetLow", "priceTargetLow", "targetPriceLow"))
-        ),
+        "target_high": _pos(_sf(_first("targetHigh", "priceTargetHigh", "targetPriceHigh"))),
+        "target_low": _pos(_sf(_first("targetLow", "priceTargetLow", "targetPriceLow"))),
         "target_median": _pos(
             _sf(_first("targetMedian", "priceTargetMedian", "targetPriceMedian"))
         ),
     }
 
 
-def _fmp_price_target(ticker: str) -> Dict[str, Any]:
+def _fmp_price_target(ticker: str) -> dict[str, Any]:
     """Return price targets and recommendation counts for ``ticker``.
 
     On certain errors (e.g. 403) a dictionary with an ``error`` key is
     returned so callers can handle it explicitly.
     """
 
-    out: Dict[str, Optional[float]] = {
+    out: dict[str, float | None] = {
         "target_mean": None,
         "target_high": None,
         "target_low": None,
@@ -176,7 +173,7 @@ def _fmp_price_target(ticker: str) -> Dict[str, Any]:
     return out
 
 
-def _fmp_price_targets(tickers: List[str]) -> Dict[str, Dict[str, Any]]:
+def _fmp_price_targets(tickers: list[str]) -> dict[str, dict[str, Any]]:
     """Fetch price targets for multiple tickers with a single API call."""
     data = _fmp_get("price-target-consensus", {"symbol": ",".join(tickers)})
     if (isinstance(data, dict) and data.get("error")) or not data:
@@ -186,7 +183,7 @@ def _fmp_price_targets(tickers: List[str]) -> Dict[str, Dict[str, Any]]:
     if isinstance(data, dict):
         data = [data]
 
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for item in data or []:
         t = str(item.get("symbol") or item.get("ticker") or "").upper()
         out[t] = _parse_price_target_item(item)
@@ -205,7 +202,7 @@ def _fmp_price_targets(tickers: List[str]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def _compute_rec_mean(counts: Dict[str, Optional[int]]) -> Optional[float]:
+def _compute_rec_mean(counts: dict[str, int | None]) -> float | None:
     """Calculate a mean recommendation score from analyst counts."""
 
     weights = {"strong_buy": 1, "buy": 2, "hold": 3, "sell": 4, "strong_sell": 5}
@@ -216,7 +213,7 @@ def _compute_rec_mean(counts: Dict[str, Optional[int]]) -> Optional[float]:
     return score / total
 
 
-def _compute_rec_text(mean: Optional[float]) -> Optional[str]:
+def _compute_rec_text(mean: float | None) -> str | None:
     """Translate recommendation mean to a human readable text."""
 
     if mean is None:
@@ -235,7 +232,7 @@ def _compute_rec_text(mean: Optional[float]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def fetch_broker_snapshot(ticker: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def fetch_broker_snapshot(ticker: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Fetch a broker snapshot for a single ``ticker`` using FMP.
 
     If ``data`` is provided it must contain the already fetched price target
@@ -281,10 +278,10 @@ def fetch_broker_snapshot(ticker: str, data: Optional[Dict[str, Any]] = None) ->
     }
 
 
-def fetch_many(tickers: List[str], *, sleep_between: float = 0.0) -> List[Dict[str, Any]]:
+def fetch_many(tickers: list[str], *, sleep_between: float = 0.0) -> list[dict[str, Any]]:
     """Fetch broker snapshots for multiple tickers with a single API call."""
 
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     try:
         data_map = _fmp_price_targets(tickers)
     except Exception as e:  # pragma: no cover - defensive
@@ -315,4 +312,3 @@ def fetch_many(tickers: List[str], *, sleep_between: float = 0.0) -> List[Dict[s
         if sleep_between:
             time.sleep(sleep_between)
     return out
-

@@ -1,33 +1,45 @@
-# wallenstein/config.py
 import os
-from dotenv import load_dotenv, find_dotenv
 
-# .env lokal laden, CI-Secrets NICHT überschreiben
-load_dotenv(find_dotenv(usecwd=True), override=False)
+from dotenv import load_dotenv
 
-def _env(name: str, alt: str | None = None, default=None):
-    """Hole ENV[name], optional Fallback alt, sonst default."""
-    v = os.getenv(name)
-    if not v and alt:
-        v = os.getenv(alt)
-    return v if v is not None else default
+load_dotenv()
 
-# --- Reddit (anonymer Zugriff reicht: client_id/secret/user_agent) ---
-CLIENT_ID = _env("CLIENT_ID", "REDDIT_CLIENT_ID")
-CLIENT_SECRET = _env("CLIENT_SECRET", "REDDIT_CLIENT_SECRET")
-USER_AGENT = _env("USER_AGENT", "REDDIT_USER_AGENT", default="Wallenstein/1.0 (bot)")
 
-def has_reddit() -> bool:
-    """True, wenn anonymer Reddit-Zugriff möglich ist."""
-    return bool(CLIENT_ID and CLIENT_SECRET and USER_AGENT)
+class Settings:
+    WALLENSTEIN_DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "data/wallenstein.duckdb")
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+    REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
+    REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
+    REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT")
+    USE_BERT_SENTIMENT = os.getenv("USE_BERT_SENTIMENT", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
+    MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
+    WALLENSTEIN_TICKERS = os.getenv("WALLENSTEIN_TICKERS", "NVDA,AMZN,SMCI,TSLA")
+    WALLENSTEIN_DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "yahoo").strip().lower()
+    STOOQ_USER_AGENT = os.getenv(
+        "STOOQ_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    )
+    YF_USER_AGENT = os.getenv(
+        "YF_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    )
+    FMP_API_KEY = os.getenv("FMP_API_KEY", "demo")
+    DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", "30"))
+    SENTIMENT_BACKEND = os.getenv("SENTIMENT_BACKEND", "finbert").lower()
 
-# --- Google ---
-GOOGLE_API_KEYFILE = _env("GOOGLE_API_KEYFILE")
-GOOGLE_SHEETS_ID   = _env("GOOGLE_SHEETS_ID")
 
-# --- Telegram (optional) ---
-TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID   = _env("TELEGRAM_CHAT_ID")  # später zu int casten, nicht hier
+settings = Settings()
 
-def has_telegram() -> bool:
-    return bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+
+def validate_config():
+    if not settings.WALLENSTEIN_DB_PATH:
+        raise ValueError("DB path required")

@@ -1,17 +1,17 @@
 """Generate price and sentiment overview text for tickers."""
+
 from __future__ import annotations
 
-import os
-from typing import List, Optional
+from wallenstein.config import settings
 
 from .db_utils import get_latest_prices
 from .reddit_scraper import update_reddit_data
 from .sentiment import analyze_sentiment_batch, derive_recommendation
 
-DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "data/wallenstein.duckdb").strip()
+DB_PATH = settings.WALLENSTEIN_DB_PATH
 
 
-def _fetch_latest_price(ticker: str) -> Optional[float]:
+def _fetch_latest_price(ticker: str) -> float | None:
     """Fetch the latest USD price for ``ticker`` via yfinance."""
     try:
         import yfinance as yf
@@ -19,8 +19,7 @@ def _fetch_latest_price(ticker: str) -> Optional[float]:
         tk = yf.Ticker(ticker)
         price = getattr(getattr(tk, "fast_info", None), "last_price", None)
         if price is None:
-            hist = tk.history(period="1d", interval="1d", auto_adjust=False,
-                              actions=False)
+            hist = tk.history(period="1d", interval="1d", auto_adjust=False, actions=False)
             if hist is not None and not hist.empty:
                 price = float(hist["Close"].iloc[-1])
         return float(price) if price is not None else None
@@ -28,7 +27,7 @@ def _fetch_latest_price(ticker: str) -> Optional[float]:
         return None
 
 
-def _fetch_usd_per_eur_rate() -> Optional[float]:
+def _fetch_usd_per_eur_rate() -> float | None:
     """Return USD per 1 EUR via yfinance."""
     try:
         import yfinance as yf
@@ -36,8 +35,7 @@ def _fetch_usd_per_eur_rate() -> Optional[float]:
         tk = yf.Ticker("EURUSD=X")
         rate = getattr(getattr(tk, "fast_info", None), "last_price", None)
         if rate is None:
-            hist = tk.history(period="1d", interval="1d", auto_adjust=False,
-                              actions=False)
+            hist = tk.history(period="1d", interval="1d", auto_adjust=False, actions=False)
             if hist is not None and not hist.empty:
                 rate = float(hist["Close"].iloc[-1])
         return float(rate) if rate is not None else None
@@ -45,7 +43,7 @@ def _fetch_usd_per_eur_rate() -> Optional[float]:
         return None
 
 
-def generate_overview(tickers: List[str]) -> str:
+def generate_overview(tickers: list[str]) -> str:
     """Return a formatted overview for ``tickers``.
 
     The overview lists the latest USD and EUR prices and a simple Reddit-based
