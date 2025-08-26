@@ -8,7 +8,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from wallenstein import sentiment as ws
-from wallenstein.sentiment import analyze_sentiment, BertSentiment
+from wallenstein.sentiment import BertSentiment, analyze_sentiment
 
 
 def keyword_prediction(texts):

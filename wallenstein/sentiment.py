@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import os
-from typing import Dict, Iterable
 import re
+from collections.abc import Iterable
 from functools import lru_cache
 
+from wallenstein.config import settings
 
 logger = logging.getLogger(__name__)
 _keyword_hint_logged = False
@@ -41,8 +41,9 @@ def _log_keyword_hint(message: str = "Using keyword-based sentiment analysis") -
         logger.info(message)
         _keyword_hint_logged = True
 
+
 # Intensifiers and negation markers used to enrich the keyword map
-INTENSITY_WEIGHTS: Dict[str, int] = {
+INTENSITY_WEIGHTS: dict[str, int] = {
     "strong": 2,
     "massiv": 2,
 }
@@ -58,7 +59,7 @@ NEGATION_MARKERS = {"nicht", "kein", "no", "not"}
 # "buy the dip".  This resulted in neutral recommendations even when the
 # text clearly contained a directional bias.  To improve coverage we map
 # a couple of additional keywords to sentiment scores.
-KEYWORD_SCORES: Dict[str, int] = {
+KEYWORD_SCORES: dict[str, int] = {
     # positive
     "long": 1,
     "call": 1,
@@ -152,7 +153,7 @@ class BertSentiment:
     _pipe = None
 
     def __init__(self) -> None:
-        backend = os.getenv("SENTIMENT_BACKEND", "finbert").lower()
+        backend = settings.SENTIMENT_BACKEND
         if backend == "finbert":
             self.model = "ProsusAI/finbert"
         elif backend == "de-bert":
@@ -161,7 +162,9 @@ class BertSentiment:
             from pathlib import Path
 
             # resolve path relative to repository root
-            self.model = str(Path(__file__).resolve().parent.parent / "models" / "finetuned-finbert")
+            self.model = str(
+                Path(__file__).resolve().parent.parent / "models" / "finetuned-finbert"
+            )
         else:
             raise ValueError(f"Unsupported backend: {backend}")
         self.backend = backend
@@ -211,15 +214,11 @@ def analyze_sentiment(text: str) -> float:
     keyword based implementation and logs an informational hint.
     """
 
-    use_env = os.getenv("USE_BERT_SENTIMENT")
-    if use_env is not None:
-        if use_env.lower() in {"1", "true", "yes"}:
-            try:
-                return analyze_sentiment_bert(text)
-            except Exception:  # pragma: no cover - defensive
-                _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
-        else:
-            _log_keyword_hint("Keyword sentiment forced via USE_BERT_SENTIMENT")
+    if settings.USE_BERT_SENTIMENT:
+        try:
+            return analyze_sentiment_bert(text)
+        except Exception:  # pragma: no cover - defensive
+            _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
     else:
         if _transformers_available():
             try:
@@ -262,20 +261,13 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
     """
 
     global _bert_analyzer
-    use_env = os.getenv("USE_BERT_SENTIMENT")
-    if use_env is not None:
-        if use_env.lower() in {"1", "true", "yes"}:
-            try:
-                if _bert_analyzer is None:
-                    _bert_analyzer = BertSentiment()
-                results = _bert_analyzer(texts)
-            except Exception:  # pragma: no cover - defensive
-                _log_keyword_hint(
-                    "BERT sentiment requested but unavailable; using keyword approach"
-                )
-                return [_keyword_score_cached(_preprocess(t)) for t in texts]
-        else:
-            _log_keyword_hint("Keyword sentiment forced via USE_BERT_SENTIMENT")
+    if settings.USE_BERT_SENTIMENT:
+        try:
+            if _bert_analyzer is None:
+                _bert_analyzer = BertSentiment()
+            results = _bert_analyzer(texts)
+        except Exception:  # pragma: no cover - defensive
+            _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
             return [_keyword_score_cached(_preprocess(t)) for t in texts]
     else:
         if _transformers_available():
@@ -287,9 +279,7 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
                 _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
                 return [_keyword_score_cached(_preprocess(t)) for t in texts]
         else:
-            _log_keyword_hint(
-                "transformers not installed; using keyword sentiment analysis"
-            )
+            _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
             return [_keyword_score_cached(_preprocess(t)) for t in texts]
 
     scores: list[float] = []
@@ -305,9 +295,7 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
     return scores
 
 
-def aggregate_sentiment_by_ticker(
-    ticker_texts: Dict[str, Iterable[dict]]
-) -> Dict[str, float]:
+def aggregate_sentiment_by_ticker(ticker_texts: dict[str, Iterable[dict]]) -> dict[str, float]:
     """Aggregate sentiment scores for each ticker.
 
     Parameters
@@ -323,7 +311,7 @@ def aggregate_sentiment_by_ticker(
         a ticker, ``0.0`` is returned.
     """
 
-    result: Dict[str, float] = {}
+    result: dict[str, float] = {}
     for ticker, entries in ticker_texts.items():
         entries = list(entries)
         if entries:
@@ -355,4 +343,3 @@ __all__ = [
     "derive_recommendation",
     "BertSentiment",
 ]
-

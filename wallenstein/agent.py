@@ -3,7 +3,7 @@ from .notify import notify_telegram
 
 def check_alerts(df):
     """
-    Beispiel-Alerts: 
+    Beispiel-Alerts:
     - Wenn Kurs unter 200
     - Wenn Sentiment < -2
     """
