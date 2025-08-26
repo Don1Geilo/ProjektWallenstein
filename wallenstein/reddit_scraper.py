@@ -321,6 +321,13 @@ def update_reddit_data(
                 con.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)"
                 )
+                # Index für zeitbasierte Abfragen (Trending-Erkennung)
+                try:
+                    con.execute(
+                        "CREATE INDEX IF NOT EXISTS reddit_posts_created_idx ON reddit_posts(created_utc)"
+                    )
+                except Exception:
+                    pass  # pragma: no cover - defensive
                 con.register("df_all", df_all)
                 cur = con.execute(
                     "INSERT INTO reddit_posts SELECT * FROM df_all ON CONFLICT(id) DO NOTHING"
@@ -359,3 +366,37 @@ def update_reddit_data(
         log.debug(f"{tkr}: {len(bucket)} matched posts")
         out[tkr] = bucket
     return out
+
+
+def detect_trending_tickers(
+    ticker_posts: Dict[str, List[dict]],
+    window_hours: int = 24,
+    baseline_days: int = 7,
+    min_mentions: int = 3,
+    ratio: float = 2.0,
+) -> List[str]:
+    """Identify tickers with unusually high mention counts.
+
+    ``ticker_posts`` is the mapping returned by :func:`update_reddit_data`.
+    A ticker is flagged as trending when the number of mentions in the last
+    ``window_hours`` exceeds ``min_mentions`` and is ``ratio`` times higher than
+    the preceding ``baseline_days``.
+    """
+
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=window_hours)
+    baseline_start = now - timedelta(days=baseline_days)
+    trending: List[str] = []
+    for tkr, posts in ticker_posts.items():
+        recent = [p for p in posts if p.get("created_utc") and p["created_utc"] >= window_start]
+        baseline = [
+            p
+            for p in posts
+            if p.get("created_utc")
+            and baseline_start <= p["created_utc"] < window_start
+        ]
+        if len(recent) >= min_mentions:
+            base_count = len(baseline)
+            if base_count == 0 or len(recent) / max(1, base_count) >= ratio:
+                trending.append(tkr)
+    return trending
