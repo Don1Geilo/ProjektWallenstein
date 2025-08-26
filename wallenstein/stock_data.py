@@ -26,9 +26,9 @@ STOOQ_HEADERS = {
     )
 }
 
-# Datenquelle: stooq (default, mit Yahoo-Fallback) | yahoo
+# Datenquelle: yahoo (default) oder stooq (mit Yahoo-Fallback)
 # 'hybrid' bleibt aus Kompatibilitätsgründen als Alias zu stooq bestehen
-DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "stooq").strip().lower()
+DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "yahoo").strip().lower()
 
 log = logging.getLogger(__name__)
 
@@ -248,8 +248,8 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
     """
     Schreibt Daily‑Kurse ins DuckDB‑Schema 'prices'.
     Quelle per ENV (WALLENSTEIN_DATA_SOURCE):
-      - 'stooq'  (default, Stooq mit Yahoo‑Fallback)
-      - 'yahoo'  (nur Yahoo)
+      - 'yahoo'  (default, nur Yahoo)
+      - 'stooq'  (Stooq mit Yahoo‑Fallback)
     'hybrid' funktioniert weiterhin als Alias für 'stooq'.
     """
     if not tickers:
