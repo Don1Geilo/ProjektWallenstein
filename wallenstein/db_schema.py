@@ -43,6 +43,8 @@ SCHEMAS = {
 def ensure_tables(con: duckdb.DuckDBPyConnection):
     for table, cols in SCHEMAS.items():
         coldefs = ", ".join(f"{c} {t}" for c, t in cols.items())
+        if table == "prices":
+            coldefs += ", PRIMARY KEY (date, ticker)"
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({coldefs});")
         if table == "reddit_posts":
             info = con.execute("PRAGMA table_info('reddit_posts')").fetchall()
