@@ -1,7 +1,7 @@
 # Projekt Wallenstein — Final Pack
 
 This is a ready-to-push bundle. It includes:
-- Robust price updater with DuckDB storage
+- Robust price updater with DuckDB storage (Stooq default with Yahoo/Stooq fallback)
 - Reddit sentiment integration (PRAW) with basic English/German keyword analysis
 - Telegram alerts (optional)
 
@@ -44,6 +44,7 @@ pre-commit install
 - `WALLENSTEIN_DB_PATH` = path to DuckDB (default `data/wallenstein.duckdb`)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (optional alerts)
 - `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` (optional for true Reddit scraping)
+- `WALLENSTEIN_DATA_SOURCE` = `stooq` (default) uses Stooq with Yahoo fallback; set to `yahoo` to use Yahoo with a Stooq fallback for missing tickers
 - `USE_BERT_SENTIMENT` = choose sentiment backend. When unset the app uses a
   BERT model if the `transformers` package is available, otherwise a lightweight
   keyword approach. Set to `1`/`true` to force BERT or `0`/`false` to force the
