@@ -56,6 +56,18 @@ def ensure_prices_view(db_path: str, view_name: str = "stocks", table_name: str 
     _ensure_fx_table(con)
 
     # View erstellen (EUR via jüngstem EURUSD <= p.date)
+    cols = [row[1].lower() for row in con.execute(f"PRAGMA table_info('{table_name}')").fetchall()]
+    has_adj = "adj_close" in cols
+
+    adj_close_select = (
+        "p.adj_close::DOUBLE  AS adj_close," if has_adj else "p.close::DOUBLE      AS adj_close,"
+    )
+    adj_close_eur_select = (
+        "p.adj_close / fx.rate_usd_per_eur AS adj_close_eur"
+        if has_adj
+        else "p.close / fx.rate_usd_per_eur AS adj_close_eur"
+    )
+
     con.execute(
         f"""
         CREATE VIEW {actual_view} AS
@@ -66,13 +78,13 @@ def ensure_prices_view(db_path: str, view_name: str = "stocks", table_name: str 
             p.high::DOUBLE       AS high,
             p.low::DOUBLE        AS low,
             p.close::DOUBLE      AS close,
-            p.adj_close::DOUBLE  AS adj_close,
+            {adj_close_select}
             p.volume::BIGINT     AS volume,
             p.open      / fx.rate_usd_per_eur AS open_eur,
             p.high      / fx.rate_usd_per_eur AS high_eur,
             p.low       / fx.rate_usd_per_eur AS low_eur,
             p.close     / fx.rate_usd_per_eur AS close_eur,
-            p.adj_close / fx.rate_usd_per_eur AS adj_close_eur
+            {adj_close_eur_select}
         FROM {table_name} p
         LEFT JOIN LATERAL (
             SELECT rate_usd_per_eur
