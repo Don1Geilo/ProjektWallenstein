@@ -34,6 +34,13 @@ def _transformers_available() -> bool:
     return importlib.util.find_spec("transformers") is not None
 
 
+def _use_bert() -> bool:
+    env = os.getenv("USE_BERT_SENTIMENT")
+    if env is not None:
+        return env.lower() in {"1", "true", "yes"}
+    return settings.USE_BERT_SENTIMENT
+
+
 def _log_keyword_hint(message: str = "Using keyword-based sentiment analysis") -> None:
     """Log ``message`` once to inform about fallback behaviour."""
 
@@ -224,7 +231,11 @@ def analyze_sentiment(text: str) -> float:
     keyword based implementation and logs an informational hint.
     """
 
+
     if _use_bert_sentiment():
+
+    if _use_bert():
+
         try:
             return analyze_sentiment_bert(text)
         except Exception:  # pragma: no cover - defensive
@@ -271,7 +282,11 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
     """
 
     global _bert_analyzer
+
     if _use_bert_sentiment():
+
+    if _use_bert():
+
         try:
             if _bert_analyzer is None:
                 _bert_analyzer = BertSentiment()
