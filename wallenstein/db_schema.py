@@ -13,9 +13,8 @@ SCHEMAS = {
     "reddit_posts": {
         "id": "TEXT",
         "created_utc": "TIMESTAMP",
-        "ticker": "TEXT",
         "title": "TEXT",
-        "selftext": "TEXT",
+        "text": "TEXT",
     },
     "sentiments": {
         "post_id": "TEXT",

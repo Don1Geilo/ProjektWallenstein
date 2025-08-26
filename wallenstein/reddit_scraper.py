@@ -4,6 +4,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -20,8 +21,6 @@ try:  # Optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - not critical if missing
     yaml = None
-
-from . import config
 
 log = logging.getLogger("wallenstein.reddit")
 if settings.LOG_LEVEL.upper() == "DEBUG":
@@ -133,9 +132,10 @@ def fetch_reddit_posts(
     """
 
     reddit = praw.Reddit(
-        client_id=config.CLIENT_ID,
-        client_secret=config.CLIENT_SECRET,
-        user_agent=config.USER_AGENT,
+        client_id=settings.REDDIT_CLIENT_ID or os.getenv("CLIENT_ID"),
+        client_secret=settings.REDDIT_CLIENT_SECRET or os.getenv("CLIENT_SECRET"),
+        user_agent=
+        settings.REDDIT_USER_AGENT or os.getenv("USER_AGENT") or "wallenstein",
     )
 
     posts = []
@@ -178,10 +178,12 @@ def fetch_reddit_posts(
 def _load_posts_from_db() -> pd.DataFrame:
     with duckdb.connect(DB_PATH) as con:
         try:
-            df = con.execute("SELECT * FROM reddit_posts ORDER BY created_utc DESC").fetch_df()
+            df = con.execute(
+                "SELECT id, created_utc, title, text FROM reddit_posts ORDER BY created_utc DESC"
+            ).fetch_df()
         except Exception:
             # Falls Tabelle noch nicht existiert
-            df = pd.DataFrame(columns=["id", "title", "created_utc", "text"])
+            df = pd.DataFrame(columns=["id", "created_utc", "title", "text"])
     return df
 
 
@@ -303,12 +305,14 @@ def update_reddit_data(
             df_all = df_all[~df_all["id"].isin(existing_ids)]
 
         if not df_all.empty:
+            df_all = df_all[["id", "created_utc", "title", "text"]]
             with duckdb.connect(DB_PATH) as con:
                 ensure_tables(con)
                 con.register("df_all", df_all)
                 validate_df(df_all, "reddit_posts")
                 cur = con.execute(
-                    "INSERT INTO reddit_posts SELECT * FROM df_all ON CONFLICT(id) DO NOTHING"
+                    "INSERT INTO reddit_posts (id, created_utc, title, text) "
+                    "SELECT id, created_utc, title, text FROM df_all ON CONFLICT(id) DO NOTHING"
                 )
             log.info(f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)")
 
