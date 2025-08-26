@@ -184,7 +184,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
     # Übersicht & Notify
     try:
-        msg = generate_overview(tickers)
+        msg = generate_overview(tickers, reddit_posts=reddit_posts)
         notify_telegram(msg)
     except Exception as e:
         log.warning(f"Übersicht/Telegram fehlgeschlagen: {e}")

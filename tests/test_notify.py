@@ -13,8 +13,8 @@ def test_notify_telegram_without_reddit_credentials(monkeypatch):
     """notify_telegram should work without Reddit env vars."""
     monkeypatch.delenv("CLIENT_ID", raising=False)
     monkeypatch.delenv("CLIENT_SECRET", raising=False)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setattr("wallenstein.notify.settings.TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setattr("wallenstein.notify.settings.TELEGRAM_CHAT_ID", "123")
 
     called = {}
 
@@ -31,6 +31,6 @@ def test_notify_telegram_without_reddit_credentials(monkeypatch):
 
 
 def test_notify_telegram_missing_config(monkeypatch):
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setattr("wallenstein.notify.settings.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("wallenstein.notify.settings.TELEGRAM_CHAT_ID", None)
     assert notify_telegram("hi") is False

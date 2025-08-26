@@ -72,7 +72,8 @@ def _ensure_prices_table(con: duckdb.DuckDBPyConnection):
             low DOUBLE,
             close DOUBLE,
             adj_close DOUBLE,
-            volume BIGINT
+            volume BIGINT,
+            PRIMARY KEY(date, ticker)
         )
     """
     )
@@ -193,7 +194,7 @@ def _make_session(user_agent: str | None = None) -> requests.Session:
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9,de-DE;q=0.8",
             "Connection": "keep-alive",
-        "Referer": "https://finance.yahoo.com/",
+            "Referer": "https://finance.yahoo.com/",
         }
     )
     retry = Retry(
@@ -262,7 +263,9 @@ def _download_single_safe(
                     "Adj Close": "adj_close",
                     "Volume": "volume",
                 }
-                df.rename(columns={k: v for k, v in colmap.items() if k in df.columns}, inplace=True)
+                df.rename(
+                    columns={k: v for k, v in colmap.items() if k in df.columns}, inplace=True
+                )
                 for c in ("adj_close", "volume"):
                     if c not in df.columns:
                         df[c] = pd.NA
@@ -271,7 +274,16 @@ def _download_single_safe(
             else:
                 log.warning(f"{ticker}: ticker not found")
                 return pd.DataFrame(
-                    columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
+                    columns=[
+                        "date",
+                        "ticker",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "adj_close",
+                        "volume",
+                    ]
                 )
 
         except json.JSONDecodeError as e:
@@ -284,7 +296,16 @@ def _download_single_safe(
                 # Bei Rate Limit sofort raus, um weitere Sperren zu vermeiden
                 log.warning(f"{ticker}: skipped due to rate limiting (HTTP 429)")
                 return pd.DataFrame(
-                    columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
+                    columns=[
+                        "date",
+                        "ticker",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "adj_close",
+                        "volume",
+                    ]
                 )
             last_err = e
 
@@ -305,6 +326,7 @@ def _download_single_safe(
     return pd.DataFrame(
         columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
     )
+
 
 def _yahoo_fetch_many(
     tickers: list[str],
@@ -441,15 +463,9 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
     df_all["date"] = pd.to_datetime(df_all["date"]).dt.date
     df_all = df_all.sort_values(["ticker", "date"])
 
-    # Append + DISTINCT‑Refresh
+    # Append while skipping duplicates
     validate_df(df_all, "prices")
-    con.execute("INSERT INTO prices SELECT * FROM df_all")
-    con.execute(
-        """
-        CREATE OR REPLACE TABLE prices AS
-        SELECT DISTINCT * FROM prices
-    """
-    )
+    con.execute("INSERT INTO prices SELECT * FROM df_all ON CONFLICT DO NOTHING")
 
     n = len(df_all)
     if session is not None:
@@ -464,7 +480,8 @@ def _ensure_fx_table(con: duckdb.DuckDBPyConnection):
         CREATE TABLE IF NOT EXISTS fx_rates (
             date DATE,
             pair VARCHAR,
-            rate_usd_per_eur DOUBLE
+            rate_usd_per_eur DOUBLE,
+            UNIQUE(date, pair)
         )
     """
     )
@@ -520,13 +537,12 @@ def update_fx_rates(db_path: str) -> int:
         con.close()
         return 0
 
-    df = df.sort_values("date")
-    con.execute("INSERT INTO fx_rates SELECT * FROM df")
-    # Dubletten vermeiden
+    df = df.sort_values("date").drop_duplicates(subset=["date", "pair"])
     con.execute(
         """
-        CREATE OR REPLACE TABLE fx_rates AS
-        SELECT DISTINCT * FROM fx_rates
+        INSERT INTO fx_rates
+        SELECT * FROM df
+        ON CONFLICT (date, pair) DO NOTHING
     """
     )
     n = len(df)
