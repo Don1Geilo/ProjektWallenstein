@@ -5,7 +5,6 @@ from __future__ import annotations
 from wallenstein.config import settings
 
 from .db_utils import get_latest_prices
-from .reddit_scraper import update_reddit_data
 from .sentiment import analyze_sentiment_batch, derive_recommendation
 
 DB_PATH = settings.WALLENSTEIN_DB_PATH
@@ -43,11 +42,16 @@ def _fetch_usd_per_eur_rate() -> float | None:
         return None
 
 
-def generate_overview(tickers: list[str]) -> str:
+def generate_overview(
+    tickers: list[str],
+    reddit_posts: dict[str, list[dict]] | None = None,
+) -> str:
     """Return a formatted overview for ``tickers``.
 
     The overview lists the latest USD and EUR prices and a simple Reddit-based
-    sentiment score with a derived recommendation for each ticker.
+    sentiment score with a derived recommendation for each ticker. Pass in
+    ``reddit_posts`` to reuse already fetched Reddit data; otherwise an empty
+    mapping is assumed and no fetch is performed.
     """
 
     prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
@@ -61,10 +65,8 @@ def generate_overview(tickers: list[str]) -> str:
             prices_usd[t] = px
             if usd_per_eur:
                 prices_eur[t] = px / usd_per_eur
-    try:
-        reddit_posts = update_reddit_data(tickers)
-    except Exception:  # pragma: no cover - network or config issues
-        reddit_posts = {t: [] for t in tickers}
+
+    reddit_posts = reddit_posts or {t: [] for t in tickers}
 
     sentiments = {}
     for ticker in tickers:
