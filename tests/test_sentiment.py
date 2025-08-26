@@ -21,8 +21,7 @@ from wallenstein.sentiment import (
 @pytest.fixture(autouse=True)
 def _disable_bert(monkeypatch):
     """Use keyword sentiment by default for tests."""
-
-    monkeypatch.setenv("USE_BERT_SENTIMENT", "0")
+    monkeypatch.setattr(sentiment.settings, "USE_BERT_SENTIMENT", False)
 
 def test_analyze_sentiment_keywords():
     text = "I'm going long and want to buy more calls, not sell"
@@ -68,9 +67,9 @@ def test_env_switches_to_bert(monkeypatch):
     with patch("wallenstein.sentiment.BertSentiment") as MockBert:
         sentiment._bert_analyzer = None
         MockBert.return_value.return_value = [{"label": "positive", "score": 0.9}]
-        monkeypatch.setenv("USE_BERT_SENTIMENT", "1")
+        monkeypatch.setattr(sentiment.settings, "USE_BERT_SENTIMENT", True)
         assert analyze_sentiment("whatever") > 0
-        monkeypatch.delenv("USE_BERT_SENTIMENT", raising=False)
+        monkeypatch.setattr(sentiment.settings, "USE_BERT_SENTIMENT", False)
         # ensure fallback path still works
         assert analyze_sentiment("buy") > 0
 

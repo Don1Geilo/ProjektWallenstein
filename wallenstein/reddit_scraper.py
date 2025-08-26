@@ -295,26 +295,30 @@ def update_reddit_data(
         df_all = pd.concat(frames, ignore_index=True)
         df_all.drop_duplicates(subset="id", inplace=True)
 
-        # Nur neue IDs zur Datenbank hinzufügen
-        existing_ids: set[str] = set()
-        try:
-            existing_ids = set(_load_posts_from_db()["id"].tolist())
-        except Exception:
-            existing_ids = set()
-        if existing_ids:
-            df_all = df_all[~df_all["id"].isin(existing_ids)]
-
         if not df_all.empty:
             df_all = df_all[["id", "created_utc", "title", "text"]]
+            ids = df_all["id"].tolist()
             with duckdb.connect(DB_PATH) as con:
                 ensure_tables(con)
-                con.register("df_all", df_all)
-                validate_df(df_all, "reddit_posts")
-                cur = con.execute(
-                    "INSERT INTO reddit_posts (id, created_utc, title, text) "
-                    "SELECT id, created_utc, title, text FROM df_all ON CONFLICT(id) DO NOTHING"
-                )
-            log.info(f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)")
+                existing_ids: set[str] = set()
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    query = f"SELECT id FROM reddit_posts WHERE id IN ({placeholders})"
+                    existing_ids = set(
+                        con.execute(query, ids).fetch_df()["id"].tolist()
+                    )
+                    df_all = df_all[~df_all["id"].isin(existing_ids)]
+
+                if not df_all.empty:
+                    con.register("df_all", df_all)
+                    validate_df(df_all, "reddit_posts")
+                    cur = con.execute(
+                        "INSERT INTO reddit_posts (id, created_utc, title, text) "
+                        "SELECT id, created_utc, title, text FROM df_all"
+                    )
+                    log.info(
+                        f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
+                    )
 
     # Alte Einträge entfernen
     purge_old_posts()
