@@ -12,7 +12,7 @@ SCHEMAS = {
         "volume": "BIGINT",
     },
     "reddit_posts": {
-        "id": "TEXT",
+        "id": "TEXT PRIMARY KEY",
         "created_utc": "TIMESTAMP",
         "title": "TEXT",
         "text": "TEXT",
@@ -39,6 +39,25 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
     for table, cols in SCHEMAS.items():
         coldefs = ", ".join(f"{c} {t}" for c, t in cols.items())
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({coldefs});")
+        if table == "reddit_posts":
+            info = con.execute("PRAGMA table_info('reddit_posts')").fetchall()
+            has_pk = any(row[1] == "id" and row[5] for row in info)
+            if not has_pk:
+                try:
+                    con.execute("ALTER TABLE reddit_posts ADD PRIMARY KEY (id)")
+                    has_pk = True
+                except duckdb.Error:
+                    pass
+            if not has_pk:
+                con.execute(
+                    "CREATE TABLE reddit_posts_tmp (id TEXT PRIMARY KEY, created_utc TIMESTAMP, title TEXT, text TEXT)"
+                )
+                con.execute(
+                    "INSERT INTO reddit_posts_tmp SELECT id, created_utc, title, text FROM reddit_posts"
+                )
+                con.execute("DROP TABLE reddit_posts")
+                con.execute("ALTER TABLE reddit_posts_tmp RENAME TO reddit_posts")
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)")
 
 
 def validate_df(df, table_name: str):

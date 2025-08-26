@@ -21,7 +21,7 @@ class Settings:
     REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
     WALLENSTEIN_TICKERS = os.getenv("WALLENSTEIN_TICKERS", "NVDA,AMZN,SMCI,TSLA")
-    WALLENSTEIN_DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "yahoo").strip().lower()
+    WALLENSTEIN_DATA_SOURCE = os.getenv("WALLENSTEIN_DATA_SOURCE", "stooq").strip().lower()
     STOOQ_USER_AGENT = os.getenv(
         "STOOQ_USER_AGENT",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
