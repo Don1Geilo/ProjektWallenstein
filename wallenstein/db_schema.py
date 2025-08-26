@@ -32,6 +32,11 @@ SCHEMAS = {
         "confidence": "DOUBLE",
         "version": "TEXT",
     },
+    "fx_rates": {
+        "date": "DATE",
+        "pair": "TEXT",
+        "rate_usd_per_eur": "DOUBLE",
+    },
 }
 
 
@@ -58,6 +63,29 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
                 con.execute("DROP TABLE reddit_posts")
                 con.execute("ALTER TABLE reddit_posts_tmp RENAME TO reddit_posts")
             con.execute("CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)")
+        if table == "fx_rates":
+            try:
+                con.execute(
+                    "ALTER TABLE fx_rates ADD CONSTRAINT fx_rates_date_pair_unique UNIQUE(date, pair)"
+                )
+            except duckdb.Error:
+                con.execute(
+                    """
+                    CREATE TABLE fx_rates_tmp AS
+                    SELECT DISTINCT * FROM fx_rates
+                    """
+                )
+                con.execute("DROP TABLE fx_rates")
+                con.execute("ALTER TABLE fx_rates_tmp RENAME TO fx_rates")
+                try:
+                    con.execute(
+                        "ALTER TABLE fx_rates ADD CONSTRAINT fx_rates_date_pair_unique UNIQUE(date, pair)"
+                    )
+                except duckdb.Error:
+                    pass
+            con.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS fx_rates_date_pair_idx ON fx_rates(date, pair)"
+            )
 
 
 def validate_df(df, table_name: str):
