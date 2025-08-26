@@ -294,7 +294,7 @@ def _download_single_safe(
         except Exception as e:  # pragma: no cover - defensive catch-all
             last_err = e
 
-        # Nur wenn weitere Versuche übrig sind: Backoff + weiter
+        # Backoff and retry if attempts remain
         if attempt < MAX_RETRIES - 1:
             _retry_sleep(attempt)
             continue
