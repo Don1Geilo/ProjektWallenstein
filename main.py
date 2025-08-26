@@ -46,8 +46,6 @@ except Exception as e:  # pragma: no cover
 
 # --- Pfade/Konfig ---
 DB_PATH = settings.WALLENSTEIN_DB_PATH
-STOCK_OVERVIEW_DIR = "stockOverview"
-os.makedirs(STOCK_OVERVIEW_DIR, exist_ok=True)
 os.makedirs(Path(DB_PATH).parent, exist_ok=True)  # stellt sicher, dass data/ existiert
 
 # Ticker (Standard inkl. TSLA)

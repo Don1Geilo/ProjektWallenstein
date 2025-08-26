@@ -15,7 +15,6 @@ venv/
 # --- DuckDB Datenbank & Exporte ---
 *.duckdb
 *.db
-stockOverview/*.csv
 *.parquet
 
 # --- Python Cache ---
