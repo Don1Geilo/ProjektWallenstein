@@ -1,3 +1,11 @@
+"""Stock price utilities with multi-source fallbacks.
+
+Prices are fetched from Yahoo or Stooq depending on
+``WALLENSTEIN_DATA_SOURCE``. When Yahoo is used, missing tickers are
+retrieved via Stooq as a fallback. Stooq still falls back to Yahoo where
+necessary.
+"""
+
 import io
 import json
 import logging
@@ -11,11 +19,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 from requests.adapters import HTTPAdapter
-
 from requests.exceptions import HTTPError, RequestException
-
-from requests.exceptions import HTTPError
-
 from urllib3.util.retry import Retry
 
 from wallenstein.config import settings
@@ -29,7 +33,7 @@ YAHOO_MAX_WORKERS = 3
 # User-Agent for Stooq requests (some environments return 403 for default UA)
 STOOQ_HEADERS = {"User-Agent": settings.STOOQ_USER_AGENT}
 
-# Datenquelle: yahoo (default) oder stooq (mit Yahoo-Fallback)
+# Datenquelle: stooq (default) oder yahoo
 # 'hybrid' bleibt aus Kompatibilitätsgründen als Alias zu stooq bestehen
 DATA_SOURCE = settings.WALLENSTEIN_DATA_SOURCE
 
@@ -337,8 +341,8 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
     """
     Schreibt Daily‑Kurse ins DuckDB‑Schema 'prices'.
     Quelle per ENV (WALLENSTEIN_DATA_SOURCE):
-      - 'yahoo'  (default, nur Yahoo)
-      - 'stooq'  (Stooq mit Yahoo‑Fallback)
+      - 'yahoo'  (Yahoo mit Stooq‑Fallback)
+      - 'stooq'  (default, Stooq mit Yahoo‑Fallback)
     'hybrid' funktioniert weiterhin als Alias für 'stooq'.
     """
     if not tickers:
@@ -385,6 +389,19 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
 
         if DATA_SOURCE == "yahoo":
             df_chunk = _yahoo_fetch_many(chunk_valid, start_map=start_map, session=session)
+
+            # Fallback: fehlende Ticker via Stooq nachladen
+            missing: list[str]
+            if df_chunk is None or df_chunk.empty:
+                missing = chunk_valid
+            else:
+                missing = [t for t in chunk_valid if df_chunk[df_chunk["ticker"].eq(t)].empty]
+            if missing:
+                df_fb = _stooq_fetch_many(missing, start_map=start_map)
+                if df_chunk is None or df_chunk.empty:
+                    df_chunk = df_fb
+                elif df_fb is not None and not df_fb.empty:
+                    df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
         else:
             df_chunk = _stooq_fetch_many(chunk_valid, start_map=start_map)
 
