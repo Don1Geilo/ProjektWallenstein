@@ -1,4 +1,5 @@
 import logging
+import os
 
 import requests
 
@@ -8,8 +9,8 @@ log = logging.getLogger(__name__)
 
 
 def notify_telegram(text: str) -> bool:
-    token = settings.TELEGRAM_BOT_TOKEN
-    chat_id = settings.TELEGRAM_CHAT_ID
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or settings.TELEGRAM_BOT_TOKEN
+    chat_id = os.getenv("TELEGRAM_CHAT_ID") or settings.TELEGRAM_CHAT_ID
     if not text or not token or not chat_id:
         log.warning("⚠️ Telegram nicht konfiguriert oder Chat-ID fehlt.")
         return False

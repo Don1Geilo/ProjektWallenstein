@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import re
 from collections.abc import Iterable
 from functools import lru_cache
@@ -214,7 +215,11 @@ def analyze_sentiment(text: str) -> float:
     keyword based implementation and logs an informational hint.
     """
 
-    if settings.USE_BERT_SENTIMENT:
+    env_flag = os.getenv("USE_BERT_SENTIMENT")
+    use_bert = (env_flag.lower() in ("1", "true", "yes")
+                if env_flag is not None
+                else settings.USE_BERT_SENTIMENT)
+    if use_bert:
         try:
             return analyze_sentiment_bert(text)
         except Exception:  # pragma: no cover - defensive
