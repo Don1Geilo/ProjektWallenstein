@@ -232,9 +232,17 @@ def analyze_sentiment(text: str) -> float:
     """
 
 
+    env_flag = os.getenv("USE_BERT_SENTIMENT")
+    use_bert = (env_flag.lower() in ("1", "true", "yes")
+                if env_flag is not None
+                else settings.USE_BERT_SENTIMENT)
+    if use_bert:
+
+
     if _use_bert_sentiment():
 
     if _use_bert():
+
 
         try:
             return analyze_sentiment_bert(text)
