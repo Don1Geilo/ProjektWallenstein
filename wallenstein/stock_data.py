@@ -63,6 +63,13 @@ def _ensure_prices_table(con: duckdb.DuckDBPyConnection):
             volume BIGINT
         )
     """)
+    # Index für häufige Abfragen (Ticker + Datum)
+    try:
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS prices_ticker_date_idx ON prices(ticker, date)"
+        )
+    except Exception:
+        pass  # pragma: no cover - defensive: ältere DuckDB-Versionen ohne Index-Unterstützung
 
 def _latest_dates_per_ticker(con: duckdb.DuckDBPyConnection, tickers: List[str]) -> Dict[str, Optional[date]]:
     if not tickers:
