@@ -93,32 +93,34 @@ def _stooq_fetch_one(
     start: Optional[pd.Timestamp] = None,
     session: Optional[requests.Session] = None
 ) -> pd.DataFrame:
-    """Fetch a single ticker from Stooq."""
+    """Fetch a single ticker from Stooq with basic retry logic."""
     sym = _stooq_symbol(ticker)
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
     sess = session or requests
-    try:
-        r = sess.get(url, timeout=20, headers=STOOQ_HEADERS)
-        if not r.ok or not r.text:
-            return pd.DataFrame()
-        df = pd.read_csv(io.StringIO(r.text))
-        if df.empty:
-            return pd.DataFrame()
-        # Stooq Spalten: Date,Open,High,Low,Close,Volume
-        df = df.rename(columns={
-            "Date": "date", "Open": "open", "High": "high",
-            "Low": "low", "Close": "close", "Volume": "volume"
-        })
-        df["ticker"] = ticker
-        df["date"] = pd.to_datetime(df["date"]).dt.date
-        if start is not None:
-            start_d = pd.to_datetime(start).date()
-            df = df[df["date"] >= start_d]
-        # adj_close nicht vorhanden
-        df["adj_close"] = pd.NA
-        return df[["date","ticker","open","high","low","close","adj_close","volume"]]
-    except Exception:
-        return pd.DataFrame()
+    for attempt in range(MAX_RETRIES):
+        try:
+            r = sess.get(url, timeout=20, headers=STOOQ_HEADERS)
+            if not r.ok or not r.text:
+                raise RuntimeError("empty response")
+            df = pd.read_csv(io.StringIO(r.text))
+            if df.empty:
+                raise RuntimeError("empty dataframe")
+            # Stooq Spalten: Date,Open,High,Low,Close,Volume
+            df = df.rename(columns={
+                "Date": "date", "Open": "open", "High": "high",
+                "Low": "low", "Close": "close", "Volume": "volume"
+            })
+            df["ticker"] = ticker
+            df["date"] = pd.to_datetime(df["date"]).dt.date
+            if start is not None:
+                start_d = pd.to_datetime(start).date()
+                df = df[df["date"] >= start_d]
+            # adj_close nicht vorhanden
+            df["adj_close"] = pd.NA
+            return df[["date","ticker","open","high","low","close","adj_close","volume"]]
+        except Exception:
+            _retry_sleep(attempt)
+    return pd.DataFrame()
 
 def _stooq_fetch_many(
     tickers: List[str],
