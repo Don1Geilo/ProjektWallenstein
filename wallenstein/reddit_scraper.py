@@ -1,19 +1,20 @@
 # wallenstein/reddit_scraper.py
 from __future__ import annotations
 
-import logging
-import os
-import re
-import json
-from pathlib import Path
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List
 import itertools
+import json
+import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import duckdb
 import pandas as pd
 import praw
+
+from wallenstein.config import settings
+from wallenstein.db_schema import ensure_tables, validate_df
 
 try:  # Optional dependency
     import yaml  # type: ignore
@@ -23,20 +24,20 @@ except Exception:  # pragma: no cover - not critical if missing
 from . import config
 
 log = logging.getLogger("wallenstein.reddit")
-if os.getenv("WALLENSTEIN_LOG_LEVEL", "").upper() == "DEBUG":
+if settings.LOG_LEVEL.upper() == "DEBUG":
     log.setLevel(logging.DEBUG)
 
 # Gemeinsamer DB-Pfad (ENV erlaubt Override, sonst Default)
-DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "wallenstein.duckdb")
+DB_PATH = settings.WALLENSTEIN_DB_PATH
 
 # Anzahl Tage, die Posts in der Datenbank behalten werden
-DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", "30"))
+DATA_RETENTION_DAYS = settings.DATA_RETENTION_DAYS
 
 # Bekannte Firmennamen zu Tickersymbolen.  Diese Liste ist keineswegs
 # vollständig, deckt aber einige der üblichen Verdächtigen ab.  Für jeden
 # Ticker können mehrere Varianten des Firmennamens angegeben werden, die im
 # Text erkannt werden sollen.
-TICKER_NAME_MAP: Dict[str, List[str]] = {
+TICKER_NAME_MAP: dict[str, list[str]] = {
     "NVDA": ["nvidia", "nividia", "nvidea"],
     "AMZN": ["amazon", "amzon", "amazn"],
     "AAPL": ["apple", "aple", "appl"],
@@ -49,7 +50,7 @@ TICKER_NAME_MAP: Dict[str, List[str]] = {
 
 
 def _load_aliases_from_file(
-    path: str | Path | None = None, aliases: Dict[str, List[str]] | None = None
+    path: str | Path | None = None, aliases: dict[str, list[str]] | None = None
 ) -> None:
     """Merge additional ticker aliases from a dict or JSON/YAML file.
 
@@ -76,11 +77,15 @@ def _load_aliases_from_file(
 
     # 2) Determine candidate file paths
     root = Path(__file__).resolve().parents[1]
-    candidates = [Path(path)] if path else [
-        root / "data" / "ticker_aliases.json",
-        root / "data" / "ticker_aliases.yaml",
-        root / "data" / "ticker_aliases.yml",
-    ]
+    candidates = (
+        [Path(path)]
+        if path
+        else [
+            root / "data" / "ticker_aliases.json",
+            root / "data" / "ticker_aliases.yaml",
+            root / "data" / "ticker_aliases.yml",
+        ]
+    )
 
     for candidate in candidates:
         if not candidate.exists():
@@ -92,9 +97,7 @@ def _load_aliases_from_file(
                 elif candidate.suffix in {".yaml", ".yml"} and yaml:
                     data = yaml.safe_load(fh)
                 else:
-                    log.warning(
-                        "Unsupported ticker alias file format: %s", candidate
-                    )
+                    log.warning("Unsupported ticker alias file format: %s", candidate)
                     data = {}
 
             for tkr, names in data.items():
@@ -106,13 +109,12 @@ def _load_aliases_from_file(
                     if name not in bucket:
                         bucket.append(name)
         except Exception as exc:  # pragma: no cover - defensive
-            log.warning(
-                "Could not load ticker aliases from %s: %s", candidate, exc
-            )
+            log.warning("Could not load ticker aliases from %s: %s", candidate, exc)
         break  # use first existing file only
 
 
 _load_aliases_from_file()
+
 
 # ----------------------------
 # Bestehende Funktion von dir
@@ -139,12 +141,14 @@ def fetch_reddit_posts(
     posts = []
     sub = reddit.subreddit(subreddit)
     for post in itertools.chain(sub.hot(limit=limit), sub.new(limit=limit)):
-        posts.append({
-            "id": post.id,
-            "title": post.title or "",
-            "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
-            "text": post.selftext or "",
-        })
+        posts.append(
+            {
+                "id": post.id,
+                "title": post.title or "",
+                "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
+                "text": post.selftext or "",
+            }
+        )
 
         if include_comments:
             try:
@@ -153,15 +157,17 @@ def fetch_reddit_posts(
                 continue
 
             for comment in post.comments[:3]:
-                posts.append({
-                    "id": f"{post.id}_{comment.id}",
-                    "title": "",
-                    "created_utc": datetime.fromtimestamp(
-                        getattr(comment, "created_utc", post.created_utc),
-                        tz=timezone.utc,
-                    ),
-                    "text": comment.body or "",
-                })
+                posts.append(
+                    {
+                        "id": f"{post.id}_{comment.id}",
+                        "title": "",
+                        "created_utc": datetime.fromtimestamp(
+                            getattr(comment, "created_utc", post.created_utc),
+                            tz=timezone.utc,
+                        ),
+                        "text": comment.body or "",
+                    }
+                )
 
     return pd.DataFrame(posts)
 
@@ -178,7 +184,8 @@ def _load_posts_from_db() -> pd.DataFrame:
             df = pd.DataFrame(columns=["id", "title", "created_utc", "text"])
     return df
 
-def _compile_patterns(ticker: str) -> List[re.Pattern]:
+
+def _compile_patterns(ticker: str) -> list[re.Pattern]:
     """
     Erfasst Varianten wie NVDA, $NVDA, #NVDA, (NVDA).
     Vermeidet Treffer in Wörtern (z. B. 'ENVDA' soll nicht matchen).
@@ -187,20 +194,19 @@ def _compile_patterns(ticker: str) -> List[re.Pattern]:
     safe = re.escape(ticker.upper())
     patterns = [
         re.compile(rf"(?<![A-Za-z0-9]){safe}(?![A-Za-z0-9])", re.IGNORECASE),  # NVDA
-        re.compile(rf"[\$\#]\s*{safe}\b", re.IGNORECASE),                      # $NVDA, #NVDA
-        re.compile(rf"\(\s*{safe}\s*\)", re.IGNORECASE),                       # (NVDA)
+        re.compile(rf"[\$\#]\s*{safe}\b", re.IGNORECASE),  # $NVDA, #NVDA
+        re.compile(rf"\(\s*{safe}\s*\)", re.IGNORECASE),  # (NVDA)
     ]
 
     for name in TICKER_NAME_MAP.get(ticker.upper(), []):
         # Sicherstellen, dass Namen als eigene Wörter erkannt werden
         safe_name = re.escape(name)
-        patterns.append(
-            re.compile(rf"(?<![A-Za-z0-9]){safe_name}(?![A-Za-z0-9])", re.IGNORECASE)
-        )
+        patterns.append(re.compile(rf"(?<![A-Za-z0-9]){safe_name}(?![A-Za-z0-9])", re.IGNORECASE))
 
     return patterns
 
-def _post_matches_ticker(title: str, body: str, patterns: List[re.Pattern]) -> bool:
+
+def _post_matches_ticker(title: str, body: str, patterns: list[re.Pattern]) -> bool:
     t = title or ""
     b = body or ""
     for p in patterns:
@@ -227,13 +233,13 @@ def purge_old_posts() -> None:
 # Öffentliche API: erwartet dein main.py
 # -------------------------------------------------------
 def update_reddit_data(
-    tickers: List[str],
-    subreddits: List[str] | None = None,
+    tickers: list[str],
+    subreddits: list[str] | None = None,
     limit_per_sub: int = 50,
     include_comments: bool = False,
     aliases_path: str | Path | None = None,
-    aliases: Dict[str, List[str]] | None = None,
-) -> Dict[str, List[dict]]:
+    aliases: dict[str, list[str]] | None = None,
+) -> dict[str, list[dict]]:
     """Scrape, persist and organise Reddit posts.
 
     Parameters
@@ -264,7 +270,7 @@ def update_reddit_data(
         subreddits = ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"]
 
     # 1) neue Posts je Subreddit holen (Hot reicht als MVP; kann leicht auf 'new' umgestellt werden)
-    frames: List[pd.DataFrame] = []
+    frames: list[pd.DataFrame] = []
 
     with ThreadPoolExecutor() as executor:
         futures = [
@@ -283,7 +289,6 @@ def update_reddit_data(
                 # Wenn ein Sub fehlschlägt, ignorieren – wir haben immer noch andere
                 pass
 
-
     if frames:
         df_all = pd.concat(frames, ignore_index=True)
         df_all.drop_duplicates(subset="id", inplace=True)
@@ -299,42 +304,13 @@ def update_reddit_data(
 
         if not df_all.empty:
             with duckdb.connect(DB_PATH) as con:
-                con.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS reddit_posts (
-                        id VARCHAR,
-                        title VARCHAR,
-                        created_utc TIMESTAMP,
-                        text VARCHAR
-                    )
-                    """
-                )
-                # Ensure uniqueness on id for existing tables
-                con.execute(
-                    """
-                    DELETE FROM reddit_posts
-                    WHERE rowid NOT IN (
-                        SELECT MIN(rowid) FROM reddit_posts GROUP BY id
-                    )
-                    """
-                )
-                con.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)"
-                )
-                # Index für zeitbasierte Abfragen (Trending-Erkennung)
-                try:
-                    con.execute(
-                        "CREATE INDEX IF NOT EXISTS reddit_posts_created_idx ON reddit_posts(created_utc)"
-                    )
-                except Exception:
-                    pass  # pragma: no cover - defensive
+                ensure_tables(con)
                 con.register("df_all", df_all)
+                validate_df(df_all, "reddit_posts")
                 cur = con.execute(
                     "INSERT INTO reddit_posts SELECT * FROM df_all ON CONFLICT(id) DO NOTHING"
                 )
-            log.info(
-                f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
-            )
+            log.info(f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)")
 
     # Alte Einträge entfernen
     purge_old_posts()
@@ -344,7 +320,7 @@ def update_reddit_data(
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     # Nur Posts weiterverarbeiten, die überhaupt einen der Ticker erwähnen
-    patterns: List[str] = []
+    patterns: list[str] = []
     for tkr in tickers:
         patterns.extend(p.pattern for p in _compile_patterns(tkr))
     if patterns:
@@ -352,14 +328,12 @@ def update_reddit_data(
         df = df[df["combined"].str.contains(combined_pattern, regex=True, case=False, na=False)]
 
     # 3) Je Ticker Texte sammeln
-    out: Dict[str, List[dict]] = {}
+    out: dict[str, list[dict]] = {}
     for tkr in tickers:
         pattern = "|".join(p.pattern for p in _compile_patterns(tkr))
         mask = df["combined"].str.contains(pattern, regex=True, case=False, na=False)
         bucket_df = (
-            df.loc[mask, ["created_utc", "combined"]]
-            .head(100)
-            .rename(columns={"combined": "text"})
+            df.loc[mask, ["created_utc", "combined"]].head(100).rename(columns={"combined": "text"})
         )
         bucket_df["text"] = bucket_df["text"].str[:2000]
         bucket = bucket_df.to_dict(orient="records")
@@ -369,12 +343,12 @@ def update_reddit_data(
 
 
 def detect_trending_tickers(
-    ticker_posts: Dict[str, List[dict]],
+    ticker_posts: dict[str, list[dict]],
     window_hours: int = 24,
     baseline_days: int = 7,
     min_mentions: int = 3,
     ratio: float = 2.0,
-) -> List[str]:
+) -> list[str]:
     """Identify tickers with unusually high mention counts.
 
     ``ticker_posts`` is the mapping returned by :func:`update_reddit_data`.
@@ -386,14 +360,13 @@ def detect_trending_tickers(
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(hours=window_hours)
     baseline_start = now - timedelta(days=baseline_days)
-    trending: List[str] = []
+    trending: list[str] = []
     for tkr, posts in ticker_posts.items():
         recent = [p for p in posts if p.get("created_utc") and p["created_utc"] >= window_start]
         baseline = [
             p
             for p in posts
-            if p.get("created_utc")
-            and baseline_start <= p["created_utc"] < window_start
+            if p.get("created_utc") and baseline_start <= p["created_utc"] < window_start
         ]
         if len(recent) >= min_mentions:
             base_count = len(baseline)

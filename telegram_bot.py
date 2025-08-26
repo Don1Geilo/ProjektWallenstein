@@ -4,10 +4,11 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
 from main import run_pipeline
-from wallenstein.overview import generate_overview
 from wallenstein import config
+from wallenstein.overview import generate_overview
 
 log = logging.getLogger(__name__)
+
 
 async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parse messages like ``!NVDA`` and reply with an overview."""
@@ -22,9 +23,7 @@ async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await context.application.run_in_executor(None, run_pipeline, [ticker])
     except Exception as exc:  # pragma: no cover - unexpected failures
         log.error("Pipeline run failed for %s: %s", ticker, exc)
-        await update.message.reply_text(
-            f"Fehler beim Aktualisieren von {ticker}: {exc}"
-        )
+        await update.message.reply_text(f"Fehler beim Aktualisieren von {ticker}: {exc}")
         return
     try:
         overview = generate_overview([ticker])
@@ -32,6 +31,7 @@ async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"Fehler beim Abrufen von {ticker}: {exc}")
         return
     await update.message.reply_text(overview)
+
 
 def main() -> None:
     """Start the Telegram bot and listen for ticker commands."""

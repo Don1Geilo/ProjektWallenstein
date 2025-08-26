@@ -1,11 +1,14 @@
+import logging
 import os
 import time
-import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dotenv import load_dotenv, find_dotenv
-import pandas as pd
+
 import duckdb
+import pandas as pd
+from dotenv import find_dotenv, load_dotenv
+
+from wallenstein.config import settings
 
 # --- .env laden ---
 env_loaded = load_dotenv(find_dotenv(usecwd=True), override=True)
@@ -14,7 +17,7 @@ if not env_loaded:
     load_dotenv(dotenv_path=alt_path, override=True)
 
 # --- Logging ---
-LOG_LEVEL = os.getenv("WALLENSTEIN_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = settings.LOG_LEVEL.upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)s %(message)s",
@@ -30,6 +33,7 @@ except Exception as e:  # pragma: no cover
         log.warning("Telegram nicht konfiguriert – Nachricht nicht gesendet.")
         return False
 
+
 try:
     from wallenstein.reddit_scraper import update_reddit_data
 except Exception as e:  # pragma: no cover
@@ -39,29 +43,26 @@ except Exception as e:  # pragma: no cover
     def update_reddit_data(tickers, subreddits=None, limit_per_sub=50, **kwargs):
         return {t: [] for t in tickers}
 
+
 # --- Pfade/Konfig ---
-DB_PATH = os.getenv("WALLENSTEIN_DB_PATH", "data/wallenstein.duckdb").strip()
+DB_PATH = settings.WALLENSTEIN_DB_PATH
 STOCK_OVERVIEW_DIR = "stockOverview"
 os.makedirs(STOCK_OVERVIEW_DIR, exist_ok=True)
 os.makedirs(Path(DB_PATH).parent, exist_ok=True)  # stellt sicher, dass data/ existiert
 
 # Ticker (Standard inkl. TSLA)
-TICKERS = [
-    t.strip().upper()
-    for t in os.getenv("WALLENSTEIN_TICKERS", "NVDA,AMZN,SMCI,TSLA").split(",")
-    if t.strip()
-]
+TICKERS = [t.strip().upper() for t in settings.WALLENSTEIN_TICKERS.split(",") if t.strip()]
 
 # Telegram (zur Rückwärtskompatibilität beibehalten)
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_BOT_TOKEN = (settings.TELEGRAM_BOT_TOKEN or "").strip()
+TELEGRAM_CHAT_ID = (settings.TELEGRAM_CHAT_ID or "").strip()
 
 # --- Projekt-Module ---
-from wallenstein.stock_data import update_prices, update_fx_rates
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
-from wallenstein.sentiment import analyze_sentiment_batch
-from wallenstein.overview import generate_overview
 from wallenstein.models import train_per_stock
+from wallenstein.overview import generate_overview
+from wallenstein.sentiment import analyze_sentiment_batch
+from wallenstein.stock_data import update_fx_rates, update_prices
 
 
 # ---------- Main ----------
@@ -165,9 +166,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 return t, None, None
 
             df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
-            df_sent = sentiment_frames.get(
-                t, pd.DataFrame(columns=["date", "sentiment"])
-            ).copy()
+            df_sent = sentiment_frames.get(t, pd.DataFrame(columns=["date", "sentiment"])).copy()
             if not df_sent.empty:
                 df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
 
