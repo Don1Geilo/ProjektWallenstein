@@ -8,6 +8,7 @@ SCHEMAS = {
         "high": "DOUBLE",
         "low": "DOUBLE",
         "close": "DOUBLE",
+        "adj_close": "DOUBLE",
         "volume": "BIGINT",
     },
     "reddit_posts": {
