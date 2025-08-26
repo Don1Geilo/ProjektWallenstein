@@ -84,3 +84,14 @@ def test_stooq_fetch_one_retries(monkeypatch):
     df = stock_data._stooq_fetch_one("TEST", session=sess)
     assert sess.calls == 2
     assert not df.empty
+
+
+def test_prices_table_has_index(tmp_path):
+    db = tmp_path / "idx.duckdb"
+    con = duckdb.connect(str(db))
+    stock_data._ensure_prices_table(con)
+    idx_count = con.execute(
+        "SELECT COUNT(*) FROM duckdb_indexes() WHERE index_name='prices_ticker_date_idx'"
+    ).fetchone()[0]
+    con.close()
+    assert idx_count == 1
