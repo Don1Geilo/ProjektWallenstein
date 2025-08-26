@@ -21,7 +21,8 @@ def _ensure_fx_table(con: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE IF NOT EXISTS fx_rates (
             date DATE,
             pair VARCHAR,
-            rate_usd_per_eur DOUBLE
+            rate_usd_per_eur DOUBLE,
+            UNIQUE(date, pair)
         )
     """
     )
