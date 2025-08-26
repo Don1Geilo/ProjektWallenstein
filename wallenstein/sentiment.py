@@ -50,6 +50,15 @@ def _log_keyword_hint(message: str = "Using keyword-based sentiment analysis") -
         _keyword_hint_logged = True
 
 
+def _use_bert_sentiment() -> bool:
+    """Return ``True`` if BERT sentiment analysis is requested."""
+
+    env = os.getenv("USE_BERT_SENTIMENT")
+    if env is not None:
+        return env.lower() in ("1", "true", "yes")
+    return settings.USE_BERT_SENTIMENT
+
+
 # Intensifiers and negation markers used to enrich the keyword map
 INTENSITY_WEIGHTS: dict[str, int] = {
     "strong": 2,
@@ -222,7 +231,11 @@ def analyze_sentiment(text: str) -> float:
     keyword based implementation and logs an informational hint.
     """
 
+
+    if _use_bert_sentiment():
+
     if _use_bert():
+
         try:
             return analyze_sentiment_bert(text)
         except Exception:  # pragma: no cover - defensive
@@ -269,7 +282,11 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
     """
 
     global _bert_analyzer
+
+    if _use_bert_sentiment():
+
     if _use_bert():
+
         try:
             if _bert_analyzer is None:
                 _bert_analyzer = BertSentiment()
