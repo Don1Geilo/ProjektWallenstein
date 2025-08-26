@@ -8,14 +8,14 @@ SCHEMAS = {
         "high": "DOUBLE",
         "low": "DOUBLE",
         "close": "DOUBLE",
+        "adj_close": "DOUBLE",
         "volume": "BIGINT",
     },
     "reddit_posts": {
         "id": "TEXT",
         "created_utc": "TIMESTAMP",
-        "ticker": "TEXT",
         "title": "TEXT",
-        "selftext": "TEXT",
+        "text": "TEXT",
     },
     "sentiments": {
         "post_id": "TEXT",

@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
@@ -10,15 +11,21 @@ import pandas as pd
 import requests
 import yfinance as yf
 from requests.adapters import HTTPAdapter
+
 from requests.exceptions import HTTPError, RequestException
+
+from requests.exceptions import HTTPError
+
 from urllib3.util.retry import Retry
 
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
 
 # ---- Configuration ----
-MAX_RETRIES = 3
+MAX_RETRIES = 6
 CHUNK_SIZE = 20
+# limit yahoo concurrency to reduce risk of 429s
+YAHOO_MAX_WORKERS = 3
 # User-Agent for Stooq requests (some environments return 403 for default UA)
 STOOQ_HEADERS = {"User-Agent": settings.STOOQ_USER_AGENT}
 
@@ -94,7 +101,9 @@ def _latest_dates_per_ticker(
 
 
 def _retry_sleep(attempt: int):
-    time.sleep(1.0 * (2**attempt))  # 1s, 2s, 4s
+    """Sleep with exponential backoff and jitter."""
+    base = 1.0 * (2**attempt)
+    time.sleep(base + random.random())
 
 
 # ---- Stooq (stable, CSV) ----
@@ -180,14 +189,15 @@ def _make_session(user_agent: str | None = None) -> requests.Session:
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9,de-DE;q=0.8",
             "Connection": "keep-alive",
-            "Referer": "https://finance.yahoo.com/",
+        "Referer": "https://finance.yahoo.com/",
         }
     )
     retry = Retry(
-        total=3,
-        backoff_factor=1.2,
+        total=MAX_RETRIES,
+        backoff_factor=1.0,
         status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["HEAD", "GET", "OPTIONS"],
+        respect_retry_after_header=True,
     )
     adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=16)
     s.mount("https://", adapter)
@@ -249,6 +259,7 @@ def _download_single_safe(
                         "volume",
                     ]
                 )
+
         except json.JSONDecodeError as e:
             last_err = e
         except HTTPError as e:
@@ -273,6 +284,18 @@ def _download_single_safe(
         except Exception as e:  # pragma: no cover - defensive catch-all
             last_err = e
         if attempt < MAX_RETRIES - 1:
+
+        except json.JSONDecodeError:
+            _retry_sleep(attempt)
+            continue
+        except HTTPError as e:
+            status = getattr(e.response, "status_code", None)
+            if status == 429:
+                log.warning(f"{ticker}: rate limited (429), backing off")
+            _retry_sleep(attempt)
+            continue
+        except Exception:
+
             _retry_sleep(attempt)
     if last_err is not None:
         log.warning(f"{ticker}: network error ({last_err.__class__.__name__})")
@@ -288,7 +311,7 @@ def _yahoo_fetch_many(
     """Fetch multiple tickers from Yahoo concurrently."""
     sess = session or _make_session()
     results: list[pd.DataFrame] = []
-    with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as ex:
+    with ThreadPoolExecutor(max_workers=min(YAHOO_MAX_WORKERS, len(tickers))) as ex:
         futures = {
             ex.submit(
                 _download_single_safe,
