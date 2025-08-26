@@ -206,26 +206,47 @@ def _make_session(user_agent: str | None = None) -> requests.Session:
 
 
 def _download_single_safe(
-    ticker: str, session: requests.Session, start=None, period="1mo",
+    ticker: str,
+    session: requests.Session,
+    start=None,
+    period: str = "1mo",
 ) -> pd.DataFrame:
+    """
+    Robuster Yahoo-Download mit Retry/Backoff.
+    - Gibt bei 429 sofort leer zurück (kein Retry, um Sperren zu vermeiden).
+    - Bei anderen Netzwerkfehlern: Exponential Backoff + Jitter bis MAX_RETRIES.
+    """
     today_utc = pd.Timestamp.utcnow().date()
     last_err: Exception | None = None
+
     for attempt in range(MAX_RETRIES):
         try:
             tk = yf.Ticker(ticker, session=session)
+
             use_start = start
             use_period = period
+            # Wenn Startdatum in der Zukunft/Heute liegt, lieber ein kurzes Period-Fenster nehmen
             if use_start is not None and pd.to_datetime(use_start).date() >= today_utc:
                 use_start = None
                 use_period = "7d"
+
             if use_start is not None:
                 hist = tk.history(
-                    start=use_start, interval="1d", auto_adjust=False, actions=False, timeout=30
+                    start=use_start,
+                    interval="1d",
+                    auto_adjust=False,
+                    actions=False,
+                    timeout=30,
                 )
             else:
                 hist = tk.history(
-                    period=use_period, interval="1d", auto_adjust=False, actions=False, timeout=30
+                    period=use_period,
+                    interval="1d",
+                    auto_adjust=False,
+                    actions=False,
+                    timeout=30,
                 )
+
             if hist is not None and not hist.empty:
                 df = hist.reset_index().rename(columns={"Date": "date"})
                 df["ticker"] = ticker
@@ -237,9 +258,7 @@ def _download_single_safe(
                     "Adj Close": "adj_close",
                     "Volume": "volume",
                 }
-                df.rename(
-                    columns={k: v for k, v in colmap.items() if k in df.columns}, inplace=True
-                )
+                df.rename(columns={k: v for k, v in colmap.items() if k in df.columns}, inplace=True)
                 for c in ("adj_close", "volume"):
                     if c not in df.columns:
                         df[c] = pd.NA
@@ -248,55 +267,35 @@ def _download_single_safe(
             else:
                 log.warning(f"{ticker}: ticker not found")
                 return pd.DataFrame(
-                    columns=[
-                        "date",
-                        "ticker",
-                        "open",
-                        "high",
-                        "low",
-                        "close",
-                        "adj_close",
-                        "volume",
-                    ]
+                    columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
                 )
 
         except json.JSONDecodeError as e:
+            # yfinance/requests kann bei kaputten Antworten JSONDecodeError werfen
             last_err = e
+
         except HTTPError as e:
             status = e.response.status_code if e.response is not None else None
             if status == 429:
+                # Bei Rate Limit sofort raus, um weitere Sperren zu vermeiden
                 log.warning(f"{ticker}: skipped due to rate limiting (HTTP 429)")
                 return pd.DataFrame(
-                    columns=[
-                        "date",
-                        "ticker",
-                        "open",
-                        "high",
-                        "low",
-                        "close",
-                        "adj_close",
-                        "volume",
-                    ]
+                    columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
                 )
             last_err = e
+
         except RequestException as e:
             last_err = e
+
         except Exception as e:  # pragma: no cover - defensive catch-all
             last_err = e
+
+        # Nur wenn weitere Versuche übrig sind: Backoff + weiter
         if attempt < MAX_RETRIES - 1:
-
-        except json.JSONDecodeError:
             _retry_sleep(attempt)
             continue
-        except HTTPError as e:
-            status = getattr(e.response, "status_code", None)
-            if status == 429:
-                log.warning(f"{ticker}: rate limited (429), backing off")
-            _retry_sleep(attempt)
-            continue
-        except Exception:
 
-            _retry_sleep(attempt)
+    # Alle Versuche erschöpft
     if last_err is not None:
         log.warning(f"{ticker}: network error ({last_err.__class__.__name__})")
     return pd.DataFrame(
