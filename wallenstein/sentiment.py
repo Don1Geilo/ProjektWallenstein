@@ -2,7 +2,6 @@
 
 The keyword map supports both common English and German trading slang
 allowing rudimentary multilingual sentiment detection."""
-
 from __future__ import annotations
 
 import importlib.util
@@ -23,18 +22,17 @@ _url_re = re.compile(r"https?://\S+")
 @lru_cache(maxsize=1024)
 def _preprocess(text: str) -> str:
     """Return a normalised version of ``text`` suitable for analysis."""
-
     text = _url_re.sub(" ", text)
     return text.lower().strip()
 
 
 def _transformers_available() -> bool:
     """Return ``True`` if the ``transformers`` package can be imported."""
-
     return importlib.util.find_spec("transformers") is not None
 
 
-def _use_bert() -> bool:
+def _should_use_bert() -> bool:
+    """Decide whether to use a BERT model (env overrides settings)."""
     env = os.getenv("USE_BERT_SENTIMENT")
     if env is not None:
         return env.lower() in {"1", "true", "yes"}
@@ -43,39 +41,22 @@ def _use_bert() -> bool:
 
 def _log_keyword_hint(message: str = "Using keyword-based sentiment analysis") -> None:
     """Log ``message`` once to inform about fallback behaviour."""
-
     global _keyword_hint_logged
     if not _keyword_hint_logged:
         logger.info(message)
         _keyword_hint_logged = True
 
 
-def _use_bert_sentiment() -> bool:
-    """Return ``True`` if BERT sentiment analysis is requested."""
-
-    env = os.getenv("USE_BERT_SENTIMENT")
-    if env is not None:
-        return env.lower() in ("1", "true", "yes")
-    return settings.USE_BERT_SENTIMENT
-
-
 # Intensifiers and negation markers used to enrich the keyword map
 INTENSITY_WEIGHTS: dict[str, int] = {
     "strong": 2,
     "massiv": 2,
+    "extrem": 2,
 }
 
 NEGATION_MARKERS = {"nicht", "kein", "no", "not"}
 
 # keyword -> sentiment score mapping used by :func:`analyze_sentiment`
-#
-# Many retail traders express their sentiment using simple words like
-# ``"buy"`` or ``"sell"``.  The previous implementation only looked for
-# option‑related terms (``"call"``/``"put"``) or metaphors such as
-# ``"bullish"`` and therefore returned ``0`` for common phrases like
-# "buy the dip".  This resulted in neutral recommendations even when the
-# text clearly contained a directional bias.  To improve coverage we map
-# a couple of additional keywords to sentiment scores.
 KEYWORD_SCORES: dict[str, int] = {
     # positive
     "long": 1,
@@ -95,6 +76,9 @@ KEYWORD_SCORES: dict[str, int] = {
     "rocket": 1,
     "squeeze": 1,
     "lfg": 1,
+    "hoch": 1,
+    "lambo": 1,
+    "🚀": 1,
     # negative
     "short": -1,
     "put": -1,
@@ -109,6 +93,12 @@ KEYWORD_SCORES: dict[str, int] = {
     "fud": -1,
     "crash": -1,
     "bagholder": -1,
+    "rekt": -1,
+    "down": -1,
+    "fall": -1,
+    "sink": -1,
+    "stupid": -1,
+    "schlecht": -1,
 }
 
 # extend keyword scores with simple intensity phrases and negated forms
@@ -121,18 +111,9 @@ for _word, _score in list(KEYWORD_SCORES.items()):
 def apply_negation(text: str) -> str:
     """Collapse negations so that they can be scored correctly.
 
-    The function searches for occurrences of words like ``"nicht"`` or
-    ``"kein"`` and prefixes a sentiment keyword within the next two tokens
-    with ``"not_"``.  Intermediate filler words are preserved while the
-    negation marker itself is dropped.
-
-    Examples
-    --------
-    ``"nicht kaufen"`` -> ``"not_kaufen"``
-    ``"kein sell"`` -> ``"not_sell"``
-    ``"nicht so bullish"`` -> ``"so not_bullish"``
+    Searches for negations like "nicht"/"kein"/"not"/"no" and prefixes
+    a sentiment keyword within the next two tokens with "not_".
     """
-
     words = text.split()
     result = []
     i = 0
@@ -163,8 +144,8 @@ class BertSentiment:
     """Sentiment analyzer backed by HuggingFace models.
 
     The underlying pipeline is instantiated lazily on first use. The model is
-    chosen via the ``SENTIMENT_BACKEND`` environment variable which accepts
-    ``"finbert"`` (default) or ``"de-bert"`` for a German model.
+    chosen via settings.SENTIMENT_BACKEND: "finbert" (default),
+    "de-bert", or "finetuned-finbert" (local path).
     """
 
     _pipe = None
@@ -177,8 +158,6 @@ class BertSentiment:
             self.model = "oliverguhr/german-sentiment-bert"
         elif backend == "finetuned-finbert":
             from pathlib import Path
-
-            # resolve path relative to repository root
             self.model = str(
                 Path(__file__).resolve().parent.parent / "models" / "finetuned-finbert"
             )
@@ -190,12 +169,13 @@ class BertSentiment:
     def pipe(self):  # pragma: no cover - heavy model
         if self._pipe is None:
             from transformers import pipeline
-
             self._pipe = pipeline("sentiment-analysis", model=self.model)
         return self._pipe
 
-    def __call__(self, text: str):  # pragma: no cover - heavy model
-        return self.pipe(text)
+    def __call__(self, text: str | list[str]):  # pragma: no cover - heavy model
+        # Critical: avoid "sequence length > 512" errors.
+        # Works for both str and list[str].
+        return self.pipe(text, truncation=True, max_length=512)
 
 
 _bert_analyzer: BertSentiment | None = None
@@ -203,7 +183,6 @@ _bert_analyzer: BertSentiment | None = None
 
 def analyze_sentiment_bert(text: str) -> float:
     """Analyse sentiment using a BERT based model."""
-
     global _bert_analyzer
     if _bert_analyzer is None:
         _bert_analyzer = BertSentiment()
@@ -223,32 +202,19 @@ def analyze_sentiment_bert(text: str) -> float:
 def analyze_sentiment(text: str) -> float:
     """Return a sentiment score for ``text``.
 
-    The function prefers a BERT model when available. Users can explicitly
-    select the method via the ``USE_BERT_SENTIMENT`` environment variable.
-    Truthy values force the BERT model, falsy values enforce the keyword
-    approach.  When unspecified the function automatically uses BERT if the
-    :mod:`transformers` package is installed, otherwise it falls back to the
-    keyword based implementation and logs an informational hint.
+    Preference:
+    1) If explicitly requested (env/settings) -> try BERT; fallback to keywords.
+    2) Else if transformers installed -> try BERT; fallback to keywords.
+    3) Else -> keywords.
     """
-
-
-    env_flag = os.getenv("USE_BERT_SENTIMENT")
-    use_bert = (env_flag.lower() in ("1", "true", "yes")
-                if env_flag is not None
-                else settings.USE_BERT_SENTIMENT)
-    if use_bert:
-
-
-    if _use_bert_sentiment():
-
-    if _use_bert():
-
-
+    # Try BERT if requested
+    if _should_use_bert():
         try:
             return analyze_sentiment_bert(text)
         except Exception:  # pragma: no cover - defensive
             _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
     else:
+        # Not requested, but available? Try opportunistically.
         if _transformers_available():
             try:
                 return analyze_sentiment_bert(text)
@@ -257,6 +223,7 @@ def analyze_sentiment(text: str) -> float:
         else:
             _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
 
+    # Keyword fallback
     return _keyword_score_cached(_preprocess(text))
 
 
@@ -283,38 +250,36 @@ _keyword_score_cached = lru_cache(maxsize=2048)(_keyword_score)
 def analyze_sentiment_batch(texts: list[str]) -> list[float]:
     """Return sentiment scores for multiple texts.
 
-    When a BERT backend is available the underlying pipeline processes the
-    whole ``texts`` list in a single call to avoid repeated model invocations.
-    If keyword based sentiment analysis is active, the function simply maps
-    :func:`analyze_sentiment` over the inputs.
+    If BERT is active/available we process the whole list in one pipeline call.
+    Otherwise we map the keyword analyzer over inputs.
     """
-
     global _bert_analyzer
 
-    if _use_bert_sentiment():
-
-    if _use_bert():
-
+    if _should_use_bert():
         try:
             if _bert_analyzer is None:
                 _bert_analyzer = BertSentiment()
-            results = _bert_analyzer(texts)
+            results = _bert_analyzer(texts)  # truncation handled in __call__
+            return _convert_bert_outputs_to_scores(results)
         except Exception:  # pragma: no cover - defensive
             _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
             return [_keyword_score_cached(_preprocess(t)) for t in texts]
-    else:
-        if _transformers_available():
-            try:
-                if _bert_analyzer is None:
-                    _bert_analyzer = BertSentiment()
-                results = _bert_analyzer(texts)
-            except Exception:  # pragma: no cover - defensive
-                _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
-                return [_keyword_score_cached(_preprocess(t)) for t in texts]
-        else:
-            _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
+
+    if _transformers_available():
+        try:
+            if _bert_analyzer is None:
+                _bert_analyzer = BertSentiment()
+            results = _bert_analyzer(texts)  # truncation handled in __call__
+            return _convert_bert_outputs_to_scores(results)
+        except Exception:  # pragma: no cover - defensive
+            _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
             return [_keyword_score_cached(_preprocess(t)) for t in texts]
 
+    _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
+    return [_keyword_score_cached(_preprocess(t)) for t in texts]
+
+
+def _convert_bert_outputs_to_scores(results) -> list[float]:
     scores: list[float] = []
     for data in results:
         label = str(data.get("label", "")).lower()
@@ -343,7 +308,6 @@ def aggregate_sentiment_by_ticker(ticker_texts: dict[str, Iterable[dict]]) -> di
         Average sentiment score for each ticker. If no texts are available for
         a ticker, ``0.0`` is returned.
     """
-
     result: dict[str, float] = {}
     for ticker, entries in ticker_texts.items():
         entries = list(entries)
@@ -360,7 +324,6 @@ def aggregate_sentiment_by_ticker(ticker_texts: dict[str, Iterable[dict]]) -> di
 
 def derive_recommendation(score: float) -> str:
     """Derive a basic trading recommendation from ``score``."""
-
     if score > 0:
         return "Buy"
     if score < 0:
