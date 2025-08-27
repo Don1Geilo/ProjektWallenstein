@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import logging
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -49,3 +50,18 @@ def test_train_per_stock_insufficient_classes():
     })
     acc, f1 = train_per_stock(df)
     assert acc is None and f1 is None
+
+
+def test_train_per_stock_baseline_logging(caplog):
+    np.random.seed(2)
+    dates = pd.date_range("2024-01-01", periods=15, freq="D")
+    df = pd.DataFrame({
+        "date": dates,
+        "close": 10 + np.cumsum(np.random.randn(15)),
+        "sentiment": np.random.randn(15),
+    })
+    with caplog.at_level(logging.INFO):
+        train_per_stock(df, n_splits=3)
+    messages = "\n".join(record.message for record in caplog.records)
+    assert "Class distribution" in messages
+    assert "Baseline (majority class" in messages
