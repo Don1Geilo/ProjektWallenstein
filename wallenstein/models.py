@@ -3,10 +3,28 @@ import logging
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import GridSearchCV, KFold
 
 log = logging.getLogger(__name__)
+
+
+def backtest_strategy(df: pd.DataFrame, signals: pd.Series) -> float:
+    """Compute average next-day return when signal is 1 (buy)."""
+
+    bt = df.copy()
+    bt["next_close"] = bt["close"].shift(-1)
+    bt["return"] = bt["next_close"] / bt["close"] - 1
+    returns = bt.loc[signals == 1, "return"].dropna()
+    if returns.empty:
+        return 0.0
+    return float(returns.mean())
 
 
 def train_per_stock(
@@ -14,7 +32,7 @@ def train_per_stock(
     use_kfold: bool = True,
     n_splits: int = 5,
     model_type: str = "logistic",
-) -> tuple[float, float] | None:
+) -> tuple[float, float, float | None, float, float] | None:
     """Train a classifier on lagged close and sentiment data.
 
     Parameters
@@ -27,10 +45,10 @@ def train_per_stock(
 
     Returns
     -------
-    Optional[Tuple[float, float]]
-        Tuple of (accuracy, F1-score) of the model on the evaluation set. ``None``
-        is returned for both metrics if there are insufficient samples or only
-        one class in the training data.
+    Optional[Tuple[float, float, float | None, float, float]]
+        Tuple of (accuracy, F1-score, ROC-AUC, precision, recall) of the model
+        on the evaluation set. ``None`` is returned for all metrics if there are
+        insufficient samples or only one class in the training data.
 
     Notes
     -----
@@ -42,7 +60,7 @@ def train_per_stock(
     """
 
     if df_stock.empty:
-        return None, None
+        return None, None, None, None, None
 
     df = df_stock.sort_values("date").copy()
     # Convert sentiment to numeric and replace invalid entries with 0
@@ -71,7 +89,7 @@ def train_per_stock(
     df.dropna(inplace=True)
 
     if len(df) < 2:
-        return None, None
+        return None, None, None, None, None
 
     features = [
         "Close_lag1",
@@ -94,7 +112,7 @@ def train_per_stock(
     y = df["y"]
 
     if y.nunique() < 2:
-        return None, None
+        return None, None, None, None, None
 
     if model_type == "logistic":
         model = LogisticRegression(max_iter=1000)
@@ -125,9 +143,9 @@ def train_per_stock(
             refit="accuracy",
         )
         search.fit(X, y)
-        accuracy = float(search.cv_results_["mean_test_accuracy"][search.best_index_])
-        f1 = float(search.cv_results_["mean_test_f1"][search.best_index_])
+        best_model = search.best_estimator_
         log.info(f"{model_type} best params: {search.best_params_}")
+        X_eval, y_eval, df_eval = X, y, df
     else:
         train_size = max(int(len(df) * 0.8), 1)
         df_train = df.iloc[:train_size]
@@ -137,7 +155,7 @@ def train_per_stock(
         y_train = df_train["y"]
 
         if y_train.nunique() < 2:
-            return None, None
+            return None, None, None, None, None
 
         cv = min(3, len(y_train))
         search = GridSearchCV(
@@ -152,15 +170,38 @@ def train_per_stock(
         log.info(f"{model_type} best params: {search.best_params_}")
 
         if df_test.empty:
-            y_pred = best_model.predict(X_train)
-            accuracy = accuracy_score(y_train, y_pred)
-            f1 = f1_score(y_train, y_pred, zero_division=0)
+            X_eval, y_eval, df_eval = X_train, y_train, df_train
         else:
-            X_test = df_test[features]
-            y_test = df_test["y"]
-            y_pred = best_model.predict(X_test)
-            accuracy = accuracy_score(y_test, y_pred)
-            f1 = f1_score(y_test, y_pred, zero_division=0)
+            X_eval, y_eval, df_eval = df_test[features], df_test["y"], df_test
 
-    log.info(f"Model accuracy: {accuracy:.4f}, F1: {f1:.4f}")
-    return float(accuracy), float(f1)
+    y_pred = best_model.predict(X_eval)
+    y_proba = (
+        best_model.predict_proba(X_eval)[:, 1]
+        if hasattr(best_model, "predict_proba")
+        else None
+    )
+
+    accuracy = accuracy_score(y_eval, y_pred)
+    f1 = f1_score(y_eval, y_pred, zero_division=0)
+    precision = precision_score(y_eval, y_pred, zero_division=0)
+    recall = recall_score(y_eval, y_pred, zero_division=0)
+
+    roc_auc = None
+    if y_proba is not None and len(set(y_eval)) > 1:
+        try:
+            roc_auc = float(roc_auc_score(y_eval, y_proba))
+        except ValueError:
+            roc_auc = None
+
+    avg_return = backtest_strategy(df_eval, pd.Series(y_pred, index=df_eval.index))
+
+    log.info(
+        "Model accuracy: %.4f, F1: %.4f, ROC-AUC: %s, Precision: %.4f, Recall: %.4f",
+        accuracy,
+        f1,
+        f"{roc_auc:.4f}" if roc_auc is not None else "nan",
+        precision,
+        recall,
+    )
+    log.info(f"Avg strategy return: {avg_return:.4f}")
+    return float(accuracy), float(f1), roc_auc, float(precision), float(recall)
