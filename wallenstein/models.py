@@ -5,6 +5,14 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.svm import SVC
+
+try:  # pragma: no cover - optional dependency
+    from xgboost import XGBClassifier
+
+    XGBOOST_AVAILABLE = True
+except Exception:  # pragma: no cover - import error
+    XGBOOST_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 
@@ -34,11 +42,11 @@ def train_per_stock(
 
     Notes
     -----
-    The function supports several model types (``logistic``, ``random_forest``
-    and ``gradient_boosting``) and performs a GridSearchCV for basic
-    hyperparameter optimisation. K-fold cross validation is enabled by default
-    and falls back to a simple train/test split when there are too few
-    samples.
+    The function supports several model types (``logistic``, ``random_forest``,
+    ``gradient_boosting``, ``svm`` and ``xgboost`` when available) and performs
+    a GridSearchCV for basic hyperparameter optimisation. K-fold cross
+    validation is enabled by default and falls back to a simple train/test
+    split when there are too few samples.
     """
 
     if df_stock.empty:
@@ -107,6 +115,26 @@ def train_per_stock(
         }
     elif model_type == "gradient_boosting":
         model = GradientBoostingClassifier(random_state=42)
+        param_grid = {
+            "n_estimators": [50, 100, 200],
+            "learning_rate": [0.01, 0.1, 0.2],
+            "max_depth": [3, 5],
+        }
+    elif model_type == "svm":
+        model = SVC()
+        param_grid = {
+            "C": [0.1, 1.0, 10.0],
+            "kernel": ["linear", "rbf"],
+            "gamma": ["scale", "auto"],
+        }
+    elif model_type == "xgboost":
+        if not XGBOOST_AVAILABLE:  # pragma: no cover - optional dependency
+            raise ImportError("xgboost is not installed. Please install xgboost to use this model.")
+        model = XGBClassifier(
+            random_state=42,
+            eval_metric="logloss",
+            use_label_encoder=False,
+        )
         param_grid = {
             "n_estimators": [50, 100, 200],
             "learning_rate": [0.01, 0.1, 0.2],
