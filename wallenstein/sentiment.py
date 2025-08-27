@@ -19,6 +19,16 @@ try:  # Optional dependency
 except Exception:  # pragma: no cover - not critical if missing
     yaml = None
 
+try:  # Optional dependency for token normalisation
+    import spacy  # type: ignore
+except Exception:  # pragma: no cover - optional
+    spacy = None
+
+try:  # Optional dependency for token normalisation
+    from nltk.stem import SnowballStemmer  # type: ignore
+except Exception:  # pragma: no cover - optional
+    SnowballStemmer = None
+
 from wallenstein.config import settings
 
 logger = logging.getLogger(__name__)
@@ -26,12 +36,83 @@ _keyword_hint_logged = False
 
 _url_re = re.compile(r"https?://\S+")
 
+_spacy_nlp = None
+_stemmer_de = None
+_stemmer_en = None
+
+
+@lru_cache(maxsize=2048)
+def normalize_token(token: str) -> str:
+    """Return a normalised/lemmatised version of ``token``."""
+    if not token:
+        return token
+    global _spacy_nlp, _stemmer_de, _stemmer_en
+    try:
+        if token in KEYWORD_SCORES or token in NEGATION_MARKERS:
+            return token
+    except Exception:
+        pass
+    if spacy is not None:
+        if _spacy_nlp is None:
+            try:
+                for model in ("de_core_news_sm", "en_core_web_sm"):
+                    try:
+                        _spacy_nlp = spacy.load(model, disable=["parser", "ner", "textcat"])  # type: ignore[arg-type]
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                _spacy_nlp = None
+        if _spacy_nlp is not None:
+            try:
+                doc = _spacy_nlp(token)
+                if doc and doc[0].lemma_:
+                    lemma = doc[0].lemma_.lower()
+                    if lemma:
+                        return lemma
+            except Exception:
+                pass
+    if SnowballStemmer is not None:
+        if _stemmer_de is None:
+            try:
+                _stemmer_de = SnowballStemmer("german")  # type: ignore[call-arg]
+            except Exception:
+                _stemmer_de = False
+        if _stemmer_de not in (None, False):
+            try:
+                return _stemmer_de.stem(token)  # type: ignore[union-attr]
+            except Exception:
+                pass
+        if _stemmer_en is None:
+            try:
+                _stemmer_en = SnowballStemmer("english")  # type: ignore[call-arg]
+            except Exception:
+                _stemmer_en = False
+        if _stemmer_en not in (None, False):
+            try:
+                return _stemmer_en.stem(token)  # type: ignore[union-attr]
+            except Exception:
+                pass
+    if len(token) > 4:
+        if token.endswith("st"):
+            return token[:-2] + "en"
+        if token.endswith("t"):
+            return token[:-1] + "en"
+        if token.endswith("e"):
+            return token + "n"
+    return token
+
 
 @lru_cache(maxsize=1024)
 def _preprocess(text: str) -> str:
     """Return a normalised version of ``text`` suitable for analysis."""
     text = _url_re.sub(" ", text)
-    return text.lower().strip()
+    text = text.lower().strip()
+    if not text:
+        return text
+    tokens = text.split()
+    tokens = [normalize_token(tok) for tok in tokens]
+    return " ".join(tokens)
 
 
 def _transformers_available() -> bool:
