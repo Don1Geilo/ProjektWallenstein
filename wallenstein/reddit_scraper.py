@@ -242,15 +242,6 @@ def _compile_patterns(ticker: str) -> list[re.Pattern]:
     return patterns
 
 
-def _post_matches_ticker(title: str, body: str, patterns: list[re.Pattern]) -> bool:
-    t = title or ""
-    b = body or ""
-    for p in patterns:
-        if p.search(t) or p.search(b):
-            return True
-    return False
-
-
 def purge_old_posts() -> None:
     """Remove posts older than ``DATA_RETENTION_DAYS`` from the database."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=DATA_RETENTION_DAYS)
