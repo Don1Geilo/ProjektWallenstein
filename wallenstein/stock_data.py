@@ -41,6 +41,7 @@ except Exception:  # pragma: no cover
 
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
+from wallenstein.db_utils import _ensure_fx_table
 
 # ------------------------------------------------------------------------------
 # Konfiguration
@@ -794,20 +795,6 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
 # ------------------------------------------------------------------------------
 # FX: EURUSD via Stooq
 # ------------------------------------------------------------------------------
-
-
-def _ensure_fx_table(con: duckdb.DuckDBPyConnection):
-    con.execute(
-        """
-        CREATE TABLE IF NOT EXISTS fx_rates (
-            date DATE,
-            pair VARCHAR,
-            rate_usd_per_eur DOUBLE,
-            UNIQUE(date, pair)
-        )
-        """
-    )
-
 
 def _fx_latest_date(con: duckdb.DuckDBPyConnection, pair: str):
     try:
