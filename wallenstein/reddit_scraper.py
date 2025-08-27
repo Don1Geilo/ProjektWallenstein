@@ -16,11 +16,17 @@ import praw
 
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
+from wallenstein.sentiment import analyze_sentiment
 
 try:  # Optional dependency
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - not critical if missing
     yaml = None
+
+try:  # Optional dependency for RSS scraping
+    import feedparser  # type: ignore
+except Exception:  # pragma: no cover - optional
+    feedparser = None
 
 log = logging.getLogger("wallenstein.reddit")
 if settings.LOG_LEVEL.upper() == "DEBUG":
@@ -157,7 +163,47 @@ def fetch_reddit_posts(
                     }
                 )
 
-    return pd.DataFrame(posts)
+    df = pd.DataFrame(posts)
+    if not df.empty:
+        combined = df["title"].fillna("") + " " + df["text"].fillna("")
+        df["sentiment"] = combined.apply(analyze_sentiment)
+    return df
+
+
+def fetch_news_feed(url: str, limit: int = 50) -> pd.DataFrame:
+    """Fetch items from an RSS/Atom feed as DataFrame.
+
+    The function relies on :mod:`feedparser`.  Each entry is scored with the
+    project's sentiment analyser and returned with an ``id``, ``title``,
+    ``created_utc`` timestamp, ``text`` (summary) and ``sentiment`` score.
+    """
+
+    if not feedparser:  # pragma: no cover - optional dependency
+        raise RuntimeError("feedparser package is required for news scraping")
+
+    feed = feedparser.parse(url)
+    rows: list[dict] = []
+    for entry in getattr(feed, "entries", [])[:limit]:
+        title = entry.get("title", "")
+        summary = entry.get("summary", "")
+        created = entry.get("published_parsed") or entry.get("updated_parsed")
+        if created:
+            from time import mktime
+
+            created_dt = datetime.fromtimestamp(mktime(created), tz=timezone.utc)
+        else:  # pragma: no cover - defensive
+            created_dt = datetime.now(timezone.utc)
+        text = f"{title} {summary}".strip()
+        rows.append(
+            {
+                "id": entry.get("id") or entry.get("link") or title,
+                "title": title,
+                "created_utc": created_dt,
+                "text": summary,
+                "sentiment": analyze_sentiment(text),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 # --------------------------------------
@@ -328,6 +374,7 @@ def update_reddit_data(
             df.loc[mask, ["created_utc", "combined"]].head(100).rename(columns={"combined": "text"})
         )
         bucket_df["text"] = bucket_df["text"].str[:2000]
+        bucket_df["sentiment"] = bucket_df["text"].apply(analyze_sentiment)
         bucket = bucket_df.to_dict(orient="records")
         log.debug(f"{tkr}: {len(bucket)} matched posts")
         out[tkr] = bucket

@@ -167,13 +167,24 @@ contains trained weights.
 The price movement model now uses a richer feature set including multiple
 lags for ``close`` and ``sentiment`` as well as 3/7-day moving averages and
 volatility measures. K-fold cross validation (5-fold) is enabled by default and
-GridSearchCV tunes hyperparameters for each supported model.
+hyperparameters can be tuned via ``GridSearchCV``, ``RandomizedSearchCV`` or
+``Optuna`` using the ``search_method`` parameter.
 
 Supported models:
 
 - Logistic Regression
 - Random Forest
 - Gradient Boosting
+- Support Vector Machine
+- XGBoost (optional, requires ``pip install xgboost``)
+
+Select a model via ``model_type`` when calling ``train_per_stock``:
+
+```python
+from wallenstein.models import train_per_stock
+
+acc, f1 = train_per_stock(df, model_type="svm")
+```
 
 Example cross-validated scores on a synthetic 80-day dataset:
 

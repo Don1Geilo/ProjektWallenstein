@@ -118,6 +118,46 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
     assert ids == {"h1", "n1", "h1_c1"}
 
 
+def test_sentiment_added_to_buckets(monkeypatch):
+    now = datetime.now(timezone.utc)
+    df = pd.DataFrame([
+        {"id": "1", "title": "buy ABC now", "created_utc": now, "text": "ABC is great"},
+    ])
+
+    monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", lambda *a, **k: df)
+    monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df)
+    monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
+    monkeypatch.setattr(reddit_scraper, "analyze_sentiment", lambda text: 0.5)
+
+    out = reddit_scraper.update_reddit_data(["ABC"], subreddits=None)
+    assert out["ABC"][0]["sentiment"] == 0.5
+
+
+def test_fetch_news_feed(monkeypatch):
+    class Entry(dict):
+        def __init__(self):
+            import time
+
+            self["id"] = "e1"
+            self["title"] = "Good news"
+            self["summary"] = "stocks rally"
+            self["published_parsed"] = time.gmtime(0)
+
+    class Feed:
+        entries = [Entry()]
+
+    class DummyFP:
+        @staticmethod
+        def parse(url):
+            return Feed()
+
+    monkeypatch.setattr(reddit_scraper, "analyze_sentiment", lambda text: 0.3)
+    monkeypatch.setattr(reddit_scraper, "feedparser", DummyFP())
+
+    df = reddit_scraper.fetch_news_feed("http://example.com/rss")
+    assert "sentiment" in df.columns and df["sentiment"].iloc[0] == 0.3
+
+
 
 def test_aliases_passed_as_dict(monkeypatch):
     """Custom alias mapping can be merged directly."""
