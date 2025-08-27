@@ -4,10 +4,12 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
 from main import run_pipeline
-from wallenstein import config
+from wallenstein.config import settings, validate_config
 from wallenstein.overview import generate_overview
 
 log = logging.getLogger(__name__)
+
+validate_config()
 
 
 async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -35,7 +37,7 @@ async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     """Start the Telegram bot and listen for ticker commands."""
-    app = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticker))
     app.run_polling()
 

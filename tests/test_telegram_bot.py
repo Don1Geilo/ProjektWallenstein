@@ -16,9 +16,15 @@ sys.modules.setdefault(
 )
 
 # Ensure required environment variables exist
-os.environ.setdefault('CLIENT_ID', 'x')
-os.environ.setdefault('CLIENT_SECRET', 'x')
+os.environ.setdefault('REDDIT_CLIENT_ID', 'x')
+os.environ.setdefault('REDDIT_CLIENT_SECRET', 'x')
+os.environ.setdefault('REDDIT_USER_AGENT', 'x')
 os.environ.setdefault('TELEGRAM_BOT_TOKEN', 'x')
+os.environ.setdefault('TELEGRAM_CHAT_ID', 'x')
+
+import importlib
+import wallenstein.config as config_module
+importlib.reload(config_module)
 
 from telegram_bot import handle_ticker
 
