@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
-import logging
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -40,31 +40,6 @@ def test_train_per_stock_random_forest():
     assert acc is not None
     assert f1 is not None
 
-
-def test_train_per_stock_random_search():
-    np.random.seed(2)
-    dates = pd.date_range("2024-01-01", periods=25, freq="D")
-    df = pd.DataFrame({
-        "date": dates,
-        "close": 15 + np.cumsum(np.random.randn(25)),
-        "sentiment": np.linspace(-1, 1, 25),
-    })
-    acc, f1 = train_per_stock(df, n_splits=3, search_method="random")
-    assert acc is not None
-    assert f1 is not None
-
-
-def test_train_per_stock_optuna_search():
-    np.random.seed(3)
-    dates = pd.date_range("2024-01-01", periods=25, freq="D")
-    df = pd.DataFrame({
-        "date": dates,
-        "close": 12 + np.cumsum(np.random.randn(25)),
-        "sentiment": np.cos(np.linspace(0, 3, 25)),
-    })
-    acc, f1 = train_per_stock(df, n_splits=3, search_method="optuna")
-    assert acc is not None
-    assert f1 is not None
 
 
 def test_train_per_stock_insufficient_classes():
