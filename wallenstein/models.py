@@ -4,10 +4,7 @@ import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import GridSearchCV, KFold, RandomizedSearchCV, cross_validate
-from scipy.stats import loguniform, randint
-import optuna
-from optuna.integration import OptunaSearchCV
+
 
 log = logging.getLogger(__name__)
 
@@ -35,15 +32,9 @@ def train_per_stock(
         Tuple of (accuracy, F1-score) of the model on the evaluation set. ``None``
         is returned for both metrics if there are insufficient samples or only
         one class in the training data.
+"""
+    
 
-    Notes
-    -----
-    The function supports several model types (``logistic``, ``random_forest``
-    and ``gradient_boosting``) and performs hyperparameter optimisation using
-    ``GridSearchCV``, ``RandomizedSearchCV`` or ``Optuna`` depending on the
-    ``search_method`` argument. K-fold cross validation is enabled by default
-    and falls back to a simple train/test split when there are too few samples.
-    """
 
     if df_stock.empty:
         return None, None
@@ -208,18 +199,7 @@ def train_per_stock(
             "learning_rate": [0.01, 0.1, 0.2],
             "max_depth": [3, 5],
         }
-        param_distributions = {
-            "n_estimators": randint(50, 301),
-            "learning_rate": loguniform(0.01, 0.2),
-            "max_depth": randint(3, 8),
-        }
-        optuna_distributions = {
-            "n_estimators": optuna.distributions.IntDistribution(50, 300),
-            "learning_rate": optuna.distributions.FloatDistribution(0.01, 0.2, log=True),
-            "max_depth": optuna.distributions.IntDistribution(3, 7),
-        }
-    else:
-        raise ValueError(f"Unknown model_type: {model_type}")
+
 
     if search_method not in {"grid", "random", "optuna"}:
         raise ValueError(f"Unknown search_method: {search_method}")

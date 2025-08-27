@@ -175,6 +175,16 @@ Supported models:
 - Logistic Regression
 - Random Forest
 - Gradient Boosting
+- Support Vector Machine
+- XGBoost (optional, requires ``pip install xgboost``)
+
+Select a model via ``model_type`` when calling ``train_per_stock``:
+
+```python
+from wallenstein.models import train_per_stock
+
+acc, f1 = train_per_stock(df, model_type="svm")
+```
 
 Example cross-validated scores on a synthetic 80-day dataset:
 
