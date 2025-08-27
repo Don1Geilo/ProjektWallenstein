@@ -9,7 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+
+from wallenstein.models import train_per_stock
+import wallenstein.models as models
+
 from wallenstein.models import backtest_strategy, train_per_stock
+
 
 
 def test_train_per_stock_basic():
@@ -112,4 +117,27 @@ def test_backtest_strategy():
     assert acc is None and f1 is None
 
 
+
+def test_train_per_stock_uses_timeseries_split(monkeypatch):
+    from sklearn.model_selection import TimeSeriesSplit as _TimeSeriesSplit
+
+    class RecordingTS(_TimeSeriesSplit):
+        called = False
+
+        def __init__(self, *args, **kwargs):
+            RecordingTS.called = True
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(models, "TimeSeriesSplit", RecordingTS)
+
+    np.random.seed(0)
+    dates = pd.date_range("2024-01-01", periods=20, freq="D")
+    df = pd.DataFrame({
+        "date": dates,
+        "close": 10 + np.cumsum(np.random.randn(20)),
+        "sentiment": np.sin(np.linspace(0, 3, 20)),
+    })
+
+    train_per_stock(df, n_splits=3, use_kfold=True)
+    assert RecordingTS.called
 

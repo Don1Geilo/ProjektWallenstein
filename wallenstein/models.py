@@ -17,10 +17,12 @@ from sklearn.metrics import (
 
 from sklearn.metrics import accuracy_score, f1_score
 
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
 from sklearn.model_selection import GridSearchCV, KFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
 
 
 log = logging.getLogger(__name__)
@@ -287,6 +289,15 @@ codex/calculate-additional-metrics-after-model-training
         raise ValueError(f"Unknown search_method: {search_method}")
 
     if use_kfold and len(df) >= n_splits:
+        cv = TimeSeriesSplit(n_splits=n_splits)
+        search = GridSearchCV(
+            model,
+            param_grid,
+            cv=cv,
+            scoring={"accuracy": "accuracy", "f1": "f1"},
+            refit="accuracy",
+        )
+
         cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
         if search_method == "grid":
             search = GridSearchCV(
@@ -315,6 +326,7 @@ codex/calculate-additional-metrics-after-model-training
                 scoring="accuracy",
                 random_state=42,
             )
+
         search.fit(X, y)
 
         best_model = search.best_estimator_
