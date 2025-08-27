@@ -1,14 +1,32 @@
-import sys
+import argparse
 import numpy as np
+import pandas as pd
 
 
 def tokenize_function(examples, tokenizer):
     return tokenizer(examples["text"], padding="max_length", truncation=True)
 
 
-def main():
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Fine-tune FinBERT on sentiment data")
+    parser.add_argument(
+        "--data-files",
+        nargs="+",
+        default=[
+            "data/sentiment_labels.csv",
+            "data/financial_phrasebank.csv",
+        ],
+        help="CSV files with 'text' and 'label' columns",
+    )
+    parser.add_argument(
+        "--balance",
+        action="store_true",
+        help="Downsample classes to achieve class balance",
+    )
+    args = parser.parse_args()
+
     try:
-        from datasets import load_dataset
+        from datasets import Dataset
         from sklearn.metrics import accuracy_score, precision_score, recall_score
         from transformers import (
             AutoModelForSequenceClassification,
@@ -17,7 +35,9 @@ def main():
             TrainingArguments,
         )
     except Exception as exc:
-        print("Missing optional dependencies for FinBERT training: datasets, transformers, scikit-learn")
+        print(
+            "Missing optional dependencies for FinBERT training: datasets, transformers, scikit-learn"
+        )
         print(exc)
         return
 
@@ -30,20 +50,40 @@ def main():
             "recall": recall_score(labels, preds),
         }
 
-    dataset = load_dataset("csv", data_files={"data": "data/sentiment_labels.csv"})["data"]
-    dataset = dataset.train_test_split(test_size=0.2, seed=42)
+    # Load and merge datasets
+    frames = [pd.read_csv(path) for path in args.data_files]
+    data = pd.concat(frames, ignore_index=True)
+    data = data[data["label"].isin(["negative", "positive"])]
+
+    if args.balance:
+        min_count = data["label"].value_counts().min()
+        data = (
+            data.groupby("label", group_keys=False)
+            .sample(min_count, random_state=42)
+            .reset_index(drop=True)
+        )
+
+    dataset = Dataset.from_pandas(data, preserve_index=False)
+    dataset = dataset.train_test_split(
+        test_size=0.2, seed=42, stratify_by_column="label"
+    )
 
     label2id = {"negative": 0, "positive": 1}
     dataset = dataset.map(
-        lambda x: {"labels": [label2id[label] for label in x["label"]]}, batched=True
+        lambda x: {"labels": [label2id[label] for label in x["label"]]},
+        batched=True,
     )
 
     tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
-    tokenized_dataset = dataset.map(lambda x: tokenize_function(x, tokenizer), batched=True)
+    tokenized_dataset = dataset.map(
+        lambda x: tokenize_function(x, tokenizer), batched=True
+    )
     tokenized_dataset = tokenized_dataset.remove_columns(["text", "label"])
     tokenized_dataset.set_format("torch")
 
-    model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert", num_labels=2)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        "ProsusAI/finbert", num_labels=2
+    )
 
     training_args = TrainingArguments(
         output_dir="models/finetuned-finbert",
