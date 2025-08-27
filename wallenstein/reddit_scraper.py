@@ -32,22 +32,9 @@ DB_PATH = settings.WALLENSTEIN_DB_PATH
 # Anzahl Tage, die Posts in der Datenbank behalten werden
 DATA_RETENTION_DAYS = settings.DATA_RETENTION_DAYS
 
-# Bekannte Firmennamen zu Tickersymbolen.  Diese Liste ist keineswegs
-# vollständig, deckt aber einige der üblichen Verdächtigen ab.  Für jeden
-# Ticker können mehrere Varianten des Firmennamens angegeben werden, die im
-# Text erkannt werden sollen.
-TICKER_NAME_MAP: dict[str, list[str]] = {
-    "NVDA": ["nvidia", "nividia", "nvidea", "NVDA"],
-    "AMZN": ["amazon", "amzon", "amazn", "AMZN"],
-    "AAPL": ["apple", "aple", "appl", "AAPL"],
-    "MSFT": ["microsoft", "micosoft", "micro soft", "MSFT"],
-    "GOOG": ["google", "alphabet", "googel", "gogle"],
-    "META": ["facebook", "meta", "metta", "facebok"],
-    "TSLA": ["tesla", "tesler", "tesal"],
-    "RHM": ["rheinmetall", "rheiner"],
-    "GME": ["gamestop", "game stop", "gme"],
-    "BABA": ["alibaba", "ali baba", "alibba"],
-}
+# Zu Tickersymbolen gehörende Firmennamen/Aliasse.  Die Zuordnung wird beim
+# Import aus ``data/ticker_aliases.*`` geladen und ist hier zunächst leer.
+TICKER_NAME_MAP: dict[str, list[str]] = {}
 
 
 def _load_aliases_from_file(
