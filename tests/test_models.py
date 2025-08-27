@@ -28,6 +28,40 @@ def test_train_per_stock_basic():
     assert 0.0 <= f1 <= 1.0
 
 
+def test_train_per_stock_smote():
+    np.random.seed(2)
+    n = 50
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    increments = np.ones(n)
+    increments[-5:] = -1
+    close = 10 + np.cumsum(increments)
+    df = pd.DataFrame({
+        "date": dates,
+        "close": close,
+        "sentiment": np.random.randn(n),
+    })
+    acc, f1 = train_per_stock(df, n_splits=3, balance_method="smote")
+    assert acc is not None
+    assert f1 is not None
+
+
+def test_train_per_stock_undersample():
+    np.random.seed(3)
+    n = 50
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    increments = np.ones(n)
+    increments[-5:] = -1
+    close = 5 + np.cumsum(increments)
+    df = pd.DataFrame({
+        "date": dates,
+        "close": close,
+        "sentiment": np.random.randn(n),
+    })
+    acc, f1 = train_per_stock(df, n_splits=3, balance_method="undersample")
+    assert acc is not None
+    assert f1 is not None
+
+
 def test_train_per_stock_random_forest():
     np.random.seed(1)
     dates = pd.date_range("2024-01-01", periods=60, freq="D")
