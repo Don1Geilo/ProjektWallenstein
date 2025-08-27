@@ -1,0 +1,59 @@
+name: Wallenstein
+
+on:
+  schedule:
+    - cron: '0 6-14 * * 1-5'
+    - cron: '30 14-21 * * 1-5'
+  workflow_dispatch:
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+  TZ: "Europe/Berlin"
+  WALLENSTEIN_DB_PATH: data/wallenstein.duckdb
+  WALLENSTEIN_YF_SLEEP: "0.6"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+      CLIENT_ID:          ${{ secrets.CLIENT_ID }}
+      CLIENT_SECRET:      ${{ secrets.CLIENT_SECRET }}
+      USER_AGENT:         ${{ secrets.USER_AGENT }}
+      REDDIT_CLIENT_ID:     ${{ secrets.CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      REDDIT_USER_AGENT:    ${{ secrets.USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            **/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Prepare folders
+        run: mkdir -p data stockOverview
+      - name: Neutralize local .env on CI
+        run: |
+          if [ -f .env ]; then
+            echo "Found .env -> removing to avoid overriding secrets"
+            rm .env
+          else
+            echo "No .env present."
+          fi
+      - name: Run pipeline
+        run: python main.py
+      - name: Telegram alert
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="GitHub Actions wallenstein run failed"
