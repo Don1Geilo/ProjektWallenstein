@@ -25,13 +25,10 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # Reddit – mappe Secrets auf beide Namensräume
-      CLIENT_ID:            ${{ secrets.CLIENT_ID }}
-      CLIENT_SECRET:        ${{ secrets.CLIENT_SECRET }}
-      USER_AGENT:           ${{ secrets.USER_AGENT }}
-      REDDIT_CLIENT_ID:     ${{ secrets.CLIENT_ID }}
-      REDDIT_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-      REDDIT_USER_AGENT:    ${{ secrets.USER_AGENT }}
+      # Reddit
+      REDDIT_CLIENT_ID:     ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+      REDDIT_USER_AGENT:    ${{ secrets.REDDIT_USER_AGENT }}
 
     steps:
       - name: Checkout
@@ -79,7 +76,7 @@ jobs:
       # --- DEBUG 2: ENV Sanity (ohne Werte zu leaken)
       - name: Sanity check env (masked)
         run: |
-          for v in CLIENT_ID CLIENT_SECRET USER_AGENT REDDIT_USER_AGENT TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
+          for v in REDDIT_CLIENT_ID REDDIT_CLIENT_SECRET REDDIT_USER_AGENT TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
             printf "%-20s %s\n" "$v:" "$([ -n "${!v}" ] && echo set || echo MISSING)"
           done
 
