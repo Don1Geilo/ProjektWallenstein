@@ -4,7 +4,10 @@ import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.model_selection import GridSearchCV, KFold, RandomizedSearchCV, cross_validate
+from scipy.stats import loguniform, randint
+import optuna
+from optuna.integration import OptunaSearchCV
 
 log = logging.getLogger(__name__)
 
@@ -14,7 +17,8 @@ def train_per_stock(
     use_kfold: bool = True,
     n_splits: int = 5,
     model_type: str = "logistic",
-) -> tuple[float, float] | None:
+    search_method: str = "grid",
+    ) -> tuple[float, float] | None:
     """Train a classifier on lagged close and sentiment data.
 
     Parameters
@@ -35,10 +39,10 @@ def train_per_stock(
     Notes
     -----
     The function supports several model types (``logistic``, ``random_forest``
-    and ``gradient_boosting``) and performs a GridSearchCV for basic
-    hyperparameter optimisation. K-fold cross validation is enabled by default
-    and falls back to a simple train/test split when there are too few
-    samples.
+    and ``gradient_boosting``) and performs hyperparameter optimisation using
+    ``GridSearchCV``, ``RandomizedSearchCV`` or ``Optuna`` depending on the
+    ``search_method`` argument. K-fold cross validation is enabled by default
+    and falls back to a simple train/test split when there are too few samples.
     """
 
     if df_stock.empty:
@@ -99,11 +103,25 @@ def train_per_stock(
     if model_type == "logistic":
         model = LogisticRegression(max_iter=1000)
         param_grid = {"C": [0.01, 0.1, 1.0, 10.0]}
+        param_distributions = {"C": loguniform(1e-4, 1e2)}
+        optuna_distributions = {
+            "C": optuna.distributions.FloatDistribution(1e-4, 1e2, log=True)
+        }
     elif model_type == "random_forest":
         model = RandomForestClassifier(random_state=42)
         param_grid = {
             "n_estimators": [50, 100, 200],
             "max_depth": [3, 5, None],
+        }
+        param_distributions = {
+            "n_estimators": randint(50, 401),
+            "max_depth": [3, 5, 7, None],
+            "min_samples_split": randint(2, 11),
+        }
+        optuna_distributions = {
+            "n_estimators": optuna.distributions.IntDistribution(50, 400),
+            "max_depth": optuna.distributions.CategoricalDistribution([3, 5, 7, None]),
+            "min_samples_split": optuna.distributions.IntDistribution(2, 10),
         }
     elif model_type == "gradient_boosting":
         model = GradientBoostingClassifier(random_state=42)
@@ -112,21 +130,64 @@ def train_per_stock(
             "learning_rate": [0.01, 0.1, 0.2],
             "max_depth": [3, 5],
         }
+        param_distributions = {
+            "n_estimators": randint(50, 301),
+            "learning_rate": loguniform(0.01, 0.2),
+            "max_depth": randint(3, 8),
+        }
+        optuna_distributions = {
+            "n_estimators": optuna.distributions.IntDistribution(50, 300),
+            "learning_rate": optuna.distributions.FloatDistribution(0.01, 0.2, log=True),
+            "max_depth": optuna.distributions.IntDistribution(3, 7),
+        }
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
 
+    if search_method not in {"grid", "random", "optuna"}:
+        raise ValueError(f"Unknown search_method: {search_method}")
+
     if use_kfold and len(df) >= n_splits:
         cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-        search = GridSearchCV(
-            model,
-            param_grid,
-            cv=cv,
-            scoring={"accuracy": "accuracy", "f1": "f1"},
-            refit="accuracy",
-        )
+        if search_method == "grid":
+            search = GridSearchCV(
+                model,
+                param_grid,
+                cv=cv,
+                scoring={"accuracy": "accuracy", "f1": "f1"},
+                refit="accuracy",
+            )
+        elif search_method == "random":
+            search = RandomizedSearchCV(
+                model,
+                param_distributions,
+                n_iter=20,
+                cv=cv,
+                scoring={"accuracy": "accuracy", "f1": "f1"},
+                refit="accuracy",
+                random_state=42,
+            )
+        else:
+            search = OptunaSearchCV(
+                model,
+                optuna_distributions,
+                cv=cv,
+                n_trials=20,
+                scoring="accuracy",
+                random_state=42,
+            )
         search.fit(X, y)
-        accuracy = float(search.cv_results_["mean_test_accuracy"][search.best_index_])
-        f1 = float(search.cv_results_["mean_test_f1"][search.best_index_])
+        if search_method == "optuna":
+            best_model = search.best_estimator_
+            scores = cross_validate(
+                best_model, X, y, cv=cv, scoring={"accuracy": "accuracy", "f1": "f1"}
+            )
+            accuracy = float(scores["test_accuracy"].mean())
+            f1 = float(scores["test_f1"].mean())
+        else:
+            accuracy = float(
+                search.cv_results_["mean_test_accuracy"][search.best_index_]
+            )
+            f1 = float(search.cv_results_["mean_test_f1"][search.best_index_])
         log.info(f"{model_type} best params: {search.best_params_}")
     else:
         train_size = max(int(len(df) * 0.8), 1)
@@ -140,13 +201,33 @@ def train_per_stock(
             return None, None
 
         cv = min(3, len(y_train))
-        search = GridSearchCV(
-            model,
-            param_grid,
-            cv=cv,
-            scoring={"accuracy": "accuracy", "f1": "f1"},
-            refit="accuracy",
-        )
+        if search_method == "grid":
+            search = GridSearchCV(
+                model,
+                param_grid,
+                cv=cv,
+                scoring={"accuracy": "accuracy", "f1": "f1"},
+                refit="accuracy",
+            )
+        elif search_method == "random":
+            search = RandomizedSearchCV(
+                model,
+                param_distributions,
+                n_iter=20,
+                cv=cv,
+                scoring={"accuracy": "accuracy", "f1": "f1"},
+                refit="accuracy",
+                random_state=42,
+            )
+        else:
+            search = OptunaSearchCV(
+                model,
+                optuna_distributions,
+                cv=cv,
+                n_trials=20,
+                scoring="accuracy",
+                random_state=42,
+            )
         search.fit(X_train, y_train)
         best_model = search.best_estimator_
         log.info(f"{model_type} best params: {search.best_params_}")
