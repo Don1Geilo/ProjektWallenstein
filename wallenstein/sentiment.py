@@ -60,9 +60,48 @@ INTENSITY_WEIGHTS: dict[str, int] = {
     "strong": 2,
     "massiv": 2,
     "extrem": 2,
+    "mega": 2,
+    "super": 2,
+    "über": 2,
 }
 
-NEGATION_MARKERS = {"nicht", "kein", "no", "not"}
+NEGATION_MARKERS = {"nicht", "kein", "no", "not", "nie", "ohne"}
+
+
+def _load_sentiment_config(path: str | Path | None = None) -> None:
+    """Load optional sentiment configuration for markers.
+
+    The configuration may define ``intensity_weights`` (mapping of word to
+    multiplier) and ``negation_markers`` (list of words).  Missing entries are
+    ignored gracefully.  If no file is found or PyYAML is unavailable, the
+    defaults remain untouched.
+    """
+
+    if not yaml:  # pragma: no cover - optional dependency
+        return
+
+    root = Path(__file__).resolve().parents[1]
+    config_path = Path(path) if path else root / "data" / "sentiment_config.yaml"
+    if not config_path.exists():
+        return
+    try:
+        with config_path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Could not load sentiment config from %s: %s", config_path, exc)
+        return
+
+    for word, weight in (data.get("intensity_weights") or {}).items():
+        try:
+            INTENSITY_WEIGHTS[str(word).lower()] = int(weight)
+        except Exception:
+            continue
+
+    for marker in data.get("negation_markers") or []:
+        try:
+            NEGATION_MARKERS.add(str(marker).lower())
+        except Exception:
+            continue
 
 # keyword -> sentiment score mapping used by :func:`analyze_sentiment`
 KEYWORD_SCORES: dict[str, int] = {
@@ -167,6 +206,9 @@ def _load_keywords_from_file(
             logger.warning("Could not load sentiment keywords from %s: %s", candidate, exc)
         break  # only use first existing file
 
+
+# Load optional configuration before deriving keyword variants
+_load_sentiment_config()
 
 # Load user-provided keywords before expanding intensity/negation variants
 _load_keywords_from_file()

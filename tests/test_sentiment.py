@@ -61,7 +61,9 @@ def test_aggregate_and_recommendation():
 
 def test_intensity_and_negation():
     assert analyze_sentiment("This is a strong buy signal") == 2
+    assert analyze_sentiment("Das ist ein mega kauf") == 2
     assert analyze_sentiment("Bitte nicht kaufen") < 0
+    assert analyze_sentiment("nie kaufen") < 0
 
 
 
@@ -114,3 +116,23 @@ def test_keywords_loaded_from_file():
             kw_file.write_text(original)
         importlib.reload(sentiment)
 
+
+def test_markers_loaded_from_config():
+    import importlib
+    pytest.importorskip("yaml")
+
+    cfg_file = ROOT / "data" / "sentiment_config.yaml"
+    original = cfg_file.read_text() if cfg_file.exists() else None
+    try:
+        cfg_file.write_text(
+            "intensity_weights:\n  hyper: 3\nnegation_markers:\n  - jamais\n"
+        )
+        importlib.reload(sentiment)
+        assert sentiment.INTENSITY_WEIGHTS["hyper"] == 3
+        assert "jamais" in sentiment.NEGATION_MARKERS
+    finally:
+        if original is None:
+            cfg_file.unlink()
+        else:
+            cfg_file.write_text(original)
+        importlib.reload(sentiment)
