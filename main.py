@@ -161,7 +161,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 ).fetchdf()
             if df_price.empty:
                 log.info(f"{t}: Keine Preisdaten – Training übersprungen")
-                return t, None, None
+                return t, None, None, None, None, None
 
             df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
             df_sent = sentiment_frames.get(t, pd.DataFrame(columns=["date", "sentiment"])).copy()
@@ -169,18 +169,22 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
 
             df_stock = pd.merge(df_price, df_sent, on="date", how="left")
-            acc, f1 = train_per_stock(df_stock)
+            acc, f1, roc_auc, precision, recall = train_per_stock(df_stock)
             if acc is None:
                 log.info(f"{t}: Zu wenige Daten für Modelltraining")
-            return t, acc, f1
+            return t, acc, f1, roc_auc, precision, recall
         except Exception as e:
             log.warning(f"{t}: Modelltraining fehlgeschlagen: {e}")
-            return t, None, None
+            return t, None, None, None, None, None
 
     with ThreadPoolExecutor() as ex:
-        for t, acc, f1 in ex.map(_train, tickers):
+        for t, acc, f1, roc_auc, precision, recall in ex.map(_train, tickers):
             if acc is not None:
-                log.info(f"{t}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f}")
+                roc_disp = roc_auc if roc_auc is not None else float("nan")
+                log.info(
+                    f"{t}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f} | ROC-AUC {roc_disp:.2f}"
+                    f" | Precision {precision:.2f} | Recall {recall:.2f}"
+                )
 
     # Übersicht & Notify
     try:
