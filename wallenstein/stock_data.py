@@ -440,7 +440,7 @@ def _download_single_safe(
         except HTTPError as e:
             status = e.response.status_code if e.response is not None else None
             if status == 429:
-                log.warning(f"{ticker}: HTTP 429 rate-limited -> skip")
+                log.warning(f"{ticker}: skipped due to rate limiting (HTTP 429)")
                 return _empty()
             last_err = e
             log.debug(f"{ticker}: HTTPError on attempt {attempt+1}: {e}")
@@ -508,12 +508,16 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
     if last_map:
         log.debug("last_map subset: %s", {k: str(last_map.get(k)) for k in tickers})
 
-    session = _make_session()
-
     # letzter (Börsen-)Tag bis heute (werktäglich)
     today = pd.Timestamp.utcnow().normalize()
     last_trading_day = pd.bdate_range(end=today, periods=1)[0].date()
     log.debug("last_trading_day=%s (UTC)", last_trading_day)
+    if today.date() > last_trading_day:
+        con.close()
+        log.info("Keine neuen Kursdaten am Wochenende.")
+        return 0
+
+    session = _make_session()
 
     # Start-Datum je Ticker (None => Voll-Download)
     start_map: dict[str, pd.Timestamp | None] = {}
