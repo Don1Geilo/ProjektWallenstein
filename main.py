@@ -8,13 +8,15 @@ import duckdb
 import pandas as pd
 from dotenv import find_dotenv, load_dotenv
 
-from wallenstein.config import settings
-
 # --- .env laden ---
 env_loaded = load_dotenv(find_dotenv(usecwd=True), override=True)
 if not env_loaded:
     alt_path = Path(__file__).with_name(".env")
     load_dotenv(dotenv_path=alt_path, override=True)
+
+from wallenstein.config import settings, validate_config
+
+validate_config()
 
 # --- Logging ---
 LOG_LEVEL = settings.LOG_LEVEL.upper()
