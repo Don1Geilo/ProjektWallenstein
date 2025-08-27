@@ -23,6 +23,7 @@ def test_company_name_bucketed(monkeypatch):
         {"id": "1", "title": "Nividia launches new GPU", "created_utc": now, "text": ""},
         {"id": "2", "title": "", "created_utc": now, "text": "I ordered something on Amzon"},
         {"id": "3", "title": "", "created_utc": now, "text": "Rheiner secures big contract"},
+        {"id": "4", "title": "", "created_utc": now, "text": "Game stop hype again"},
     ])
 
     def fake_fetch(*args, **kwargs):
@@ -32,13 +33,15 @@ def test_company_name_bucketed(monkeypatch):
     monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df)
     monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
 
-    out = reddit_scraper.update_reddit_data(["NVDA", "AMZN", "RHM"], subreddits=None)
+    out = reddit_scraper.update_reddit_data(["NVDA", "AMZN", "RHM", "GME"], subreddits=None)
     assert len(out["NVDA"]) == 1
     assert len(out["AMZN"]) == 1
     assert len(out["RHM"]) == 1
+    assert len(out["GME"]) == 1
     assert "nividia" in out["NVDA"][0]["text"].lower()
     assert "amzon" in out["AMZN"][0]["text"].lower()
     assert "rheiner" in out["RHM"][0]["text"].lower()
+    assert "game stop" in out["GME"][0]["text"].lower()
 
 
 def test_aliases_loaded_from_file():
