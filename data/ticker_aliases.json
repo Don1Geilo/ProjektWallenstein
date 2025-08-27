@@ -6,5 +6,7 @@
     "GOOG": ["google", "alphabet", "googel", "gogle"],
     "META": ["facebook", "meta", "metta", "facebok"],
     "TSLA": ["tesla", "tesler", "tesal"],
-    "RHM": ["rheinmetall", "rheiner"]
+    "RHM": ["rheinmetall", "rheiner"],
+    "GME": ["gamestop", "game stop", "gme"],
+    "BABA": ["alibaba", "ali baba", "alibba"]
 }

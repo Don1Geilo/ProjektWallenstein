@@ -2,14 +2,22 @@
 
 The keyword map supports both common English and German trading slang
 allowing rudimentary multilingual sentiment detection."""
+
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import re
 from collections.abc import Iterable
 from functools import lru_cache
+from pathlib import Path
+
+try:  # Optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - not critical if missing
+    yaml = None
 
 from wallenstein.config import settings
 
@@ -79,6 +87,12 @@ KEYWORD_SCORES: dict[str, int] = {
     "hoch": 1,
     "lambo": 1,
     "🚀": 1,
+    "green": 1,
+    "grün": 1,
+    "profit": 1,
+    "gewinn": 1,
+    "rally": 1,
+    "boom": 1,
     # negative
     "short": -1,
     "put": -1,
@@ -99,7 +113,63 @@ KEYWORD_SCORES: dict[str, int] = {
     "sink": -1,
     "stupid": -1,
     "schlecht": -1,
+    "red": -1,
+    "rot": -1,
+    "loss": -1,
+    "verlust": -1,
+    "collapse": -1,
+    "baisse": -1,
 }
+
+
+def _load_keywords_from_file(
+    path: str | Path | None = None, keywords: dict[str, int] | None = None
+) -> None:
+    """Merge additional sentiment keywords from a dict or JSON/YAML file."""
+
+    if keywords:
+        for word, score in keywords.items():
+            try:
+                KEYWORD_SCORES[str(word).lower()] = int(score)
+            except Exception:
+                continue
+
+    root = Path(__file__).resolve().parents[1]
+    candidates = (
+        [Path(path)]
+        if path
+        else [
+            root / "data" / "sentiment_keywords.json",
+            root / "data" / "sentiment_keywords.yaml",
+            root / "data" / "sentiment_keywords.yml",
+        ]
+    )
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8") as fh:
+                if candidate.suffix == ".json":
+                    data = json.load(fh)
+                elif candidate.suffix in {".yaml", ".yml"} and yaml:
+                    data = yaml.safe_load(fh)
+                else:
+                    logger.warning("Unsupported sentiment keyword file format: %s", candidate)
+                    data = {}
+
+            for word, score in (data or {}).items():
+                try:
+                    KEYWORD_SCORES[str(word).lower()] = int(score)
+                except Exception:
+                    continue
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Could not load sentiment keywords from %s: %s", candidate, exc)
+        break  # only use first existing file
+
+
+# Load user-provided keywords before expanding intensity/negation variants
+_load_keywords_from_file()
 
 # extend keyword scores with simple intensity phrases and negated forms
 for _word, _score in list(KEYWORD_SCORES.items()):
@@ -158,6 +228,7 @@ class BertSentiment:
             self.model = "oliverguhr/german-sentiment-bert"
         elif backend == "finetuned-finbert":
             from pathlib import Path
+
             self.model = str(
                 Path(__file__).resolve().parent.parent / "models" / "finetuned-finbert"
             )
@@ -169,6 +240,7 @@ class BertSentiment:
     def pipe(self):  # pragma: no cover - heavy model
         if self._pipe is None:
             from transformers import pipeline
+
             self._pipe = pipeline("sentiment-analysis", model=self.model)
         return self._pipe
 
