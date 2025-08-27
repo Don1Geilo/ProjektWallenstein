@@ -1,0 +1,12 @@
+# Optional configuration to customise sentiment markers.
+# Modify or extend the lists below to adapt intensity weights and negation words
+# without changing the code.
+
+intensity_weights:
+  mega: 2
+  super: 2
+  über: 2
+
+negation_markers:
+  - nie
+  - ohne
