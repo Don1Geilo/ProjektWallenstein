@@ -32,6 +32,10 @@ def test_analyze_sentiment_keywords():
     assert analyze_sentiment(text3) > 0
     text4 = "Vielleicht sollten wir verkaufen, es wirkt bärisch"
     assert analyze_sentiment(text4) < 0
+    text5 = "Der Gewinn ist heute grün"
+    assert analyze_sentiment(text5) > 0
+    text6 = "Der Verlust ist rot"
+    assert analyze_sentiment(text6) < 0
 
 
 def test_aggregate_and_recommendation():
@@ -83,4 +87,22 @@ def test_analyze_sentiment_batch_keyword():
     scores = analyze_sentiment_batch(texts)
     assert scores[0] > 0
     assert scores[1] < 0
+
+
+def test_keywords_loaded_from_file():
+    import json, importlib
+
+    kw_file = ROOT / "data" / "sentiment_keywords.json"
+    original = kw_file.read_text() if kw_file.exists() else None
+    try:
+        kw_file.write_text(json.dumps({"superbull": 1, "schrott": -1}))
+        importlib.reload(sentiment)
+        assert sentiment.KEYWORD_SCORES["superbull"] == 1
+        assert sentiment.KEYWORD_SCORES["schrott"] == -1
+    finally:
+        if original is None:
+            kw_file.unlink()
+        else:
+            kw_file.write_text(original)
+        importlib.reload(sentiment)
 
