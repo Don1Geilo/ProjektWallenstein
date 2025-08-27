@@ -440,6 +440,7 @@ def _download_single_safe(
         except HTTPError as e:
             status = e.response.status_code if e.response is not None else None
             if status == 429:
+                log.warning(f"{ticker}: skipped due to rate limiting")
                 return _empty()
             last_err = e
             log.debug(f"{ticker}: HTTPError on attempt {attempt+1}: {e}")
