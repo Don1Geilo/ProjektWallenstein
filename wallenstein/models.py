@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
 log = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def train_per_stock(
         raise ValueError(f"Unknown model_type: {model_type}")
 
     if use_kfold and len(df) >= n_splits:
-        cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+        cv = TimeSeriesSplit(n_splits=n_splits)
         search = GridSearchCV(
             model,
             param_grid,
