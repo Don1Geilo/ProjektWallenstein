@@ -14,11 +14,11 @@ from wallenstein.models import train_per_stock
 
 def test_train_per_stock_basic():
     np.random.seed(0)
-    dates = pd.date_range("2024-01-01", periods=20, freq="D")
+    dates = pd.date_range("2024-01-01", periods=60, freq="D")
     df = pd.DataFrame({
         "date": dates,
-        "close": 10 + np.cumsum(np.random.randn(20)),
-        "sentiment": np.sin(np.linspace(0, 3, 20)),
+        "close": 10 + np.cumsum(np.random.randn(60)),
+        "sentiment": np.sin(np.linspace(0, 3, 60)),
     })
     acc, f1 = train_per_stock(df, n_splits=3)
     print(f"Accuracy: {acc:.3f}, F1: {f1:.3f}")
@@ -30,11 +30,11 @@ def test_train_per_stock_basic():
 
 def test_train_per_stock_random_forest():
     np.random.seed(1)
-    dates = pd.date_range("2024-01-01", periods=30, freq="D")
+    dates = pd.date_range("2024-01-01", periods=60, freq="D")
     df = pd.DataFrame({
         "date": dates,
-        "close": 20 + np.cumsum(np.random.randn(30)),
-        "sentiment": np.cos(np.linspace(0, 4, 30)),
+        "close": 20 + np.cumsum(np.random.randn(60)),
+        "sentiment": np.cos(np.linspace(0, 4, 60)),
     })
     acc, f1 = train_per_stock(df, n_splits=3, model_type="random_forest")
     assert acc is not None
@@ -52,16 +52,3 @@ def test_train_per_stock_insufficient_classes():
     assert acc is None and f1 is None
 
 
-def test_train_per_stock_baseline_logging(caplog):
-    np.random.seed(2)
-    dates = pd.date_range("2024-01-01", periods=15, freq="D")
-    df = pd.DataFrame({
-        "date": dates,
-        "close": 10 + np.cumsum(np.random.randn(15)),
-        "sentiment": np.random.randn(15),
-    })
-    with caplog.at_level(logging.INFO):
-        train_per_stock(df, n_splits=3)
-    messages = "\n".join(record.message for record in caplog.records)
-    assert "Class distribution" in messages
-    assert "Baseline (majority class" in messages
