@@ -440,7 +440,6 @@ def _download_single_safe(
         except HTTPError as e:
             status = e.response.status_code if e.response is not None else None
             if status == 429:
-                log.warning(f"{ticker}: skipped due to rate limiting (HTTP 429)")
                 return _empty()
             last_err = e
             log.debug(f"{ticker}: HTTPError on attempt {attempt+1}: {e}")
@@ -533,7 +532,13 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
 
     for i in range(0, len(tickers), CHUNK_SIZE):
         chunk = tickers[i : i + CHUNK_SIZE]
-        chunk_valid = list(chunk)  # HEUTE nicht überspringen
+        chunk_valid = [
+            t
+            for t in chunk
+            if start_map.get(t) is None or start_map[t].date() <= last_trading_day
+        ]
+        if not chunk_valid:
+            continue
         log.debug("processing chunk=%s", chunk_valid)
 
         # --- Primärquelle ---
