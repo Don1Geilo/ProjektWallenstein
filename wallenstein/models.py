@@ -4,9 +4,9 @@ import pandas as pd
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 from imblearn.under_sampling import RandomUnderSampler
+from scipy.stats import loguniform, randint
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -14,23 +14,21 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-
-from sklearn.metrics import accuracy_score, f1_score
-
-from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
-
-from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.model_selection import (
+    GridSearchCV,
+    KFold,
+    RandomizedSearchCV,
+    StratifiedKFold,
+    TimeSeriesSplit,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-
-
 
 log = logging.getLogger(__name__)
 
 
 def backtest_strategy(df: pd.DataFrame, signals: pd.Series) -> float:
     """Compute average next-day return when signal is 1 (buy)."""
-
     bt = df.copy()
     bt["next_close"] = bt["close"].shift(-1)
     bt["return"] = bt["next_close"] / bt["close"] - 1
@@ -45,16 +43,9 @@ def train_per_stock(
     use_kfold: bool = True,
     n_splits: int = 5,
     model_type: str = "logistic",
-
-) -> tuple[float, float, float | None, float, float] | None:
-
-
     balance_method: str = "class_weight",
-) -> tuple[float, float] | None:
-
     search_method: str = "grid",
-    ) -> tuple[float, float] | None:
-
+) -> tuple[float | None, float | None, float | None, float | None, float | None]:
     """Train a classifier on lagged close and sentiment data.
 
     Parameters
@@ -64,35 +55,39 @@ def train_per_stock(
         The function will sort by date, create lagged features of ``close`` and
         ``sentiment`` and attempt to predict if the next day's close is higher
         than the previous day's.
-
+    use_kfold : bool, default True
+        If ``True`` and there are enough samples, perform ``TimeSeriesSplit``
+        cross-validation on the whole dataset. Otherwise a simple train/test
+        split is used.
+    n_splits : int, default 5
+        Number of folds for cross-validation.
+    model_type : str, default "logistic"
+        Which classifier to train. Supported values are ``"logistic"``,
+        ``"random_forest"`` and ``"gradient_boosting"``.
     balance_method : str, default "class_weight"
-        Strategy for handling class imbalance when ``model_type`` is ``"logistic"``.
-        Use ``"class_weight"`` for ``LogisticRegression(class_weight="balanced")``,
-        ``"smote"`` for SMOTE oversampling or ``"undersample"`` for random
-        undersampling.
+        Strategy for handling class imbalance when ``model_type`` is
+        ``"logistic"``. Use ``"class_weight"`` for
+        ``LogisticRegression(class_weight="balanced")``, ``"smote"`` for SMOTE
+        oversampling or ``"undersample"`` for random undersampling.
+    search_method : str, default "grid"
+        Hyperparameter search strategy: ``"grid"``, ``"random"`` or
+        ``"optuna"``.
 
     Returns
     -------
-codex/calculate-additional-metrics-after-model-training
-    Optional[Tuple[float, float, float | None, float, float]]
-        Tuple of (accuracy, F1-score, ROC-AUC, precision, recall) of the model
-        on the evaluation set. ``None`` is returned for all metrics if there are
+    tuple[float | None, float | None, float | None, float | None, float | None]
+        Tuple of (accuracy, F1-score, ROC-AUC, precision, recall) evaluated on
+        a hold-out set. ``None`` is returned for all metrics if there are
         insufficient samples or only one class in the training data.
-
-    Optional[Tuple[float, float]]
-        Tuple of (accuracy, F1-score) of the model on the evaluation set. ``None``
-        is returned for both metrics if there are insufficient samples or only
-        one class in the training data.
-"""
-    
-
-
-
+    """
     if df_stock.empty:
         return None, None, None, None, None
 
+    required_cols = {"date", "close", "sentiment"}
+    if not required_cols.issubset(df_stock.columns):
+        return None, None, None, None, None
+
     df = df_stock.sort_values("date").copy()
-    # Convert sentiment to numeric and replace invalid entries with 0
     df["sentiment"] = pd.to_numeric(df["sentiment"], errors="coerce").fillna(0)
 
     # Lagged and rolling features for mandatory columns
@@ -113,14 +108,6 @@ codex/calculate-additional-metrics-after-model-training
     df["Sentiment_MA7"] = df["sentiment"].rolling(window=7).mean().shift(1)
     df["Sentiment_STD7"] = df["sentiment"].rolling(window=7).std().shift(1)
 
-
-    df["y"] = (df["close"] > df["Close_lag1"]).astype(int)
-    df.dropna(inplace=True)
-
-    if len(df) < 2:
-        return None, None, None, None, None
-
- main
     features = [
         "Close_lag1",
         "Close_lag2",
@@ -138,7 +125,6 @@ codex/calculate-additional-metrics-after-model-training
         "Sentiment_STD7",
     ]
 
-    # Optional price-related columns
     extra_cols = {
         "open": "Open",
         "high": "High",
@@ -166,7 +152,7 @@ codex/calculate-additional-metrics-after-model-training
                 ]
             )
 
-    # Technical indicators based on close price
+    # Technical indicators
     delta = df["close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -185,27 +171,26 @@ codex/calculate-additional-metrics-after-model-training
     df["MACD_Hist"] = (macd - signal).shift(1)
     features.extend(["MACD", "MACD_Signal", "MACD_Hist"])
 
-    bb_ma = df["close"].rolling(window=20).mean()
-    bb_std = df["close"].rolling(window=20).std()
-    df["BB_Middle"] = bb_ma.shift(1)
-    df["BB_Upper"] = (bb_ma + 2 * bb_std).shift(1)
-    df["BB_Lower"] = (bb_ma - 2 * bb_std).shift(1)
-    features.extend(["BB_Upper", "BB_Lower", "BB_Middle"])
+    if len(df) >= 21:
+        bb_ma = df["close"].rolling(window=20).mean()
+        bb_std = df["close"].rolling(window=20).std()
+        df["BB_Middle"] = bb_ma.shift(1)
+        df["BB_Upper"] = (bb_ma + 2 * bb_std).shift(1)
+        df["BB_Lower"] = (bb_ma - 2 * bb_std).shift(1)
+        features.extend(["BB_Upper", "BB_Lower", "BB_Middle"])
 
     df["y"] = (df["close"] > df["Close_lag1"]).astype(int)
     df.dropna(inplace=True)
 
     if len(df) < 2:
-        return None, None
+        return None, None, None, None, None
 
     X = df[features]
     y = df["y"]
 
-    # Log class distribution
     class_distribution = y.value_counts().sort_index().to_dict()
     log.info(f"Class distribution: {class_distribution}")
 
-    # Baseline predictions
     majority_class = y.mode()[0]
     majority_pred = pd.Series(majority_class, index=y.index)
     majority_acc = accuracy_score(y, majority_pred)
@@ -229,6 +214,13 @@ codex/calculate-additional-metrics-after-model-training
     if y.nunique() < 2:
         return None, None, None, None, None
 
+    if search_method == "optuna":
+        import optuna  # type: ignore
+        from optuna.integration import OptunaSearchCV  # type: ignore
+
+    param_distributions = None
+    optuna_distributions = None
+
     if model_type == "logistic":
         if balance_method == "smote":
             steps = [
@@ -237,6 +229,7 @@ codex/calculate-additional-metrics-after-model-training
                 ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
             ]
             model = ImbPipeline(steps)
+            param_name = "clf__C"
         elif balance_method == "undersample":
             steps = [
                 ("sampler", RandomUnderSampler(random_state=42)),
@@ -244,6 +237,7 @@ codex/calculate-additional-metrics-after-model-training
                 ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
             ]
             model = ImbPipeline(steps)
+            param_name = "clf__C"
         else:
             model = Pipeline(
                 [
@@ -251,31 +245,32 @@ codex/calculate-additional-metrics-after-model-training
                     ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
             )
-        param_grid = {"clf__C": [0.01, 0.1, 1.0, 10.0]}
-
-        model = LogisticRegression(max_iter=1000)
-        param_grid = {"C": [0.01, 0.1, 1.0, 10.0]}
-        param_distributions = {"C": loguniform(1e-4, 1e2)}
-        optuna_distributions = {
-            "C": optuna.distributions.FloatDistribution(1e-4, 1e2, log=True)
-        }
-
+            param_name = "clf__C"
+        param_grid = {param_name: [0.01, 0.1, 1.0, 10.0]}
+        if search_method == "random":
+            param_distributions = {param_name: loguniform(1e-4, 1e2)}
+        elif search_method == "optuna":
+            optuna_distributions = {
+                param_name: optuna.distributions.FloatDistribution(1e-4, 1e2, log=True)
+            }
     elif model_type == "random_forest":
         model = RandomForestClassifier(random_state=42)
         param_grid = {
             "n_estimators": [50, 100, 200],
             "max_depth": [3, 5, None],
         }
-        param_distributions = {
-            "n_estimators": randint(50, 401),
-            "max_depth": [3, 5, 7, None],
-            "min_samples_split": randint(2, 11),
-        }
-        optuna_distributions = {
-            "n_estimators": optuna.distributions.IntDistribution(50, 400),
-            "max_depth": optuna.distributions.CategoricalDistribution([3, 5, 7, None]),
-            "min_samples_split": optuna.distributions.IntDistribution(2, 10),
-        }
+        if search_method == "random":
+            param_distributions = {
+                "n_estimators": randint(50, 401),
+                "max_depth": [3, 5, 7, None],
+                "min_samples_split": randint(2, 11),
+            }
+        elif search_method == "optuna":
+            optuna_distributions = {
+                "n_estimators": optuna.distributions.IntDistribution(50, 400),
+                "max_depth": optuna.distributions.CategoricalDistribution([3, 5, 7, None]),
+                "min_samples_split": optuna.distributions.IntDistribution(2, 10),
+            }
     elif model_type == "gradient_boosting":
         model = GradientBoostingClassifier(random_state=42)
         param_grid = {
@@ -283,13 +278,42 @@ codex/calculate-additional-metrics-after-model-training
             "learning_rate": [0.01, 0.1, 0.2],
             "max_depth": [3, 5],
         }
-
+        if search_method == "random":
+            param_distributions = {
+                "n_estimators": randint(50, 201),
+                "learning_rate": loguniform(1e-3, 1e-1),
+                "max_depth": randint(3, 6),
+            }
+        elif search_method == "optuna":
+            optuna_distributions = {
+                "n_estimators": optuna.distributions.IntDistribution(50, 200),
+                "learning_rate": optuna.distributions.FloatDistribution(0.01, 0.2, log=True),
+                "max_depth": optuna.distributions.IntDistribution(3, 5),
+            }
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
 
     if search_method not in {"grid", "random", "optuna"}:
         raise ValueError(f"Unknown search_method: {search_method}")
 
     if use_kfold and len(df) >= n_splits:
-        cv = TimeSeriesSplit(n_splits=n_splits)
+        if balance_method in {"smote", "undersample"}:
+            cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        else:
+            cv = TimeSeriesSplit(n_splits=n_splits)
+        X_train, y_train = X, y
+        df_train, df_test = df, pd.DataFrame()
+    else:
+        train_size = max(int(len(df) * 0.8), 1)
+        df_train = df.iloc[:train_size]
+        df_test = df.iloc[train_size:]
+        X_train = df_train[features]
+        y_train = df_train["y"]
+        if y_train.nunique() < 2:
+            return None, None, None, None, None
+        cv = KFold(n_splits=min(3, len(y_train)), shuffle=True, random_state=42)
+
+    if search_method == "grid":
         search = GridSearchCV(
             model,
             param_grid,
@@ -297,102 +321,34 @@ codex/calculate-additional-metrics-after-model-training
             scoring={"accuracy": "accuracy", "f1": "f1"},
             refit="accuracy",
         )
+    elif search_method == "random":
+        search = RandomizedSearchCV(
+            model,
+            param_distributions,
+            n_iter=20,
+            cv=cv,
+            scoring={"accuracy": "accuracy", "f1": "f1"},
+            refit="accuracy",
+            random_state=42,
+        )
+    else:  # optuna
+        search = OptunaSearchCV(
+            model,
+            optuna_distributions,
+            cv=cv,
+            n_trials=20,
+            scoring="accuracy",
+            random_state=42,
+        )
 
-        cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-        if search_method == "grid":
-            search = GridSearchCV(
-                model,
-                param_grid,
-                cv=cv,
-                scoring={"accuracy": "accuracy", "f1": "f1"},
-                refit="accuracy",
-            )
-        elif search_method == "random":
-            search = RandomizedSearchCV(
-                model,
-                param_distributions,
-                n_iter=20,
-                cv=cv,
-                scoring={"accuracy": "accuracy", "f1": "f1"},
-                refit="accuracy",
-                random_state=42,
-            )
-        else:
-            search = OptunaSearchCV(
-                model,
-                optuna_distributions,
-                cv=cv,
-                n_trials=20,
-                scoring="accuracy",
-                random_state=42,
-            )
+    search.fit(X_train, y_train)
+    best_model = search.best_estimator_
+    log.info(f"{model_type} best params: {search.best_params_}")
 
-        search.fit(X, y)
-
-        best_model = search.best_estimator_
-
-        if search_method == "optuna":
-            best_model = search.best_estimator_
-            scores = cross_validate(
-                best_model, X, y, cv=cv, scoring={"accuracy": "accuracy", "f1": "f1"}
-            )
-            accuracy = float(scores["test_accuracy"].mean())
-            f1 = float(scores["test_f1"].mean())
-        else:
-            accuracy = float(
-                search.cv_results_["mean_test_accuracy"][search.best_index_]
-            )
-            f1 = float(search.cv_results_["mean_test_f1"][search.best_index_])
-
-        log.info(f"{model_type} best params: {search.best_params_}")
-        X_eval, y_eval, df_eval = X, y, df
+    if df_test.empty:
+        X_eval, y_eval, df_eval = X_train, y_train, df_train
     else:
-        train_size = max(int(len(df) * 0.8), 1)
-        df_train = df.iloc[:train_size]
-        df_test = df.iloc[train_size:]
-
-        X_train = df_train[features]
-        y_train = df_train["y"]
-
-        if y_train.nunique() < 2:
-            return None, None, None, None, None
-
-        cv = min(3, len(y_train))
-        if search_method == "grid":
-            search = GridSearchCV(
-                model,
-                param_grid,
-                cv=cv,
-                scoring={"accuracy": "accuracy", "f1": "f1"},
-                refit="accuracy",
-            )
-        elif search_method == "random":
-            search = RandomizedSearchCV(
-                model,
-                param_distributions,
-                n_iter=20,
-                cv=cv,
-                scoring={"accuracy": "accuracy", "f1": "f1"},
-                refit="accuracy",
-                random_state=42,
-            )
-        else:
-            search = OptunaSearchCV(
-                model,
-                optuna_distributions,
-                cv=cv,
-                n_trials=20,
-                scoring="accuracy",
-                random_state=42,
-            )
-        search.fit(X_train, y_train)
-        best_model = search.best_estimator_
-        log.info(f"{model_type} best params: {search.best_params_}")
-
-        if df_test.empty:
-            X_eval, y_eval, df_eval = X_train, y_train, df_train
-        else:
-            X_eval, y_eval, df_eval = df_test[features], df_test["y"], df_test
+        X_eval, y_eval, df_eval = df_test[features], df_test["y"], df_test
 
     y_pred = best_model.predict(X_eval)
     y_proba = (

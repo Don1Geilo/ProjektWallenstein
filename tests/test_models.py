@@ -4,17 +4,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
-from wallenstein.models import train_per_stock
 import wallenstein.models as models
-
 from wallenstein.models import backtest_strategy, train_per_stock
-
 
 
 def test_train_per_stock_basic():
@@ -50,7 +45,7 @@ def test_train_per_stock_smote():
         "close": close,
         "sentiment": np.random.randn(n),
     })
-    acc, f1 = train_per_stock(df, n_splits=3, balance_method="smote")
+    acc, f1, *_ = train_per_stock(df, n_splits=3, balance_method="smote")
     assert acc is not None
     assert f1 is not None
 
@@ -67,7 +62,7 @@ def test_train_per_stock_undersample():
         "close": close,
         "sentiment": np.random.randn(n),
     })
-    acc, f1 = train_per_stock(df, n_splits=3, balance_method="undersample")
+    acc, f1, *_ = train_per_stock(df, n_splits=3, balance_method="undersample")
     assert acc is not None
     assert f1 is not None
 
@@ -113,7 +108,7 @@ def test_backtest_strategy():
     expected = (1 / 10 - 1 / 12) / 2
     assert abs(avg - expected) < 1e-6
 
-    acc, f1 = train_per_stock(df)
+    acc, f1, *_ = train_per_stock(df)
     assert acc is None and f1 is None
 
 
