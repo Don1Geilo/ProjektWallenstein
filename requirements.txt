@@ -6,3 +6,5 @@ python-dotenv
 praw
 scikit-learn
 pyyaml
+optuna
+optuna-integration[sklearn]
