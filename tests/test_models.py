@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
-import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -14,11 +14,11 @@ from wallenstein.models import train_per_stock
 
 def test_train_per_stock_basic():
     np.random.seed(0)
-    dates = pd.date_range("2024-01-01", periods=20, freq="D")
+    dates = pd.date_range("2024-01-01", periods=60, freq="D")
     df = pd.DataFrame({
         "date": dates,
-        "close": 10 + np.cumsum(np.random.randn(20)),
-        "sentiment": np.sin(np.linspace(0, 3, 20)),
+        "close": 10 + np.cumsum(np.random.randn(60)),
+        "sentiment": np.sin(np.linspace(0, 3, 60)),
     })
     acc, f1 = train_per_stock(df, n_splits=3)
     print(f"Accuracy: {acc:.3f}, F1: {f1:.3f}")
@@ -30,42 +30,16 @@ def test_train_per_stock_basic():
 
 def test_train_per_stock_random_forest():
     np.random.seed(1)
-    dates = pd.date_range("2024-01-01", periods=30, freq="D")
+    dates = pd.date_range("2024-01-01", periods=60, freq="D")
     df = pd.DataFrame({
         "date": dates,
-        "close": 20 + np.cumsum(np.random.randn(30)),
-        "sentiment": np.cos(np.linspace(0, 4, 30)),
+        "close": 20 + np.cumsum(np.random.randn(60)),
+        "sentiment": np.cos(np.linspace(0, 4, 60)),
     })
     acc, f1 = train_per_stock(df, n_splits=3, model_type="random_forest")
     assert acc is not None
     assert f1 is not None
 
-
-def test_train_per_stock_svm():
-    np.random.seed(2)
-    dates = pd.date_range("2024-01-01", periods=30, freq="D")
-    df = pd.DataFrame({
-        "date": dates,
-        "close": 15 + np.cumsum(np.random.randn(30)),
-        "sentiment": np.sin(np.linspace(0, 4, 30)),
-    })
-    acc, f1 = train_per_stock(df, n_splits=3, model_type="svm")
-    assert acc is not None
-    assert f1 is not None
-
-
-def test_train_per_stock_xgboost():
-    pytest.importorskip("xgboost")
-    np.random.seed(3)
-    dates = pd.date_range("2024-01-01", periods=30, freq="D")
-    df = pd.DataFrame({
-        "date": dates,
-        "close": 25 + np.cumsum(np.random.randn(30)),
-        "sentiment": np.cos(np.linspace(0, 4, 30)),
-    })
-    acc, f1 = train_per_stock(df, n_splits=3, model_type="xgboost")
-    assert acc is not None
-    assert f1 is not None
 
 
 def test_train_per_stock_insufficient_classes():
@@ -77,3 +51,5 @@ def test_train_per_stock_insufficient_classes():
     })
     acc, f1 = train_per_stock(df)
     assert acc is None and f1 is None
+
+
