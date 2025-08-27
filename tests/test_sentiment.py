@@ -36,6 +36,8 @@ def test_analyze_sentiment_keywords():
     assert analyze_sentiment(text5) > 0
     text6 = "Der Verlust ist rot"
     assert analyze_sentiment(text6) < 0
+    text7 = "Er hat die Aktien verkauft"
+    assert analyze_sentiment(text7) < 0
 
 
 def test_aggregate_and_recommendation():
