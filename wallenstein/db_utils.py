@@ -101,53 +101,6 @@ def ensure_prices_view(db_path: str, view_name: str = "stocks", table_name: str 
 
 
 # ---------- Latest prices (USD/EUR) ----------
-def _select_latest_prices(
-    con: duckdb.DuckDBPyConnection, from_relation: str, tickers: list[str], use_eur: bool
-) -> dict[str, float | None]:
-    """
-    Liest je Ticker den jüngsten Schlusskurs (USD oder EUR) aus from_relation.
-    Nutzt VALUES-Join (robust gegen Quoting).
-    """
-    if not tickers:
-        return {}
-
-    col = "close_eur" if use_eur else "close"
-    values_sql = ", ".join(["(?)"] * len(tickers))
-    q = f"""
-        WITH ticker_list(ticker) AS (VALUES {values_sql}),
-        ranked AS (
-            SELECT s.ticker, s.{col} AS px, s.date,
-                   ROW_NUMBER() OVER (PARTITION BY s.ticker ORDER BY s.date DESC) AS rn
-            FROM {from_relation} s
-            JOIN ticker_list t ON s.ticker = t.ticker
-        )
-        SELECT ticker, px
-        FROM ranked
-        WHERE rn = 1
-        ORDER BY ticker
-    """
-    try:
-        df = con.execute(q, tickers).fetchdf()
-        return {
-            row["ticker"]: (float(row["px"]) if pd.notna(row["px"]) else None)
-            for _, row in df.iterrows()
-        }
-    except Exception:
-        return {}
-
-
-def get_latest_prices_auto(db_path: str, tickers: list[str]) -> dict[str, float | None]:
-    """
-    Historische Funktion: liefert USD-Schlusskurse.
-    Nimmt 'stocks' (falls View existiert), sonst 'prices'.
-    """
-    con = duckdb.connect(db_path)
-    prefer = "stocks" if _view_exists(con, "stocks") else "prices"
-    out = _select_latest_prices(con, prefer, tickers, use_eur=False)
-    con.close()
-    return out
-
-
 def get_latest_prices(
     db_path: str, tickers: list[str], use_eur: bool = False
 ) -> dict[str, float | None]:
