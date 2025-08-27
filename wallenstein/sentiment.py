@@ -130,7 +130,7 @@ def _load_keywords_from_file(
     if keywords:
         for word, score in keywords.items():
             try:
-                KEYWORD_SCORES[str(word).lower()] = int(score)
+                KEYWORD_SCORES.setdefault(str(word).lower(), int(score))
             except Exception:
                 continue
 
@@ -160,7 +160,7 @@ def _load_keywords_from_file(
 
             for word, score in (data or {}).items():
                 try:
-                    KEYWORD_SCORES[str(word).lower()] = int(score)
+                    KEYWORD_SCORES.setdefault(str(word).lower(), int(score))
                 except Exception:
                     continue
         except Exception as exc:  # pragma: no cover - defensive
