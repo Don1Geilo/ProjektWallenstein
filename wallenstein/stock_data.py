@@ -21,11 +21,13 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
+from typing import Dict, List, Optional
 
 import duckdb
 import pandas as pd
 import requests
 import yfinance as yf
+from pandas.tseries.offsets import BDay
 from requests.adapters import HTTPAdapter
 from requests.exceptions import HTTPError
 from urllib3.util.retry import Retry
@@ -44,7 +46,6 @@ from wallenstein.db_schema import ensure_tables, validate_df
 from wallenstein.db_utils import _ensure_fx_table
 
 # ------------------------------------------------------------------------------
-# Konfiguration
 # ------------------------------------------------------------------------------
 
 MAX_RETRIES = 6
@@ -59,8 +60,7 @@ DATA_SOURCE = (settings.WALLENSTEIN_DATA_SOURCE or "yahoo").strip().lower()
 log = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------------------
-# DuckDB Helpers
-# ------------------------------------------------------------------------------
+
 
 
 def _connect(db_path: str) -> duckdb.DuckDBPyConnection:
@@ -104,22 +104,20 @@ def _ensure_prices_table(con: duckdb.DuckDBPyConnection):
 
 
 def _latest_dates_per_ticker(
-    con: duckdb.DuckDBPyConnection, tickers: list[str]
-) -> dict[str, date | None]:
+    con: duckdb.DuckDBPyConnection, tickers: List[str]
+) -> Dict[str, Optional[date]]:
     if not tickers:
         return {}
-    q = """
+    placeholders = ", ".join(["?"] * len(tickers))
+    q = f"""
         SELECT ticker, max(date) AS last_date
         FROM prices
-        WHERE ticker IN ({})
+        WHERE ticker IN ({placeholders})
         GROUP BY ticker
-    """.format(
-        ", ".join("'" + t + "'" for t in tickers)
-    )
+    """
     try:
-        df = con.execute(q).fetchdf()
-        m = {row["ticker"]: row["last_date"] for _, row in df.iterrows()}
-        return m
+        df = con.execute(q, tickers).fetchdf()
+        return {row["ticker"]: row["last_date"] for _, row in df.iterrows()}
     except Exception as e:
         log.debug(f"_latest_dates_per_ticker: query failed: {e}")
         return {}
@@ -130,18 +128,17 @@ def _retry_sleep(attempt: int):
     time.sleep((2**attempt) + random.random())
 
 
-# ------------------------------------------------------------------------------
-# Stooq (CSV)
-# ------------------------------------------------------------------------------
-
 
 def _stooq_symbol(t: str) -> str:
-    # Stooq erwartet z.B. nvda.us, amzn.us
+    """
+    Stooq-Symbolableitung.
+    Aktuell US-Only (nvda.us). Für DE etc. Mapping ergänzen (e.g. 'RHM.DE' -> 'rhm.de').
+    """
     return f"{t.lower()}.us"
 
 
 def _stooq_fetch_one(
-    ticker: str, start: pd.Timestamp | None = None, session: requests.Session | None = None
+    ticker: str, start: Optional[pd.Timestamp] = None, session: Optional[requests.Session] = None
 ) -> pd.DataFrame:
     sym = _stooq_symbol(ticker)
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
@@ -180,13 +177,13 @@ def _stooq_fetch_one(
 
 
 def _stooq_fetch_many(
-    tickers: list[str], start_map: dict[str, pd.Timestamp] | None = None
+    tickers: List[str], start_map: Optional[Dict[str, Optional[pd.Timestamp]]] = None
 ) -> pd.DataFrame:
     if not tickers:
         return pd.DataFrame(
             columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
         )
-    results: list[pd.DataFrame] = []
+    results: List[pd.DataFrame] = []
 
     def _fetch(t: str) -> pd.DataFrame:
         s = start_map.get(t) if start_map else None
@@ -206,11 +203,9 @@ def _stooq_fetch_many(
 
 
 # ------------------------------------------------------------------------------
-# HTTP Sessions
-# ------------------------------------------------------------------------------
 
 
-def _make_session(user_agent: str | None = None):
+def _make_session(user_agent: Optional[str] = None):
     """
     Erst curl_cffi-Session (impersonate=chrome), sonst std-requests mit Retry.
     """
@@ -250,11 +245,10 @@ def _make_session(user_agent: str | None = None):
 
 
 # ------------------------------------------------------------------------------
-# Yahoo Chart API (JSON)
-# ------------------------------------------------------------------------------
 
 
-def _chart_api_get_raw(ticker: str, params: dict, session) -> dict | None:
+
+def _chart_api_get_raw(ticker: str, params: dict, session) -> Optional[dict]:
     """Fragt query2/query1 chart v8 ab und liefert einen einzelnen 'result'-Eintrag."""
     for host in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
         url = f"https://{host}/v8/finance/chart/{ticker}"
@@ -350,8 +344,8 @@ def _chart_result_to_intraday_df(ticker: str, out: dict) -> pd.DataFrame:
 def _yahoo_chart_api_intraday_to_daily(
     ticker: str,
     session,
-    intervals: list[str] | None = None,
-    ranges: list[str] | None = None,
+    intervals: Optional[List[str]] = None,
+    ranges: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
     Aggregiert HEUTE aus Intraday-Daten:
@@ -412,14 +406,14 @@ def _yahoo_chart_api_intraday_to_daily(
 
 
 # ------------------------------------------------------------------------------
-# Yahoo Download (safe, mehrstufig)
+#Yahoo Download (safe, mehrstufig)
 # ------------------------------------------------------------------------------
 
 
 def _download_single_safe(
     ticker: str,
     session,
-    start: pd.Timestamp | None = None,
+    start: Optional[pd.Timestamp] = None,
     period: str = "1mo",
 ) -> pd.DataFrame:
     """
@@ -544,23 +538,32 @@ def _download_single_safe(
 
 
 def _yahoo_fetch_many(
-    tickers: list[str],
-    start_map: dict[str, pd.Timestamp] | None = None,
+    tickers: List[str],
+    start_map: Optional[Dict[str, Optional[pd.Timestamp]]] = None,
     session=None,
 ) -> pd.DataFrame:
-    sess = session or _make_session()
-    results: list[pd.DataFrame] = []
-    with ThreadPoolExecutor(max_workers=min(YAHOO_MAX_WORKERS, len(tickers))) as ex:
-        futures = {
-            ex.submit(
-                _download_single_safe,
+    """
+    Thread-sicher: pro-Task eigene Session verwenden, falls keine globale übergeben wurde.
+    """
+    def _fetch(t: str) -> pd.DataFrame:
+        local_sess = session or _make_session()
+        try:
+            return _download_single_safe(
                 t,
-                sess,
+                local_sess,
                 start=start_map.get(t) if start_map else None,
                 period="1mo",
-            ): t
-            for t in tickers
-        }
+            )
+        finally:
+            if session is None:
+                try:
+                    local_sess.close()
+                except Exception:
+                    pass
+
+    results: List[pd.DataFrame] = []
+    with ThreadPoolExecutor(max_workers=min(YAHOO_MAX_WORKERS, len(tickers))) as ex:
+        futures = {ex.submit(_fetch, t): t for t in tickers}
         for fut in as_completed(futures):
             df = fut.result()
             if df is not None and not df.empty:
@@ -572,12 +575,12 @@ def _yahoo_fetch_many(
     return pd.concat(results, ignore_index=True)
 
 
-# ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------#
 # Public API
 # ------------------------------------------------------------------------------
 
 
-def update_prices(db_path: str, tickers: list[str]) -> int:
+def update_prices(db_path: str, tickers: List[str]) -> int:
     """
     Schreibt Daily-Kurse ins DuckDB-Schema 'prices'.
     Quelle per ENV (WALLENSTEIN_DATA_SOURCE):
@@ -588,212 +591,218 @@ def update_prices(db_path: str, tickers: list[str]) -> int:
         raise ValueError("Keine Ticker übergeben.")
 
     con = _connect(db_path)
-    ensure_tables(con)
-    _ensure_prices_table(con)
+    try:
+        ensure_tables(con)
+        _ensure_prices_table(con)
 
-    log.info("DATA_SOURCE=%s | tickers=%s", DATA_SOURCE, tickers)
+        log.info("DATA_SOURCE=%s | tickers=%s", DATA_SOURCE, tickers)
 
-    last_map = _latest_dates_per_ticker(con, tickers)
-    if last_map:
-        log.debug("last_map subset: %s", {k: str(last_map.get(k)) for k in tickers})
+        last_map = _latest_dates_per_ticker(con, tickers)
+        if last_map:
+            log.debug("last_map subset: %s", {k: str(last_map.get(k)) for k in tickers})
 
-    # letzter (Börsen-)Tag bis heute (werktäglich)
-    today = pd.Timestamp.utcnow().normalize()
-    last_trading_day = pd.bdate_range(end=today, periods=1)[0].date()
-    log.debug("last_trading_day=%s (UTC)", last_trading_day)
-    if today.date() > last_trading_day:
-        con.close()
-        log.info("Keine neuen Kursdaten am Wochenende.")
-        return 0
+        # Bestimme letzten Handelstag (UTC)
+        today_utc = pd.Timestamp.utcnow().normalize()
+        is_busday = bool(pd.bdate_range(today_utc, today_utc).size)
+        last_trading_day = (today_utc if is_busday else (today_utc - BDay(1))).date()
+        log.debug("last_trading_day=%s (UTC)", last_trading_day)
 
-    session = _make_session()
+        if not is_busday and not REFRESH_SAME_DAY:
+            log.info("Keine neuen Kursdaten (Wochenende/Feiertag).")
+            return 0
 
-    # Start-Datum je Ticker (None => Voll-Download)
-    start_map: dict[str, pd.Timestamp | None] = {}
-    for t in tickers:
-        ld = last_map.get(t)
-        if pd.notna(ld):
-            start_map[t] = pd.Timestamp(ld) + pd.Timedelta(days=1)
-        else:
-            start_map[t] = None
-    log.debug(
-        "start_map: %s",
-        {k: (str(v.date()) if v is not None else None) for k, v in start_map.items()},
-    )
-
-    all_rows: list[pd.DataFrame] = []
-
-    for i in range(0, len(tickers), CHUNK_SIZE):
-        chunk = tickers[i : i + CHUNK_SIZE]
-        chunk_valid = [
-            t for t in chunk if start_map.get(t) is None or start_map[t].date() <= last_trading_day
-        ]
-        if not chunk_valid:
-            continue
-        log.debug("processing chunk=%s", chunk_valid)
-
-        # --- Primärquelle ---
-        if DATA_SOURCE == "yahoo":
-            df_chunk = _yahoo_fetch_many(chunk_valid, start_map=start_map, session=session)
-            log.debug(
-                "primary=yahoo rows=%s tickers=%s",
-                0 if df_chunk is None or df_chunk.empty else len(df_chunk),
-                [] if df_chunk is None or df_chunk.empty else sorted(df_chunk["ticker"].unique()),
-            )
-            # Fallback Stooq für Ticker ohne Zeilen
-            missing = (
-                chunk_valid
-                if df_chunk is None or df_chunk.empty
-                else [t for t in chunk_valid if df_chunk[df_chunk["ticker"].eq(t)].empty]
-            )
-            if missing:
-                log.debug("fallback stooq for: %s", missing)
-                df_fb = _stooq_fetch_many(missing, start_map=start_map)
-                if df_chunk is None or df_chunk.empty:
-                    df_chunk = df_fb
-                elif df_fb is not None and not df_fb.empty:
-                    df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
-                log.debug(
-                    "after fallback rows=%s tickers=%s",
-                    0 if df_chunk is None or df_chunk.empty else len(df_chunk),
-                    (
-                        []
-                        if df_chunk is None or df_chunk.empty
-                        else sorted(df_chunk["ticker"].unique())
-                    ),
-                )
-        else:
-            df_chunk = _stooq_fetch_many(chunk_valid, start_map=start_map)
-            log.debug(
-                "primary=stooq rows=%s tickers=%s",
-                0 if df_chunk is None or df_chunk.empty else len(df_chunk),
-                [] if df_chunk is None or df_chunk.empty else sorted(df_chunk["ticker"].unique()),
-            )
-            missing = (
-                chunk_valid
-                if df_chunk is None or df_chunk.empty
-                else [t for t in chunk_valid if df_chunk[df_chunk["ticker"].eq(t)].empty]
-            )
-            if missing:
-                log.debug("fallback yahoo for: %s", missing)
-                df_fb = _yahoo_fetch_many(missing, start_map=start_map, session=session)
-                if df_chunk is None or df_chunk.empty:
-                    df_chunk = df_fb
-                elif df_fb is not None and not df_fb.empty:
-                    df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
-                log.debug(
-                    "after fallback rows=%s tickers=%s",
-                    0 if df_chunk is None or df_chunk.empty else len(df_chunk),
-                    (
-                        []
-                        if df_chunk is None or df_chunk.empty
-                        else sorted(df_chunk["ticker"].unique())
-                    ),
-                )
-
-        # Wenn immer noch nichts da: Intraday->Daily für den ganzen Chunk
-        if df_chunk is None or df_chunk.empty:
-            log.debug("primary+fallback empty -> intraday aggregation for all in chunk")
-            intraday_rows = [
-                _yahoo_chart_api_intraday_to_daily(t, session=session) for t in chunk_valid
-            ]
-            intraday_rows = [d for d in intraday_rows if d is not None and not d.empty]
-            if intraday_rows:
-                df_chunk = pd.concat(intraday_rows, ignore_index=True)
-            else:
-                log.debug("intraday aggregation empty for chunk=%s", chunk_valid)
-                continue
-
-        # Nur neue Zeilen (bzw. Same-Day Refresh) je Ticker
-        updated_tickers = []
-        for t in chunk_valid:
-            df_t = df_chunk[df_chunk["ticker"].eq(t)]
-            if df_t.empty:
-                # ultima ratio: pro Ticker Intraday
-                df_t = _yahoo_chart_api_intraday_to_daily(t, session=session)
-                if df_t is None or df_t.empty:
-                    continue
-            ld = last_map.get(t)
-            if pd.notna(ld):
-                ld_d = pd.to_datetime(ld).date()
-                mask_new = pd.to_datetime(df_t["date"]).dt.date > ld_d
-                if REFRESH_SAME_DAY and ld_d == last_trading_day:
-                    mask_new = mask_new | (pd.to_datetime(df_t["date"]).dt.date == last_trading_day)
-                df_t = df_t[mask_new]
-            if not df_t.empty:
-                all_rows.append(
-                    df_t[["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]]
-                )
-                updated_tickers.append(t)
-
-        log.debug("tickers with new/refresh rows in chunk: %s", updated_tickers)
-
-    if not all_rows:
+        session = _make_session()
         try:
-            session.close()
+            # Start-Datum je Ticker (None => Voll-Download)
+            start_map: Dict[str, Optional[pd.Timestamp]] = {}
+            for t in tickers:
+                ld = last_map.get(t)
+                if pd.notna(ld):
+                    start_map[t] = pd.Timestamp(ld) + pd.Timedelta(days=1)
+                else:
+                    start_map[t] = None
+            log.debug(
+                "start_map: %s",
+                {k: (str(v.date()) if v is not None else None) for k, v in start_map.items()},
+            )
+
+            all_rows: List[pd.DataFrame] = []
+
+            for i in range(0, len(tickers), CHUNK_SIZE):
+                chunk = tickers[i : i + CHUNK_SIZE]
+                chunk_valid = [
+                    t
+                    for t in chunk
+                    if start_map.get(t) is None or start_map[t].date() <= last_trading_day
+                ]
+                if not chunk_valid:
+                    continue
+                log.debug("processing chunk=%s", chunk_valid)
+
+                # --- Primärquelle ---
+                if DATA_SOURCE == "yahoo":
+                    df_chunk = _yahoo_fetch_many(chunk_valid, start_map=start_map, session=session)
+                    log.debug(
+                        "primary=yahoo rows=%s tickers=%s",
+                        0 if df_chunk is None or df_chunk.empty else len(df_chunk),
+                        [] if df_chunk is None or df_chunk.empty else sorted(df_chunk["ticker"].unique()),
+                    )
+                    # Fallback Stooq für Ticker ohne Zeilen
+                    missing = (
+                        chunk_valid
+                        if df_chunk is None or df_chunk.empty
+                        else [t for t in chunk_valid if df_chunk[df_chunk["ticker"].eq(t)].empty]
+                    )
+                    if missing:
+                        log.debug("fallback stooq for: %s", missing)
+                        df_fb = _stooq_fetch_many(missing, start_map=start_map)
+                        if df_chunk is None or df_chunk.empty:
+                            df_chunk = df_fb
+                        elif df_fb is not None and not df_fb.empty:
+                            df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
+                        log.debug(
+                            "after fallback rows=%s tickers=%s",
+                            0 if df_chunk is None or df_chunk.empty else len(df_chunk),
+                            (
+                                []
+                                if df_chunk is None or df_chunk.empty
+                                else sorted(df_chunk["ticker"].unique())
+                            ),
+                        )
+                else:
+                    df_chunk = _stooq_fetch_many(chunk_valid, start_map=start_map)
+                    log.debug(
+                        "primary=stooq rows=%s tickers=%s",
+                        0 if df_chunk is None or df_chunk.empty else len(df_chunk),
+                        [] if df_chunk is None or df_chunk.empty else sorted(df_chunk["ticker"].unique()),
+                    )
+                    missing = (
+                        chunk_valid
+                        if df_chunk is None or df_chunk.empty
+                        else [t for t in chunk_valid if df_chunk[df_chunk["ticker"].eq(t)].empty]
+                    )
+                    if missing:
+                        log.debug("fallback yahoo for: %s", missing)
+                        df_fb = _yahoo_fetch_many(missing, start_map=start_map, session=session)
+                        if df_chunk is None or df_chunk.empty:
+                            df_chunk = df_fb
+                        elif df_fb is not None and not df_fb.empty:
+                            df_chunk = pd.concat([df_chunk, df_fb], ignore_index=True)
+                        log.debug(
+                            "after fallback rows=%s tickers=%s",
+                            0 if df_chunk is None or df_chunk.empty else len(df_chunk),
+                            (
+                                []
+                                if df_chunk is None or df_chunk.empty
+                                else sorted(df_chunk["ticker"].unique())
+                            ),
+                        )
+
+                # Wenn immer noch nichts da: Intraday->Daily für den ganzen Chunk
+                if df_chunk is None or df_chunk.empty:
+                    log.debug("primary+fallback empty -> intraday aggregation for all in chunk")
+                    intraday_rows = [
+                        _yahoo_chart_api_intraday_to_daily(t, session=session) for t in chunk_valid
+                    ]
+                    intraday_rows = [d for d in intraday_rows if d is not None and not d.empty]
+                    if intraday_rows:
+                        df_chunk = pd.concat(intraday_rows, ignore_index=True)
+                    else:
+                        log.debug("intraday aggregation empty for chunk=%s", chunk_valid)
+                        continue
+
+                # Nur neue Zeilen (bzw. Same-Day Refresh) je Ticker
+                updated_tickers = []
+                for t in chunk_valid:
+                    df_t = df_chunk[df_chunk["ticker"].eq(t)]
+                    if df_t.empty:
+                        # ultima ratio: pro Ticker Intraday
+                        df_t = _yahoo_chart_api_intraday_to_daily(t, session=session)
+                        if df_t is None or df_t.empty:
+                            continue
+                    ld = last_map.get(t)
+                    if pd.notna(ld):
+                        ld_d = pd.to_datetime(ld).date()
+                        mask_new = pd.to_datetime(df_t["date"]).dt.date > ld_d
+                        if REFRESH_SAME_DAY and ld_d == last_trading_day:
+                            mask_new = mask_new | (pd.to_datetime(df_t["date"]).dt.date == last_trading_day)
+                        df_t = df_t[mask_new]
+                    if not df_t.empty:
+                        all_rows.append(
+                            df_t[["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]]
+                        )
+                        updated_tickers.append(t)
+
+                log.debug("tickers with new/refresh rows in chunk: %s", updated_tickers)
+
+            if not all_rows:
+                log.info("Keine neuen Kurszeilen.")
+                return 0
+
+            df_all = pd.concat(all_rows, ignore_index=True)
+            df_all["date"] = pd.to_datetime(df_all["date"]).dt.date
+            df_all = df_all.sort_values(["ticker", "date"]).dropna(subset=["date", "ticker"])
+
+            # Validierung
+            validate_df(df_all, "prices")
+            log.debug("total new/refresh rows=%s", len(df_all))
+
+            # In temp table
+            con.execute("CREATE TEMP TABLE tmp_prices AS SELECT * FROM df_all")
+
+            # Upsert: MERGE (wenn möglich) -> sonst DELETE+INSERT
+            try:
+                con.execute(
+                    """
+                    MERGE INTO prices AS p
+                    USING tmp_prices AS d
+                    ON p.date = d.date AND p.ticker = d.ticker
+                    WHEN MATCHED THEN UPDATE SET
+                        open = d.open, high = d.high, low = d.low, close = d.close,
+                        adj_close = d.adj_close, volume = d.volume
+                    WHEN NOT MATCHED THEN INSERT (date, ticker, open, high, low, close, adj_close, volume)
+                    VALUES (d.date, d.ticker, d.open, d.high, d.low, d.close, d.adj_close, d.volume)
+                """
+                )
+                log.debug("UPSERT via MERGE successful.")
+            except Exception as e:
+                log.warning(
+                    f"MERGE not supported/failed ({e.__class__.__name__}): fallback to DELETE+INSERT."
+                )
+                con.execute("BEGIN")
+                con.execute(
+                    """
+                    DELETE FROM prices
+                    WHERE EXISTS (
+                        SELECT 1 FROM tmp_prices d
+                        WHERE d.date = prices.date
+                          AND d.ticker = prices.ticker
+                    )
+                """
+                )
+                con.execute("INSERT INTO prices SELECT * FROM tmp_prices")
+                con.execute("COMMIT")
+                log.debug("UPSERT via DELETE+INSERT done.")
+
+            n = len(df_all)
+            log.info("Kursdaten aktualisiert: +%s Zeilen", n)
+            return n
+
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    finally:
+        try:
+            con.close()
         except Exception:
             pass
-        con.close()
-        log.info("Keine neuen Kurszeilen.")
-        return 0
-
-    df_all = pd.concat(all_rows, ignore_index=True)
-    df_all["date"] = pd.to_datetime(df_all["date"]).dt.date
-    df_all = df_all.sort_values(["ticker", "date"]).dropna(subset=["date", "ticker"])
-
-    # Validierung
-    validate_df(df_all, "prices")
-    log.debug("total new/refresh rows=%s", len(df_all))
-
-    # In temp table
-    con.execute("CREATE TEMP TABLE tmp_prices AS SELECT * FROM df_all")
-
-    # Upsert: MERGE (wenn möglich) -> sonst DELETE+INSERT
-    try:
-        con.execute(
-            """
-            MERGE INTO prices AS p
-            USING tmp_prices AS d
-            ON p.date = d.date AND p.ticker = d.ticker
-            WHEN MATCHED THEN UPDATE SET
-                open = d.open, high = d.high, low = d.low, close = d.close,
-                adj_close = d.adj_close, volume = d.volume
-            WHEN NOT MATCHED THEN INSERT (date, ticker, open, high, low, close, adj_close, volume)
-            VALUES (d.date, d.ticker, d.open, d.high, d.low, d.close, d.adj_close, d.volume)
-        """
-        )
-        log.debug("UPSERT via MERGE successful.")
-    except Exception as e:
-        log.warning(
-            f"MERGE not supported/failed ({e.__class__.__name__}): fallback to DELETE+INSERT."
-        )
-        con.execute("BEGIN")
-        con.execute(
-            """
-            DELETE FROM prices
-            WHERE EXISTS (
-                SELECT 1 FROM tmp_prices d
-                WHERE d.date = prices.date
-                  AND d.ticker = prices.ticker
-            )
-        """
-        )
-        con.execute("INSERT INTO prices SELECT * FROM tmp_prices")
-        con.execute("COMMIT")
-        log.debug("UPSERT via DELETE+INSERT done.")
-
-    n = len(df_all)
-    try:
-        session.close()
-    except Exception:
-        pass
-    con.close()
-    log.info("Kursdaten aktualisiert/aktualisiert: +%s Zeilen", n)
-    return n
 
 
 # ------------------------------------------------------------------------------
-# FX: EURUSD via Stooq
+#FX: EURUSD via Stooq
 # ------------------------------------------------------------------------------
 
 def _fx_latest_date(con: duckdb.DuckDBPyConnection, pair: str):
@@ -804,7 +813,7 @@ def _fx_latest_date(con: duckdb.DuckDBPyConnection, pair: str):
         return None
 
 
-def _stooq_fetch_fx_eurusd(start: pd.Timestamp | None = None) -> pd.DataFrame:
+def _stooq_fetch_fx_eurusd(start: Optional[pd.Timestamp] = None) -> pd.DataFrame:
     url = "https://stooq.com/q/d/l/?s=eurusd&i=d"
     try:
         r = requests.get(url, timeout=20, headers=STOOQ_HEADERS)
@@ -828,51 +837,55 @@ def _stooq_fetch_fx_eurusd(start: pd.Timestamp | None = None) -> pd.DataFrame:
 
 def update_fx_rates(db_path: str) -> int:
     con = _connect(db_path)
-    _ensure_fx_table(con)
-
-    last = _fx_latest_date(con, "EURUSD")
-    start = pd.Timestamp(last) + pd.Timedelta(days=1) if pd.notna(last) else None
-
-    df = _stooq_fetch_fx_eurusd(start=start)
-    if df is None or df.empty:
-        con.close()
-        log.info("FX-Update: keine neuen EURUSD-Zeilen")
-        return 0
-
-    df = df.sort_values("date").drop_duplicates(subset=["date", "pair"])
-    con.execute("CREATE TEMP TABLE tmp_fx AS SELECT * FROM df")
-
-    # Upsert mit MERGE, Fallback DELETE+INSERT
     try:
-        con.execute(
-            """
-            MERGE INTO fx_rates AS f
-            USING tmp_fx AS d
-            ON f.date = d.date AND f.pair = d.pair
-            WHEN MATCHED THEN UPDATE SET rate_usd_per_eur = d.rate_usd_per_eur
-            WHEN NOT MATCHED THEN INSERT (date, pair, rate_usd_per_eur)
-            VALUES (d.date, d.pair, d.rate_usd_per_eur)
-        """
-        )
-        log.debug("FX UPSERT via MERGE successful.")
-    except Exception as e:
-        log.warning(f"FX MERGE not supported/failed ({e.__class__.__name__}) -> DELETE+INSERT.")
-        con.execute("BEGIN")
-        con.execute(
-            """
-            DELETE FROM fx_rates
-            WHERE EXISTS (
-                SELECT 1 FROM tmp_fx d
-                WHERE d.date = fx_rates.date
-                  AND d.pair = fx_rates.pair
-            )
-        """
-        )
-        con.execute("INSERT INTO fx_rates SELECT * FROM tmp_fx")
-        con.execute("COMMIT")
-        log.debug("FX UPSERT via DELETE+INSERT done.")
+        _ensure_fx_table(con)
 
-    n = len(df)
-    con.close()
-    log.info("FX-Update: +%s neue EURUSD-Zeilen", n)
-    return n
+        last = _fx_latest_date(con, "EURUSD")
+        start = pd.Timestamp(last) + pd.Timedelta(days=1) if pd.notna(last) else None
+
+        df = _stooq_fetch_fx_eurusd(start=start)
+        if df is None or df.empty:
+            log.info("FX-Update: keine neuen EURUSD-Zeilen")
+            return 0
+
+        df = df.sort_values("date").drop_duplicates(subset=["date", "pair"])
+        con.execute("CREATE TEMP TABLE tmp_fx AS SELECT * FROM df")
+
+        # Upsert mit MERGE, Fallback DELETE+INSERT
+        try:
+            con.execute(
+                """
+                MERGE INTO fx_rates AS f
+                USING tmp_fx AS d
+                ON f.date = d.date AND f.pair = d.pair
+                WHEN MATCHED THEN UPDATE SET rate_usd_per_eur = d.rate_usd_per_eur
+                WHEN NOT MATCHED THEN INSERT (date, pair, rate_usd_per_eur)
+                VALUES (d.date, d.pair, d.rate_usd_per_eur)
+            """
+            )
+            log.debug("FX UPSERT via MERGE successful.")
+        except Exception as e:
+            log.warning(f"FX MERGE not supported/failed ({e.__class__.__name__}) -> DELETE+INSERT.")
+            con.execute("BEGIN")
+            con.execute(
+                """
+                DELETE FROM fx_rates
+                WHERE EXISTS (
+                    SELECT 1 FROM tmp_fx d
+                    WHERE d.date = fx_rates.date
+                      AND d.pair = fx_rates.pair
+                )
+            """
+            )
+            con.execute("INSERT INTO fx_rates SELECT * FROM tmp_fx")
+            con.execute("COMMIT")
+            log.debug("FX UPSERT via DELETE+INSERT done.")
+
+        n = len(df)
+        log.info("FX-Update: +%s neue EURUSD-Zeilen", n)
+        return n
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
