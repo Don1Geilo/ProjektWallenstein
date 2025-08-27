@@ -1,10 +1,12 @@
 """Evaluate keyword and BERT sentiment analysers on a labelled dataset."""
 
+import argparse
 import os
 import sys
 
 import pandas as pd
 from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.model_selection import train_test_split
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from wallenstein import sentiment as ws
@@ -41,10 +43,30 @@ def evaluate(true, pred):
     }
 
 
-def main():
-    data = pd.read_csv("data/sentiment_labels.csv")
-    texts = data["text"].tolist()
-    labels = data["label"].tolist()
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Evaluate keyword and BERT sentiment analysers"
+    )
+    parser.add_argument(
+        "--data-files",
+        nargs="+",
+        default=[
+            "data/sentiment_labels.csv",
+            "data/financial_phrasebank.csv",
+        ],
+        help="CSV files with 'text' and 'label' columns",
+    )
+    args = parser.parse_args()
+
+    frames = [pd.read_csv(path) for path in args.data_files]
+    data = pd.concat(frames, ignore_index=True)
+    data = data[data["label"].isin(["positive", "negative"])]
+
+    _, test = train_test_split(
+        data, test_size=0.2, random_state=42, stratify=data["label"]
+    )
+    texts = test["text"].tolist()
+    labels = test["label"].tolist()
 
     kw_pred = keyword_prediction(texts)
     kw_metrics = evaluate(labels, kw_pred)
