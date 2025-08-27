@@ -79,6 +79,20 @@ def test_analyze_sentiment_bert_mock():
         assert analyze_sentiment_bert("text") < 0
 
 
+def test_finbert_adapter_used(monkeypatch):
+    """FinBERT adapter returns scores and is invoked by analyzer."""
+
+    sentiment._bert_analyzer = None
+    monkeypatch.setattr(sentiment.settings, "SENTIMENT_BACKEND", "finbert")
+
+    class DummyAdapter:
+        def __call__(self, text, truncation=True, max_length=512):
+            return [{"label": "positive", "score": 0.75}]
+
+    monkeypatch.setattr(sentiment, "FinBertAdapter", lambda *a, **k: DummyAdapter())
+    assert analyze_sentiment_bert("hello") > 0
+
+
 def test_env_switches_to_bert(monkeypatch):
     with patch("wallenstein.sentiment.BertSentiment") as MockBert:
         sentiment._bert_analyzer = None

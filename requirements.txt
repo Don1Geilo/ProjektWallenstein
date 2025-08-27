@@ -6,3 +6,7 @@ python-dotenv
 praw
 scikit-learn
 pyyaml
+imbalanced-learn
+optuna
+optuna-integration[sklearn]
+

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -13,11 +14,11 @@ from wallenstein.models import backtest_strategy, train_per_stock
 
 def test_train_per_stock_basic():
     np.random.seed(0)
-    dates = pd.date_range("2024-01-01", periods=20, freq="D")
+    dates = pd.date_range("2024-01-01", periods=60, freq="D")
     df = pd.DataFrame({
         "date": dates,
-        "close": 10 + np.cumsum(np.random.randn(20)),
-        "sentiment": np.sin(np.linspace(0, 3, 20)),
+        "close": 10 + np.cumsum(np.random.randn(60)),
+        "sentiment": np.sin(np.linspace(0, 3, 60)),
     })
     acc, f1, roc_auc, precision, recall = train_per_stock(df, n_splits=3)
     print(
@@ -32,13 +33,47 @@ def test_train_per_stock_basic():
     assert 0.0 <= recall <= 1.0
 
 
-def test_train_per_stock_random_forest():
-    np.random.seed(1)
-    dates = pd.date_range("2024-01-01", periods=30, freq="D")
+def test_train_per_stock_smote():
+    np.random.seed(2)
+    n = 50
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    increments = np.ones(n)
+    increments[-5:] = -1
+    close = 10 + np.cumsum(increments)
     df = pd.DataFrame({
         "date": dates,
-        "close": 20 + np.cumsum(np.random.randn(30)),
-        "sentiment": np.cos(np.linspace(0, 4, 30)),
+        "close": close,
+        "sentiment": np.random.randn(n),
+    })
+    acc, f1 = train_per_stock(df, n_splits=3, balance_method="smote")
+    assert acc is not None
+    assert f1 is not None
+
+
+def test_train_per_stock_undersample():
+    np.random.seed(3)
+    n = 50
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    increments = np.ones(n)
+    increments[-5:] = -1
+    close = 5 + np.cumsum(increments)
+    df = pd.DataFrame({
+        "date": dates,
+        "close": close,
+        "sentiment": np.random.randn(n),
+    })
+    acc, f1 = train_per_stock(df, n_splits=3, balance_method="undersample")
+    assert acc is not None
+    assert f1 is not None
+
+
+def test_train_per_stock_random_forest():
+    np.random.seed(1)
+    dates = pd.date_range("2024-01-01", periods=60, freq="D")
+    df = pd.DataFrame({
+        "date": dates,
+        "close": 20 + np.cumsum(np.random.randn(60)),
+        "sentiment": np.cos(np.linspace(0, 4, 60)),
     })
     acc, f1, roc_auc, precision, recall = train_per_stock(
         df, n_splits=3, model_type="random_forest"
@@ -48,6 +83,7 @@ def test_train_per_stock_random_forest():
     assert roc_auc is not None
 
 
+
 def test_train_per_stock_insufficient_classes():
     dates = pd.date_range("2024-01-01", periods=5, freq="D")
     df = pd.DataFrame({
@@ -55,6 +91,7 @@ def test_train_per_stock_insufficient_classes():
         "close": [1, 1, 1, 1, 1],  # no variation -> only one class
         "sentiment": [0, 0, 0, 0, 0],
     })
+
     acc, f1, roc_auc, precision, recall = train_per_stock(df)
     assert all(m is None for m in [acc, f1, roc_auc, precision, recall])
 
@@ -70,3 +107,9 @@ def test_backtest_strategy():
     # Returns: 1/10 and -1/12 -> average is 1/120
     expected = (1 / 10 - 1 / 12) / 2
     assert abs(avg - expected) < 1e-6
+
+    acc, f1 = train_per_stock(df)
+    assert acc is None and f1 is None
+
+
+
