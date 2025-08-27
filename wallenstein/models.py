@@ -146,6 +146,31 @@ def train_per_stock(
     X = df[features]
     y = df["y"]
 
+    # Log class distribution
+    class_distribution = y.value_counts().sort_index().to_dict()
+    log.info(f"Class distribution: {class_distribution}")
+
+    # Baseline predictions
+    majority_class = y.mode()[0]
+    majority_pred = pd.Series(majority_class, index=y.index)
+    majority_acc = accuracy_score(y, majority_pred)
+    majority_f1 = f1_score(y, majority_pred, zero_division=0)
+    log.info(
+        "Baseline (majority class %s) accuracy: %.4f, F1: %.4f",
+        majority_class,
+        majority_acc,
+        majority_f1,
+    )
+
+    buy_hold_pred = pd.Series(1, index=y.index)
+    buy_hold_acc = accuracy_score(y, buy_hold_pred)
+    buy_hold_f1 = f1_score(y, buy_hold_pred, zero_division=0)
+    log.info(
+        "Baseline (buy and hold) accuracy: %.4f, F1: %.4f",
+        buy_hold_acc,
+        buy_hold_f1,
+    )
+
     if y.nunique() < 2:
         return None, None
 
