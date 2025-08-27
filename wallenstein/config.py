@@ -39,6 +39,17 @@ class Settings:
 settings = Settings()
 
 
-def validate_config():
-    if not settings.WALLENSTEIN_DB_PATH:
-        raise ValueError("DB path required")
+def validate_config() -> None:
+    required = {
+        "WALLENSTEIN_DB_PATH": settings.WALLENSTEIN_DB_PATH,
+        "TELEGRAM_BOT_TOKEN": settings.TELEGRAM_BOT_TOKEN,
+        "TELEGRAM_CHAT_ID": settings.TELEGRAM_CHAT_ID,
+        "REDDIT_CLIENT_ID": settings.REDDIT_CLIENT_ID,
+        "REDDIT_CLIENT_SECRET": settings.REDDIT_CLIENT_SECRET,
+        "REDDIT_USER_AGENT": settings.REDDIT_USER_AGENT,
+    }
+
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        missing_str = ", ".join(missing)
+        raise ValueError(f"Missing required environment variables: {missing_str}")
