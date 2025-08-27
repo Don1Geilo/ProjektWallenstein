@@ -100,6 +100,24 @@ reddit_scraper.update_reddit_data(["NVDA"], aliases={"NVDA": ["nvidia corp"]})
 The file specified by ``aliases_path`` is read on every call so changes are
 picked up immediately.
 
+### Sentiment keywords
+
+The keyword based sentiment analyser ships with a small built‑in dictionary.
+Additional terms can be supplied via ``data/sentiment_keywords.json`` or a
+YAML equivalent.  The file should contain a mapping of words to sentiment
+scores (``1`` for positive, ``-1`` for negative):
+
+```json
+{
+  "moonshot": 1,
+  "schrott": -1
+}
+```
+
+If the file exists it is loaded on import and merged with the default
+mapping. Custom keywords therefore influence all subsequent calls to
+``analyze_sentiment``.
+
 ## Telegram Bot
 
 Start a small bot that reacts to messages like ``!NVDA`` and returns a price

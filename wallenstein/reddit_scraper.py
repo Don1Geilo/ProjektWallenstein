@@ -37,7 +37,7 @@ DATA_RETENTION_DAYS = settings.DATA_RETENTION_DAYS
 # Ticker können mehrere Varianten des Firmennamens angegeben werden, die im
 # Text erkannt werden sollen.
 TICKER_NAME_MAP: dict[str, list[str]] = {
-    "NVDA": ["nvidia", "nividia", "nvidea","NVDA"],
+    "NVDA": ["nvidia", "nividia", "nvidea", "NVDA"],
     "AMZN": ["amazon", "amzon", "amazn", "AMZN"],
     "AAPL": ["apple", "aple", "appl", "AAPL"],
     "MSFT": ["microsoft", "micosoft", "micro soft", "MSFT"],
@@ -45,6 +45,8 @@ TICKER_NAME_MAP: dict[str, list[str]] = {
     "META": ["facebook", "meta", "metta", "facebok"],
     "TSLA": ["tesla", "tesler", "tesal"],
     "RHM": ["rheinmetall", "rheiner"],
+    "GME": ["gamestop", "game stop", "gme"],
+    "BABA": ["alibaba", "ali baba", "alibba"],
 }
 
 
@@ -134,8 +136,7 @@ def fetch_reddit_posts(
     reddit = praw.Reddit(
         client_id=settings.REDDIT_CLIENT_ID or os.getenv("CLIENT_ID"),
         client_secret=settings.REDDIT_CLIENT_SECRET or os.getenv("CLIENT_SECRET"),
-        user_agent=
-        settings.REDDIT_USER_AGENT or os.getenv("USER_AGENT") or "wallenstein",
+        user_agent=settings.REDDIT_USER_AGENT or os.getenv("USER_AGENT") or "wallenstein",
     )
 
     posts = []
@@ -304,9 +305,7 @@ def update_reddit_data(
                 if ids:
                     placeholders = ",".join("?" for _ in ids)
                     query = f"SELECT id FROM reddit_posts WHERE id IN ({placeholders})"
-                    existing_ids = set(
-                        con.execute(query, ids).fetch_df()["id"].tolist()
-                    )
+                    existing_ids = set(con.execute(query, ids).fetch_df()["id"].tolist())
                     df_all = df_all[~df_all["id"].isin(existing_ids)]
 
                 if not df_all.empty:
@@ -316,9 +315,7 @@ def update_reddit_data(
                         "INSERT INTO reddit_posts (id, created_utc, title, text) "
                         "SELECT id, created_utc, title, text FROM df_all"
                     )
-                    log.info(
-                        f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
-                    )
+                    log.info(f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)")
 
     # Alte Einträge entfernen
     purge_old_posts()
