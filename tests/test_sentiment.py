@@ -38,6 +38,14 @@ def test_analyze_sentiment_keywords():
     assert analyze_sentiment(text6) < 0
 
 
+def test_lm_and_sentiws_samples():
+    """Ensure words from external lexicons are loaded correctly."""
+    assert analyze_sentiment("advantage") > 0
+    assert analyze_sentiment("abandon") < 0
+    assert analyze_sentiment("glücklich") > 0
+    assert analyze_sentiment("traurig") < 0
+
+
 def test_aggregate_and_recommendation():
     data = {
         "NVDA": [{"text": "buy the dip"}, {"text": "bullish"}, {"text": "kaufen"}],
