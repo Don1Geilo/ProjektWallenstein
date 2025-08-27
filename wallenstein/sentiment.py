@@ -333,13 +333,76 @@ def apply_negation(text: str) -> str:
     return " ".join(result)
 
 
-class BertSentiment:
-    """Sentiment analyzer backed by HuggingFace models.
+class FinBertAdapter:
+    """Light-weight wrapper around the FinBERT model.
 
-    The underlying pipeline is instantiated lazily on first use. The model is
-    chosen via settings.SENTIMENT_BACKEND: "finbert" (default),
-    "de-bert", or "finetuned-finbert" (local path).
+    The class lazily loads ``ProsusAI/finbert`` on first use.  It mirrors the
+    behaviour of :func:`transformers.pipeline` by returning a list of
+    ``{"label": str, "score": float}`` dictionaries.  The implementation is
+    intentionally minimal so that tests can easily mock it without pulling the
+    heavy model into memory.
     """
+
+    def __init__(self, model_name: str = "ProsusAI/finbert") -> None:
+        self.model_name = model_name
+        self._model = None
+        self._tokenizer = None
+
+    @property
+    def model(self):  # pragma: no cover - heavy model
+        if self._model is None:
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self._model = AutoModelForSequenceClassification.from_pretrained(
+                self.model_name
+            )
+        return self._model
+
+    @property
+    def tokenizer(self):  # pragma: no cover - heavy model
+        if self._tokenizer is None:
+            _ = self.model  # trigger loading
+        return self._tokenizer
+
+    def __call__(
+        self, text: str | list[str], truncation: bool = True, max_length: int = 512
+    ):  # pragma: no cover - heavy model
+        import torch
+
+        if isinstance(text, str):
+            inputs = self.tokenizer(
+                text, return_tensors="pt", truncation=truncation, max_length=max_length
+            )
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+            probs = outputs.logits.softmax(dim=-1)[0]
+            idx = int(torch.argmax(probs).item())
+            label = self.model.config.id2label[idx]
+            score = float(probs[idx].item())
+            return [{"label": label, "score": score}]
+
+        inputs = self.tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=truncation,
+            max_length=max_length,
+            padding=True,
+        )
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        probs = outputs.logits.softmax(dim=-1)
+        results = []
+        for i in range(probs.shape[0]):
+            idx = int(torch.argmax(probs[i]).item())
+            label = self.model.config.id2label[idx]
+            score = float(probs[i, idx].item())
+            results.append({"label": label, "score": score})
+        return results
+
+
+class BertSentiment:
+    """Sentiment analyzer backed by HuggingFace models."""
 
     _pipe = None
 
@@ -362,9 +425,12 @@ class BertSentiment:
     @property
     def pipe(self):  # pragma: no cover - heavy model
         if self._pipe is None:
-            from transformers import pipeline
+            if self.backend == "finbert":
+                self._pipe = FinBertAdapter(self.model)
+            else:
+                from transformers import pipeline
 
-            self._pipe = pipeline("sentiment-analysis", model=self.model)
+                self._pipe = pipeline("sentiment-analysis", model=self.model)
         return self._pipe
 
     def __call__(self, text: str | list[str]):  # pragma: no cover - heavy model
@@ -533,4 +599,5 @@ __all__ = [
     "aggregate_sentiment_by_ticker",
     "derive_recommendation",
     "BertSentiment",
+    "FinBertAdapter",
 ]
