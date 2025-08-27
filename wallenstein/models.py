@@ -1,10 +1,15 @@
 import logging
 
 import pandas as pd
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
+from imblearn.under_sampling import RandomUnderSampler
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 log = logging.getLogger(__name__)
 
@@ -14,6 +19,7 @@ def train_per_stock(
     use_kfold: bool = True,
     n_splits: int = 5,
     model_type: str = "logistic",
+    balance_method: str = "class_weight",
 ) -> tuple[float, float] | None:
     """Train a classifier on lagged close and sentiment data.
 
@@ -24,6 +30,12 @@ def train_per_stock(
         The function will sort by date, create lagged features of ``close`` and
         ``sentiment`` and attempt to predict if the next day's close is higher
         than the previous day's.
+
+    balance_method : str, default "class_weight"
+        Strategy for handling class imbalance when ``model_type`` is ``"logistic"``.
+        Use ``"class_weight"`` for ``LogisticRegression(class_weight="balanced")``,
+        ``"smote"`` for SMOTE oversampling or ``"undersample"`` for random
+        undersampling.
 
     Returns
     -------
@@ -97,8 +109,28 @@ def train_per_stock(
         return None, None
 
     if model_type == "logistic":
-        model = LogisticRegression(max_iter=1000)
-        param_grid = {"C": [0.01, 0.1, 1.0, 10.0]}
+        if balance_method == "smote":
+            steps = [
+                ("sampler", SMOTE(random_state=42, k_neighbors=1)),
+                ("scaler", StandardScaler()),
+                ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+            ]
+            model = ImbPipeline(steps)
+        elif balance_method == "undersample":
+            steps = [
+                ("sampler", RandomUnderSampler(random_state=42)),
+                ("scaler", StandardScaler()),
+                ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+            ]
+            model = ImbPipeline(steps)
+        else:
+            model = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+                ]
+            )
+        param_grid = {"clf__C": [0.01, 0.1, 1.0, 10.0]}
     elif model_type == "random_forest":
         model = RandomForestClassifier(random_state=42)
         param_grid = {

@@ -6,3 +6,4 @@ python-dotenv
 praw
 scikit-learn
 pyyaml
+imbalanced-learn
