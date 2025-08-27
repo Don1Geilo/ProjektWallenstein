@@ -167,7 +167,8 @@ contains trained weights.
 The price movement model now uses a richer feature set including multiple
 lags for ``close`` and ``sentiment`` as well as 3/7-day moving averages and
 volatility measures. K-fold cross validation (5-fold) is enabled by default and
-GridSearchCV tunes hyperparameters for each supported model.
+hyperparameters can be tuned via ``GridSearchCV``, ``RandomizedSearchCV`` or
+``Optuna`` using the ``search_method`` parameter.
 
 Supported models:
 
