@@ -12,8 +12,10 @@ Broker-target support is temporarily disabled pending a new data provider.
 pip install -r requirements.txt
 cp .env.example .env   # and fill values
 python main.py
-python telegram_bot.py  # optional: interactive Telegram bot; use !<ticker>
+python -m bot.telegram_bot  # optional: manage watchlist via Telegram
 ```
+
+The main pipeline reads symbols from the watchlist and exits with a warning if none exist.
 
 ## Install (reproducible)
 
@@ -57,7 +59,7 @@ pre-commit install
 ├─ requirements.txt
 ├─ .env.example
 ├─ data/                  # DuckDB lives here
-├─ telegram_bot.py       # listens for `!TICKER` messages on Telegram
+├─ bot/telegram_bot.py   # dynamic watchlist via Telegram
 └─ wallenstein/
    ├─ __init__.py
    ├─ stock_data.py
@@ -118,20 +120,23 @@ If the file exists it is loaded on import and merged with the default
 mapping. Custom keywords therefore influence all subsequent calls to
 ``analyze_sentiment``.
 
-## Telegram Bot
+## Dynamic Watchlist + Telegram Bot
 
-Start a small bot that reacts to messages like ``!NVDA`` and returns a price
-and sentiment overview for the requested ticker:
+Expose ``TELEGRAM_BOT_TOKEN`` and ``TELEGRAM_CHAT_ID`` (override the database path with ``WALLENSTEIN_DB_PATH`` if needed) and start the bot with:
 
 ```bash
-python telegram_bot.py
+python -m bot.telegram_bot
 ```
 
-In Telegram chat send ``!<ticker>`` to get the latest Wallenstein overview.
-`main.py` continues to run independently (manually or via GitHub Actions) to
-update the data. Configure ``TELEGRAM_BOT_TOKEN`` (and optionally
-``TELEGRAM_CHAT_ID`` for the broadcast helper ``notify_telegram``) in your
-environment or ``.env`` file.
+Example commands:
+
+```text
+/add NVDA, AMZN
+/list
+/alerts add NVDA < 150
+```
+
+The main pipeline pulls tickers from this watchlist and exits with a warning when it is empty.
 
 ## Sentiment evaluation
 

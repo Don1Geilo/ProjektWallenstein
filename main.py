@@ -15,6 +15,7 @@ if not env_loaded:
     load_dotenv(dotenv_path=alt_path, override=True)
 
 from wallenstein.config import settings, validate_config
+from wallenstein.db import init_schema
 
 validate_config()
 
@@ -49,6 +50,7 @@ except Exception as e:  # pragma: no cover
 # --- Pfade/Konfig ---
 DB_PATH = settings.WALLENSTEIN_DB_PATH
 os.makedirs(Path(DB_PATH).parent, exist_ok=True)  # stellt sicher, dass data/ existiert
+init_schema(DB_PATH)
 
 # Ticker (Standard inkl. TSLA)
 TICKERS = [t.strip().upper() for t in settings.WALLENSTEIN_TICKERS.split(",") if t.strip()]
