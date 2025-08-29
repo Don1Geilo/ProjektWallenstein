@@ -16,6 +16,7 @@ if not env_loaded:
     load_dotenv(dotenv_path=alt_path, override=True)
 
 from wallenstein.config import settings, validate_config
+from wallenstein.db import init_schema
 
 validate_config()
 
@@ -57,6 +58,7 @@ except Exception as e:  # pragma: no cover
 # --- Pfade/Konfig ---
 DB_PATH = settings.WALLENSTEIN_DB_PATH
 os.makedirs(Path(DB_PATH).parent, exist_ok=True)  # stellt sicher, dass data/ existiert
+init_schema(DB_PATH)
 
 # Telegram (zur Rückwärtskompatibilität beibehalten)
 TELEGRAM_BOT_TOKEN = (settings.TELEGRAM_BOT_TOKEN or "").strip()
