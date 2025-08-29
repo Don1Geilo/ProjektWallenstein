@@ -8,9 +8,11 @@ without depending on any network resources.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Dict, List
 import logging
+import threading
+from dataclasses import dataclass
+from itertools import count
+from typing import Callable, Dict, List
 
 log = logging.getLogger(__name__)
 
@@ -23,13 +25,20 @@ class Alert:
     direction: str = "above"  # either "above" or "below"
 
 
+_NEXT_ID = count(1)
 _ALERTS: List[Alert] = []
+_ALERTS_LOCK = threading.Lock()
 
+def register_alert(ticker: str, threshold: float, direction: str = "above") -> int:
+    """Register a new alert in the in-memory store.
 
-def register_alert(alert: Alert) -> None:
-    """Register a new alert in the in-memory store."""
+    Returns the ID of the newly created alert.
+    """
 
-    _ALERTS.append(alert)
+    alert = Alert(next(_NEXT_ID), ticker, threshold, direction)
+    with _ALERTS_LOCK:
+        _ALERTS.append(alert)
+    return alert.id
 
 
 def active_alerts(prices: Dict[str, float], notifier: Callable[[str], bool] | None = None) -> None:
@@ -39,8 +48,11 @@ def active_alerts(prices: Dict[str, float], notifier: Callable[[str], bool] | No
     human readable message and the alert is removed ("deactivated").
     """
 
+    with _ALERTS_LOCK:
+        alerts_snapshot = list(_ALERTS)
+
     remaining: List[Alert] = []
-    for alert in _ALERTS:
+    for alert in alerts_snapshot:
         price = prices.get(alert.ticker)
         if price is None:
             remaining.append(alert)
@@ -62,8 +74,25 @@ def active_alerts(prices: Dict[str, float], notifier: Callable[[str], bool] | No
             remaining.append(alert)
 
     # deactivate triggered alerts
-    _ALERTS[:] = remaining
+    with _ALERTS_LOCK:
+        _ALERTS[:] = remaining
 
 
-__all__ = ["Alert", "active_alerts", "register_alert"]
+def list_alerts() -> List[Alert]:
+    """Return a copy of all currently registered alerts."""
+
+    with _ALERTS_LOCK:
+        return list(_ALERTS)
+
+
+def _reset_state() -> None:  # pragma: no cover - used only in tests
+    """Reset global state for tests."""
+
+    global _NEXT_ID
+    with _ALERTS_LOCK:
+        _ALERTS.clear()
+    _NEXT_ID = count(1)
+
+
+__all__ = ["Alert", "active_alerts", "register_alert", "list_alerts"]
 
