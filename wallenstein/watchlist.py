@@ -1,87 +1,81 @@
+"""
+Utility helpers to manage a (chat-scoped) watchlist in DuckDB.
 
-"""Utility helpers around the user's watchlist.
+- Primary API (recommended): add_symbols/remove_symbols/list_symbols/all_unique_symbols
+  operating on a unified table: watchlist(chat_id, symbol, note, UNIQUE(chat_id, symbol)).
 
-This is a tiny shim for the purposes of this kata.  In a real
-application the watchlist would likely be stored in a database or be
-configurable through an API.  For now we simply read the comma separated
-list from the configuration and return the unique, normalised symbols.
+- Convenience API (legacy/global use): add_ticker/remove_ticker/list_tickers uses a
+  synthetic chat_id "_GLOBAL_" to emulate a single global watchlist.
+
+Configuration:
+- settings.WALLENSTEIN_DB_PATH is used by the convenience API only.
 """
 
 from __future__ import annotations
 
-from typing import List
-
-from .config import settings
-
-
-def all_unique_symbols() -> List[str]:
-    """Return a list of unique ticker symbols from the configuration.
-
-    ``settings.WALLENSTEIN_TICKERS`` contains a comma separated list of
-    tickers.  This helper normalises the values and returns them as a
-    list.  It acts as a lightweight replacement for a potential database
-    backed watchlist module.
-    """
-
-    raw = settings.WALLENSTEIN_TICKERS
-    return [t.strip().upper() for t in raw.split(",") if t.strip()]
-
-
-__all__ = ["all_unique_symbols"]
-=======
-
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Tuple, Optional, Union
 
 import duckdb
 
+try:
+    # Optional project config; only needed by convenience API.
+    from .config import settings  # type: ignore
+except Exception:  # pragma: no cover
+    settings = None  # type: ignore
+
+
+# ---------- Schema helpers ----------
 
 def _ensure_table(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS watchlist (
-            chat_id VARCHAR,
-            symbol VARCHAR,
-            note VARCHAR,
+            chat_id VARCHAR NOT NULL,
+            symbol  VARCHAR NOT NULL,
+            note    VARCHAR,
             UNIQUE(chat_id, symbol)
         )
         """
     )
 
 
+# ---------- Core (chat-scoped) API ----------
+
+ChatId = Union[str, int]
+
+
 def add_symbols(
     con: duckdb.DuckDBPyConnection,
-    chat_id: str,
+    chat_id: ChatId,
     symbols: Iterable[str],
-    note: str | None = None,
+    note: Optional[str] = None,
 ) -> List[str]:
-    """Add ``symbols`` for ``chat_id``.
-
-    Symbols are uppercased before insertion. Returns the list of inserted symbols
-    (uppercased).
-    """
+    """Add symbols for a given chat_id. Returns normalized (uppercased) list."""
     _ensure_table(con)
-    symbols_upper = [s.upper() for s in symbols]
-    data = [(chat_id, sym, note) for sym in symbols_upper]
-    if data:
-        con.executemany(
-            "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES (?, ?, ?)",
-            data,
-        )
-    return symbols_upper
+    norm = [s.strip().upper() for s in symbols if s and s.strip()]
+    if not norm:
+        return []
+    data = [(str(chat_id), sym, note) for sym in norm]
+    con.executemany(
+        "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES (?, ?, ?)",
+        data,
+    )
+    return norm
 
 
 def remove_symbols(
     con: duckdb.DuckDBPyConnection,
-    chat_id: str,
+    chat_id: ChatId,
     symbols: Iterable[str],
 ) -> int:
-    """Remove ``symbols`` for ``chat_id`` and return number of removed rows."""
+    """Remove symbols for chat_id. Returns number of rows removed."""
     _ensure_table(con)
-    symbols_upper = [s.upper() for s in symbols]
-    if not symbols_upper:
+    norm = [s.strip().upper() for s in symbols if s and s.strip()]
+    if not norm:
         return 0
-    placeholders = ", ".join(["?"] * len(symbols_upper))
-    params = [chat_id, *symbols_upper]
+    placeholders = ", ".join(["?"] * len(norm))
+    params = [str(chat_id), *norm]
+    # Count first (DuckDB doesn't return rowcount reliably for DELETE)
     count = con.execute(
         f"SELECT COUNT(*) FROM watchlist WHERE chat_id = ? AND symbol IN ({placeholders})",
         params,
@@ -93,59 +87,78 @@ def remove_symbols(
     return int(count)
 
 
-def list_symbols(con: duckdb.DuckDBPyConnection, chat_id: str) -> List[Tuple[str, str | None]]:
-    """List all symbols with optional note for ``chat_id``."""
+def list_symbols(
+    con: duckdb.DuckDBPyConnection,
+    chat_id: ChatId,
+) -> List[Tuple[str, Optional[str]]]:
+    """List all (symbol, note) for chat_id, sorted by symbol."""
     _ensure_table(con)
     rows = con.execute(
         "SELECT symbol, note FROM watchlist WHERE chat_id = ? ORDER BY symbol",
-        [chat_id],
+        [str(chat_id)],
     ).fetchall()
     return [(row[0], row[1]) for row in rows]
 
 
 def all_unique_symbols(con: duckdb.DuckDBPyConnection) -> List[str]:
-    """Return all unique symbols across all chat ids."""
+    """Return all unique symbols across all chat_ids (distinct)."""
     _ensure_table(con)
-    rows = con.execute("SELECT DISTINCT symbol FROM watchlist ORDER BY symbol").fetchall()
-    return [row[0] for row in rows]
-
-import duckdb
-
-from .config import settings
+    rows = con.execute(
+        "SELECT DISTINCT symbol FROM watchlist ORDER BY symbol"
+    ).fetchall()
+    return [r[0] for r in rows]
 
 
-def _ensure_table(con: duckdb.DuckDBPyConnection) -> None:
-    con.execute("CREATE TABLE IF NOT EXISTS watchlist (ticker VARCHAR PRIMARY KEY)")
+# ---------- Convenience (global) API ----------
+# Uses a synthetic "_GLOBAL_" chat to mimic a repo-wide watchlist without Telegram context.
+
+_GLOBAL_CHAT_ID = "_GLOBAL_"
 
 
-def add_ticker(ticker: str, db_path: str | None = None) -> None:
-    db_path = db_path or settings.WALLENSTEIN_DB_PATH
-    con = duckdb.connect(db_path)
+def _get_db_path() -> str:
+    if settings is None or not getattr(settings, "WALLENSTEIN_DB_PATH", None):
+        return "data/wallenstein.duckdb"
+    return settings.WALLENSTEIN_DB_PATH
+
+
+def add_ticker(ticker: str, db_path: Optional[str] = None) -> None:
+    """Add a single ticker to the global watchlist."""
+    path = db_path or _get_db_path()
+    con = duckdb.connect(path)
     try:
-        _ensure_table(con)
-        con.execute("INSERT OR REPLACE INTO watchlist (ticker) VALUES (?)", [ticker.upper()])
+        add_symbols(con, _GLOBAL_CHAT_ID, [ticker])
     finally:
         con.close()
 
 
-def remove_ticker(ticker: str, db_path: str | None = None) -> None:
-    db_path = db_path or settings.WALLENSTEIN_DB_PATH
-    con = duckdb.connect(db_path)
+def remove_ticker(ticker: str, db_path: Optional[str] = None) -> None:
+    """Remove a single ticker from the global watchlist."""
+    path = db_path or _get_db_path()
+    con = duckdb.connect(path)
     try:
-        _ensure_table(con)
-        con.execute("DELETE FROM watchlist WHERE ticker = ?", [ticker.upper()])
+        remove_symbols(con, _GLOBAL_CHAT_ID, [ticker])
     finally:
         con.close()
 
 
-def list_tickers(db_path: str | None = None) -> list[str]:
-    db_path = db_path or settings.WALLENSTEIN_DB_PATH
-    con = duckdb.connect(db_path)
+def list_tickers(db_path: Optional[str] = None) -> List[str]:
+    """List all tickers in the global watchlist."""
+    path = db_path or _get_db_path()
+    con = duckdb.connect(path)
     try:
-        _ensure_table(con)
-        rows = con.execute("SELECT ticker FROM watchlist ORDER BY ticker").fetchall()
-        return [r[0] for r in rows]
+        return [sym for sym, _ in list_symbols(con, _GLOBAL_CHAT_ID)]
     finally:
         con.close()
 
 
+__all__ = [
+    # core
+    "add_symbols",
+    "remove_symbols",
+    "list_symbols",
+    "all_unique_symbols",
+    # convenience
+    "add_ticker",
+    "remove_ticker",
+    "list_tickers",
+]
