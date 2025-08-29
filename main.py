@@ -73,20 +73,28 @@ from wallenstein.stock_data import update_fx_rates, update_prices
 
 
 def resolve_tickers(override: str | None = None) -> list[str]:
-    """Ermittle die zu verarbeitenden Ticker."""
+    """Ermittle die zu verarbeitenden Ticker (CLI-Override > DB-Watchlist)."""
     if override:
         tickers = [t.strip().upper() for t in override.split(",") if t.strip()]
-    else:
-        try:
-            from wallenstein.watchlist import all_unique_symbols
+        if not tickers:
+            log.warning("Keine Ticker im --tickers Override gefunden")
+        return tickers
 
-            tickers = [s.strip().upper() for s in all_unique_symbols()]
-        except Exception as exc:  # pragma: no cover - unexpected failures
-            log.warning(f"Watchlist-Abfrage fehlgeschlagen: {exc}")
-            tickers = []
+    # Aus DuckDB lesen (chat-übergreifend, DISTINCT)
+    try:
+        from wallenstein.watchlist import all_unique_symbols as wl_all
+
+        # kurze, lokale Connection für die Abfrage
+        with duckdb.connect(DB_PATH) as con:
+            tickers = [s.strip().upper() for s in wl_all(con)]
+    except Exception as exc:  # pragma: no cover - unexpected failures
+        log.warning(f"Watchlist-Abfrage fehlgeschlagen: {exc}")
+        tickers = []
+
     if not tickers:
         log.warning("Keine Ticker gefunden")
     return tickers
+
 
 
 # ---------- Main ----------
