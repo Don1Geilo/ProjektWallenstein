@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import time
@@ -15,6 +16,7 @@ if not env_loaded:
     load_dotenv(dotenv_path=alt_path, override=True)
 
 from wallenstein.config import settings, validate_config
+from wallenstein.db import init_schema
 
 validate_config()
 
@@ -46,12 +48,17 @@ except Exception as e:  # pragma: no cover
         return {t: [] for t in tickers}
 
 
+# Alerts API optional
+try:
+    import alerts_api
+except Exception as e:  # pragma: no cover
+    log.warning(f"alerts_api nicht verfügbar: {e}")
+    alerts_api = None
+
 # --- Pfade/Konfig ---
 DB_PATH = settings.WALLENSTEIN_DB_PATH
 os.makedirs(Path(DB_PATH).parent, exist_ok=True)  # stellt sicher, dass data/ existiert
-
-# Ticker (Standard inkl. TSLA)
-TICKERS = [t.strip().upper() for t in settings.WALLENSTEIN_TICKERS.split(",") if t.strip()]
+init_schema(DB_PATH)
 
 # Telegram (zur Rückwärtskompatibilität beibehalten)
 TELEGRAM_BOT_TOKEN = (settings.TELEGRAM_BOT_TOKEN or "").strip()
@@ -65,13 +72,33 @@ from wallenstein.sentiment import analyze_sentiment_batch
 from wallenstein.stock_data import update_fx_rates, update_prices
 
 
+def resolve_tickers(override: str | None = None) -> list[str]:
+    """Ermittle die zu verarbeitenden Ticker."""
+    if override:
+        tickers = [t.strip().upper() for t in override.split(",") if t.strip()]
+    else:
+        try:
+            from wallenstein.watchlist import all_unique_symbols
+
+            tickers = [s.strip().upper() for s in all_unique_symbols()]
+        except Exception as exc:  # pragma: no cover - unexpected failures
+            log.warning(f"Watchlist-Abfrage fehlgeschlagen: {exc}")
+            tickers = []
+    if not tickers:
+        log.warning("Keine Ticker gefunden")
+    return tickers
+
+
 # ---------- Main ----------
 def run_pipeline(tickers: list[str] | None = None) -> int:
     t0 = time.time()
     log.info("🚀 Start Wallenstein: Pipeline-Run")
 
     if tickers is None:
-        tickers = TICKERS
+        tickers = resolve_tickers()
+    if not tickers:
+        log.warning("Keine Ticker zur Verarbeitung – Pipeline abgebrochen")
+        return 1
 
     reddit_posts = {t: [] for t in tickers}
     added = 0
@@ -112,6 +139,11 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
     prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
     log.info(f"USD: {prices_usd}")
+    if alerts_api:
+        try:
+            alerts_api.active_alerts(prices_usd, notify_telegram)
+        except Exception as e:  # pragma: no cover - alert backend failures
+            log.warning(f"Alertprüfung fehlgeschlagen: {e}")
 
     # Sentiment je Ticker aus Reddit-Posts
     sentiments: dict[str, float] = {}
@@ -198,6 +230,15 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     log.info(f"🏁 Fertig in {time.time() - t0:.1f}s")
     return 0
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run Wallenstein pipeline")
+    parser.add_argument("--tickers", help="Kommagetrennte Liste von Ticker-Symbolen")
+    args = parser.parse_args()
+    tickers = resolve_tickers(args.tickers)
+    if not tickers:
+        return
+    run_pipeline(tickers)
+
 
 if __name__ == "__main__":
-    run_pipeline()
+    main()
