@@ -265,6 +265,12 @@ def train_per_stock(
         train_size = max(int(len(df) * 0.8), 1)
         df_train = df.iloc[:train_size]
         df_test = df.iloc[train_size:]
+        y_train = df_train["y"]
+        if balance_method in {"smote", "undersample"} and not df_test.empty:
+            while y_train.value_counts().min() < 2 and len(df_train) < len(df):
+                df_train = df.iloc[: len(df_train) + 1]
+                y_train = df_train["y"]
+            df_test = df.iloc[len(df_train):]
         X_train = df_train[features]
         y_train = df_train["y"]
         if y_train.nunique() < 2 and not df_test.empty:
