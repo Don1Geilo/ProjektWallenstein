@@ -5,11 +5,13 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filte
 
 from main import run_pipeline
 from wallenstein.config import settings, validate_config
+from wallenstein.db import init_schema
 from wallenstein.overview import generate_overview
 
 log = logging.getLogger(__name__)
 
 validate_config()
+init_schema()
 
 
 async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
