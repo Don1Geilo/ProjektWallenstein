@@ -12,12 +12,14 @@ from telegram.ext import (
 from main import run_pipeline
 from wallenstein.alerts import list_alerts
 from wallenstein.config import settings, validate_config
+from wallenstein.db import init_schema
 from wallenstein.overview import generate_overview
 from wallenstein.watchlist import add_ticker, list_tickers, remove_ticker
 
 log = logging.getLogger(__name__)
 
 validate_config()
+init_schema()
 
 
 async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
