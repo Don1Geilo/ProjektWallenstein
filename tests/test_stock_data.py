@@ -1,8 +1,8 @@
 import logging
+import math
 
 import duckdb
 import pandas as pd
-import pytest
 import requests
 
 from wallenstein import stock_data
@@ -109,3 +109,27 @@ def test_prices_table_has_index(tmp_path):
     ).fetchone()[0]
     con.close()
     assert idx_count == 1
+
+
+def test_get_last_close_returns_value(tmp_path):
+    db = tmp_path / "last.duckdb"
+    con = duckdb.connect(str(db))
+    stock_data._ensure_prices_table(con)
+    con.execute(
+        "INSERT INTO prices VALUES ('2024-01-01','AAA',1,1,1,10,10,100)"
+    )
+    con.execute(
+        "INSERT INTO prices VALUES ('2024-01-02','AAA',1,1,1,20,20,200)"
+    )
+    val = stock_data.get_last_close(con, "AAA")
+    con.close()
+    assert val == 20
+
+
+def test_get_last_close_returns_nan_when_missing(tmp_path):
+    db = tmp_path / "empty.duckdb"
+    con = duckdb.connect(str(db))
+    stock_data._ensure_prices_table(con)
+    val = stock_data.get_last_close(con, "NONE")
+    con.close()
+    assert math.isnan(val)
