@@ -1,11 +1,19 @@
 import logging
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from main import run_pipeline
+from wallenstein.alerts import list_alerts
 from wallenstein.config import settings, validate_config
 from wallenstein.overview import generate_overview
+from wallenstein.watchlist import add_ticker, list_tickers, remove_ticker
 
 log = logging.getLogger(__name__)
 
@@ -35,10 +43,57 @@ async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(overview)
 
 
+async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /add TICKER")
+        return
+    ticker = context.args[0].upper()
+    add_ticker(ticker)
+    await update.message.reply_text(f"{ticker} added.")
+
+
+async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /remove TICKER")
+        return
+    ticker = context.args[0].upper()
+    remove_ticker(ticker)
+    await update.message.reply_text(f"{ticker} removed.")
+
+
+async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    tickers = list_tickers()
+    if tickers:
+        await update.message.reply_text(", ".join(tickers))
+    else:
+        await update.message.reply_text("Watchlist empty.")
+
+
+async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    alerts = list_alerts()
+    if not alerts:
+        await update.message.reply_text("No alerts.")
+        return
+    lines = [f"{a.id}:{a.ticker}{a.op}{a.price} {'on' if a.active else 'off'}" for a in alerts]
+    await update.message.reply_text("\n".join(lines))
+
+
 def main() -> None:
-    """Start the Telegram bot and listen for ticker commands."""
+    """Start the Telegram bot and listen for ticker and watchlist commands."""
     app = ApplicationBuilder().token(settings.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticker))
+    app.add_handler(CommandHandler("add", cmd_add))
+    app.add_handler(CommandHandler("remove", cmd_remove))
+    app.add_handler(CommandHandler("list", cmd_list))
+    app.add_handler(CommandHandler("alerts", cmd_alerts))
     app.run_polling()
 
 
