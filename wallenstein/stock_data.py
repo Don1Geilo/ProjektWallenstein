@@ -889,3 +889,27 @@ def update_fx_rates(db_path: str) -> int:
             con.close()
         except Exception:
             pass
+
+
+def get_last_close(con: duckdb.DuckDBPyConnection, symbol: str) -> float:
+    """Return the most recent close price for ``symbol``.
+
+    If no close is available for the given ``symbol`` or the query fails,
+    ``float('nan')`` is returned.
+    """
+    try:
+        row = con.execute(
+            """
+            SELECT close
+            FROM prices
+            WHERE ticker = ?
+            ORDER BY date DESC
+            LIMIT 1
+            """,
+            [symbol],
+        ).fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+        return float("nan")
+    except Exception:
+        return float("nan")
