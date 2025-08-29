@@ -9,4 +9,5 @@ pyyaml
 imbalanced-learn
 optuna
 optuna-integration[sklearn]
+python-telegram-bot>=21
 
