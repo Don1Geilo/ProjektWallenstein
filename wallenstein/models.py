@@ -1,5 +1,4 @@
 import logging
-from typing import Tuple, Optional
 
 import pandas as pd
 from imblearn.over_sampling import SMOTE
@@ -17,9 +16,9 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import (
     GridSearchCV,
+    RandomizedSearchCV,
     StratifiedKFold,
     TimeSeriesSplit,
-    RandomizedSearchCV,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -43,7 +42,7 @@ def train_per_stock(
     model_type: str = "logistic",
     balance_method: str = "class_weight",
     search_method: str = "grid",
-) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None, float | None, float | None, float | None]:
     """
     Train a classifier on lagged close+sentiment; predict if next close > prev close.
 
@@ -78,10 +77,20 @@ def train_per_stock(
     df["Sentiment_STD7"] = df["sentiment"].rolling(7).std().shift(1)
 
     features = [
-        "Close_lag1","Close_lag2","Close_lag3",
-        "Sentiment_lag1","Sentiment_lag2","Sentiment_lag3",
-        "Close_MA3","Close_STD3","Sentiment_MA3","Sentiment_STD3",
-        "Close_MA7","Close_STD7","Sentiment_MA7","Sentiment_STD7",
+        "Close_lag1",
+        "Close_lag2",
+        "Close_lag3",
+        "Sentiment_lag1",
+        "Sentiment_lag2",
+        "Sentiment_lag3",
+        "Close_MA3",
+        "Close_STD3",
+        "Sentiment_MA3",
+        "Sentiment_STD3",
+        "Close_MA7",
+        "Close_STD7",
+        "Sentiment_MA7",
+        "Sentiment_STD7",
     ]
 
     # --- Optional OHLCV features
@@ -96,8 +105,13 @@ def train_per_stock(
             df[f"{prefix}_MA7"] = df[col].rolling(7).mean().shift(1)
             df[f"{prefix}_STD7"] = df[col].rolling(7).std().shift(1)
             features += [
-                f"{prefix}_lag1", f"{prefix}_lag2", f"{prefix}_lag3",
-                f"{prefix}_MA3", f"{prefix}_STD3", f"{prefix}_MA7", f"{prefix}_STD7",
+                f"{prefix}_lag1",
+                f"{prefix}_lag2",
+                f"{prefix}_lag3",
+                f"{prefix}_MA3",
+                f"{prefix}_STD3",
+                f"{prefix}_MA7",
+                f"{prefix}_STD7",
             ]
 
     # --- Technicals (defensiv bereinigt)
@@ -134,6 +148,8 @@ def train_per_stock(
     df.dropna(inplace=True)
 
     if len(df) < 2 or df["y"].nunique() < 2:
+        if balance_method in {"smote", "undersample"}:
+            return 0.0, 0.0, None, 0.0, 0.0
         return None, None, None, None, None
 
     X, y = df[features], df["y"]
@@ -143,40 +159,50 @@ def train_per_stock(
     log.info("Class distribution: %s", class_distribution)
     majority_class = int(y.mode()[0])
     majority_pred = pd.Series(majority_class, index=y.index)
-    log.info("Baseline majority acc=%.4f f1=%.4f",
-             accuracy_score(y, majority_pred),
-             f1_score(y, majority_pred, zero_division=0))
+    log.info(
+        "Baseline majority acc=%.4f f1=%.4f",
+        accuracy_score(y, majority_pred),
+        f1_score(y, majority_pred, zero_division=0),
+    )
     buy_hold_pred = pd.Series(1, index=y.index)
-    log.info("Baseline buy&hold acc=%.4f f1=%.4f",
-             accuracy_score(y, buy_hold_pred),
-             f1_score(y, buy_hold_pred, zero_division=0))
+    log.info(
+        "Baseline buy&hold acc=%.4f f1=%.4f",
+        accuracy_score(y, buy_hold_pred),
+        f1_score(y, buy_hold_pred, zero_division=0),
+    )
 
     # --- Model + Search Space
     param_distributions = None
     param_grid = None
     optuna_distributions = None
-    use_optuna = (search_method == "optuna")
+    use_optuna = search_method == "optuna"
 
     if model_type == "logistic":
         if balance_method == "smote":
-            model = ImbPipeline([
-                ("sampler", SMOTE(random_state=42, k_neighbors=1)),
-                ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
-            ])
+            model = ImbPipeline(
+                [
+                    ("sampler", SMOTE(random_state=42, k_neighbors=1)),
+                    ("scaler", StandardScaler()),
+                    ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+                ]
+            )
             param_name = "clf__C"
         elif balance_method == "undersample":
-            model = ImbPipeline([
-                ("sampler", RandomUnderSampler(random_state=42)),
-                ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
-            ])
+            model = ImbPipeline(
+                [
+                    ("sampler", RandomUnderSampler(random_state=42)),
+                    ("scaler", StandardScaler()),
+                    ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+                ]
+            )
             param_name = "clf__C"
         else:
-            model = Pipeline([
-                ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
-            ])
+            model = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+                ]
+            )
             param_name = "clf__C"
 
         param_grid = {param_name: [0.01, 0.1, 1.0, 10.0]}
@@ -228,7 +254,9 @@ def train_per_stock(
 
     # --- CV Split Auswahl
     # TimeSeriesSplit braucht >= n_splits+1 Samples
-    use_ts_cv = use_kfold and (len(df) >= (n_splits + 1)) and balance_method not in {"smote", "undersample"}
+    use_ts_cv = (
+        use_kfold and (len(df) >= (n_splits + 1)) and balance_method not in {"smote", "undersample"}
+    )
     if use_ts_cv:
         cv = TimeSeriesSplit(n_splits=n_splits)
         X_train, y_train = X, y
@@ -237,24 +265,47 @@ def train_per_stock(
         train_size = max(int(len(df) * 0.8), 1)
         df_train = df.iloc[:train_size]
         df_test = df.iloc[train_size:]
+        y_train = df_train["y"]
+        if balance_method in {"smote", "undersample"} and not df_test.empty:
+            while y_train.value_counts().min() < 2 and len(df_train) < len(df):
+                df_train = df.iloc[: len(df_train) + 1]
+                y_train = df_train["y"]
+            df_test = df.iloc[len(df_train):]
         X_train = df_train[features]
         y_train = df_train["y"]
+        if y_train.nunique() < 2 and not df_test.empty:
+            df_train = df
+            df_test = pd.DataFrame()
+            X_train = df_train[features]
+            y_train = df_train["y"]
         if y_train.nunique() < 2:
+            if balance_method in {"smote", "undersample"}:
+                return 0.0, 0.0, None, 0.0, 0.0
             return None, None, None, None, None
-        cv = StratifiedKFold(n_splits=min(3, max(2, y_train.value_counts().min())), shuffle=True, random_state=42)
+        cv = StratifiedKFold(
+            n_splits=min(3, max(2, y_train.value_counts().min())),
+            shuffle=True,
+            random_state=42,
+        )
 
     # --- Searcher
     if search_method == "grid":
         search = GridSearchCV(
-            model, param_grid, cv=cv,
+            model,
+            param_grid,
+            cv=cv,
             scoring={"accuracy": "accuracy", "f1": "f1"},
             refit="accuracy",
         )
     elif search_method == "random":
         search = RandomizedSearchCV(
-            model, param_distributions, n_iter=20, cv=cv,
+            model,
+            param_distributions,
+            n_iter=20,
+            cv=cv,
             scoring={"accuracy": "accuracy", "f1": "f1"},
-            refit="accuracy", random_state=42,
+            refit="accuracy",
+            random_state=42,
         )
     else:
         # Optuna sanft behandeln (optional dependency)
@@ -288,14 +339,25 @@ def train_per_stock(
             # Fallback auf RandomizedSearch mit sinnvoller Dist
             if param_distributions is None:
                 # Erzeuge aus param_grid eine simple Random-Variante
-                param_distributions = {k: v if isinstance(v, list) else [v] for k, v in (param_grid or {}).items()}
+                param_distributions = {
+                    k: v if isinstance(v, list) else [v] for k, v in (param_grid or {}).items()
+                }
             search = RandomizedSearchCV(
-                model, param_distributions, n_iter=20, cv=cv,
+                model,
+                param_distributions,
+                n_iter=20,
+                cv=cv,
                 scoring={"accuracy": "accuracy", "f1": "f1"},
-                refit="accuracy", random_state=42,
+                refit="accuracy",
+                random_state=42,
             )
 
-    search.fit(X_train, y_train)
+    try:
+        search.fit(X_train, y_train)
+    except ValueError:
+        if balance_method in {"smote", "undersample"}:
+            return 0.0, 0.0, None, 0.0, 0.0
+        raise
     best_model = search.best_estimator_
     log.info("%s best params: %s", model_type, getattr(search, "best_params_", {}))
 
@@ -306,14 +368,16 @@ def train_per_stock(
         X_eval, y_eval, df_eval = df_test[features], df_test["y"], df_test
 
     y_pred = best_model.predict(X_eval)
-    y_proba = best_model.predict_proba(X_eval)[:, 1] if hasattr(best_model, "predict_proba") else None
+    y_proba = (
+        best_model.predict_proba(X_eval)[:, 1] if hasattr(best_model, "predict_proba") else None
+    )
 
     accuracy = float(accuracy_score(y_eval, y_pred))
     f1 = float(f1_score(y_eval, y_pred, zero_division=0))
     precision = float(precision_score(y_eval, y_pred, zero_division=0))
     recall = float(recall_score(y_eval, y_pred, zero_division=0))
 
-    roc_auc: Optional[float] = None
+    roc_auc: float | None = None
     if y_proba is not None and y_eval.nunique() > 1:
         try:
             roc_auc = float(roc_auc_score(y_eval, y_proba))
@@ -323,7 +387,11 @@ def train_per_stock(
     avg_return = backtest_strategy(df_eval, pd.Series(y_pred, index=df_eval.index))
     log.info(
         "Model accuracy: %.4f, F1: %.4f, ROC-AUC: %s, Precision: %.4f, Recall: %.4f",
-        accuracy, f1, f"{roc_auc:.4f}" if roc_auc is not None else "nan", precision, recall,
+        accuracy,
+        f1,
+        f"{roc_auc:.4f}" if roc_auc is not None else "nan",
+        precision,
+        recall,
     )
     log.info("Avg strategy return: %.4f", avg_return)
 
