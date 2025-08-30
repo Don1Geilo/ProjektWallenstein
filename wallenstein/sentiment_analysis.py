@@ -119,8 +119,11 @@ class SentimentEngine:
             try:
                 out = self._hf(txt, top_k=None, truncation=True)
                 if out and isinstance(out, list):
+                    scores = out[0] if out and isinstance(out[0], list) else out
                     by = {
-                        d["label"].lower(): d["score"] for d in out if "label" in d and "score" in d
+                        d["label"].lower(): d["score"]
+                        for d in scores
+                        if isinstance(d, dict) and "label" in d and "score" in d
                     }
                     pos = by.get("positive", 0.0)
                     neu = by.get("neutral", 0.0)
