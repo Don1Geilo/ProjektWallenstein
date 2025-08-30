@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Dict, List, Set
+
 import duckdb
 
 DATA_FILE = Path(__file__).resolve().parents[1] / "data" / "ticker_aliases.json"
