@@ -122,7 +122,7 @@ def train_per_stock(
     avg_loss = loss.rolling(14).mean()
     rs = avg_gain / avg_loss.replace(0, pd.NA)
     df["RSI"] = (100 - (100 / (1 + rs))).shift(1)
-    df["RSI"].replace([float("inf"), float("-inf")], pd.NA, inplace=True)
+    df["RSI"] = df["RSI"].replace([float("inf"), float("-inf")], pd.NA)
     features.append("RSI")
 
     ema12 = df["close"].ewm(span=12, adjust=False).mean()
@@ -144,8 +144,8 @@ def train_per_stock(
 
     # --- Label & Cleanup
     df["y"] = (df["close"] > df["Close_lag1"]).astype(int)
-    df.replace([float("inf"), float("-inf")], pd.NA, inplace=True)
-    df.dropna(inplace=True)
+    df = df.replace([float("inf"), float("-inf")], pd.NA)
+    df = df.dropna()
 
     if len(df) < 2 or df["y"].nunique() < 2:
         if balance_method in {"smote", "undersample"}:
