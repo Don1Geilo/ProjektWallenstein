@@ -121,6 +121,7 @@ def resolve_tickers(override: str | None = None) -> list[str]:
     return tickers
 
 
+
 def train_model_for_ticker(
     ticker: str,
     db_path: str,
@@ -169,6 +170,7 @@ def train_model_for_ticker(
         return ticker, None, None, None, None, None
 
 
+
 # ---------- Main ----------
 def run_pipeline(tickers: list[str] | None = None) -> int:
     """Execute the complete Wallenstein data pipeline.
@@ -209,7 +211,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     fx_added = 0
 
     # Parallel: Preise, Reddit, FX
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=settings.PIPELINE_MAX_WORKERS) as executor:
         fut_prices = executor.submit(update_prices, DB_PATH, tickers)
         fut_reddit = executor.submit(
             update_reddit_data,
@@ -290,17 +292,53 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 sentiment_frames[ticker] = (
                     df_valid.groupby("date")["sentiment"].mean().reset_index()
                 )
+                sentiments[ticker] = float(df_valid["sentiment"].dropna().mean() or 0.0)
+            else:
+                sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
+                sentiments[ticker] = 0.0
+
                 # Durchschnittliches Sentiment für den Ticker (derzeit nicht weiterverwendet)
                 _ = float(df_valid["sentiment"].dropna().mean() or 0.0)
             else:
                 sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
+
         else:
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
 
     # --- Per-Stock-Modell trainieren (parallel, read-only Zugriffe auf DuckDB sind ok) ---
+
+    def _train(t: str):
+        try:
+            with duckdb.connect(DB_PATH) as con:
+                df_price = con.execute(
+                    "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
+                    [t],
+                ).fetchdf()
+            if df_price.empty:
+                log.info(f"{t}: Keine Preisdaten – Training übersprungen")
+                return t, None, None, None, None, None
+
+            df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
+            df_sent = sentiment_frames.get(t, pd.DataFrame(columns=["date", "sentiment"])).copy()
+            if not df_sent.empty:
+                df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
+
+            df_stock = pd.merge(df_price, df_sent, on="date", how="left")
+            acc, f1, roc_auc, precision, recall = train_per_stock(df_stock)
+            if acc is None:
+                log.info(f"{t}: Zu wenige Daten für Modelltraining")
+            return t, acc, f1, roc_auc, precision, recall
+        except Exception as e:
+            log.warning(f"{t}: Modelltraining fehlgeschlagen: {e}")
+            return t, None, None, None, None, None
+
+    with ThreadPoolExecutor(max_workers=settings.PIPELINE_MAX_WORKERS) as ex:
+        for t, acc, f1, roc_auc, precision, recall in ex.map(_train, tickers):
+
     train = partial(train_model_for_ticker, db_path=DB_PATH, sentiment_frames=sentiment_frames)
     with ThreadPoolExecutor() as ex:
         for t, acc, f1, roc_auc, precision, recall in ex.map(train, tickers):
+
             if acc is not None:
                 roc_disp = roc_auc if roc_auc is not None else float("nan")
                 log.info(
