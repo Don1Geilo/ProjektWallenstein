@@ -1,10 +1,7 @@
 import logging
+from collections import Counter
 
-import numpy as np
 import pandas as pd
-from imblearn.over_sampling import SMOTE
-from imblearn.pipeline import Pipeline as ImbPipeline
-from imblearn.under_sampling import RandomUnderSampler
 from scipy.stats import loguniform, randint
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -25,6 +22,14 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 log = logging.getLogger(__name__)
+
+
+def _can_use_smote(y, k_neighbors: int = 5) -> bool:
+    cnt = Counter(y)
+    if len(cnt) < 2:
+        return False
+    n_min = min(cnt.values())
+    return n_min > k_neighbors
 
 
 def backtest_strategy(df: pd.DataFrame, signals: pd.Series) -> float:
@@ -154,12 +159,34 @@ def train_per_stock(
         return None, None, None, None, None
 
     X, y = df[features], df["y"]
-    class_counts = np.bincount(y.astype(int), minlength=2)
-    min_class = int(class_counts.min())
-    if min_class < 2:
-        log.info("Insufficient samples per class: %s", class_counts.tolist())
+    class_counts = Counter(y)
+    if min(class_counts.values()) < 2:
+        log.info("Insufficient samples per class: %s", dict(class_counts))
+        if balance_method in {"smote", "undersample"}:
+            return 0.0, 0.0, None, 0.0, 0.0
         return None, None, None, None, None
-    n_splits = min(3, max(2, min_class))
+    n_splits = min(n_splits, max(2, min(class_counts.values())))
+
+    if balance_method == "smote":
+        try:
+            from imblearn.over_sampling import SMOTE  # type: ignore
+            from imblearn.pipeline import Pipeline as ImbPipeline  # type: ignore
+        except Exception:
+            balance_method = "none"
+        else:
+            if not _can_use_smote(y):
+                balance_method = "none"
+            else:
+                k_neighbors = min(5, min(class_counts.values()) - 1)
+    elif balance_method == "undersample":
+        if min(class_counts.values()) < 2:
+            balance_method = "none"
+        else:
+            try:
+                from imblearn.pipeline import Pipeline as ImbPipeline  # type: ignore
+                from imblearn.under_sampling import RandomUnderSampler  # type: ignore
+            except Exception:
+                balance_method = "none"
 
     # Baselines (Logging)
     class_distribution = y.value_counts().sort_index().to_dict()
@@ -185,15 +212,15 @@ def train_per_stock(
     use_optuna = search_method == "optuna"
 
     if model_type == "logistic":
+        param_name = "clf__C"
         if balance_method == "smote":
             model = ImbPipeline(
                 [
-                    ("sampler", SMOTE(random_state=42, k_neighbors=1)),
+                    ("sampler", SMOTE(random_state=42, k_neighbors=k_neighbors)),
                     ("scaler", StandardScaler()),
                     ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
             )
-            param_name = "clf__C"
         elif balance_method == "undersample":
             model = ImbPipeline(
                 [
@@ -202,7 +229,6 @@ def train_per_stock(
                     ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
             )
-            param_name = "clf__C"
         else:
             model = Pipeline(
                 [
@@ -210,7 +236,6 @@ def train_per_stock(
                     ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
             )
-            param_name = "clf__C"
 
         param_grid = {param_name: [0.01, 0.1, 1.0, 10.0]}
         if search_method == "random":

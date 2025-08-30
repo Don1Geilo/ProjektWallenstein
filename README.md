@@ -121,6 +121,25 @@ If the file exists it is loaded on import and merged with the default
 mapping. Custom keywords therefore influence all subsequent calls to
 ``analyze_sentiment``.
 
+## Sentiment Engine (Multilingual + Keyword-Boosts + Weighted Aggregation)
+
+Reddit posts are cleaned (links, handles and simple markdown removed) and
+lower‑cased before sentiment analysis. When the optional `transformers` package
+is available the engine uses the multilingual
+`cardiffnlp/twitter-xlm-roberta-base-sentiment` model to obtain probabilities
+for negative, neutral and positive labels. If `transformers` or its
+dependencies are missing, the system falls back to NLTK's VADER lexicon, which
+is downloaded automatically when needed.
+
+Simple keyword boosts adjust the score (`+0.2` for "long"/"call", `-0.2` for
+"short"/"put" with a cap of ±0.4). Each post receives a weight of
+`1 + log10(1+upvotes) + 0.2*log10(1+num_comments)`. Scores are aggregated per
+ticker and day (mean, weighted mean and median) and stored in DuckDB's
+`reddit_daily_sentiment` table.
+
+The sentiment engine runs without `transformers` or `torch`; in that case the
+VADER path is used transparently.
+
 ## Dynamic Watchlist + Telegram Bot
 
 Expose ``TELEGRAM_BOT_TOKEN`` and ``TELEGRAM_CHAT_ID`` (override the database path with ``WALLENSTEIN_DB_PATH`` if needed) and start the bot with:
