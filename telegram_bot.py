@@ -185,10 +185,10 @@ async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     with duckdb.connect(DB_PATH) as con:
         row = con.execute(
             """
-            SELECT AVG(sent_weighted_avg), SUM(posts)
+            SELECT AVG(sentiment_weighted), SUM(posts)
             FROM reddit_sentiment_daily
             WHERE ticker = ? AND date >= CURRENT_DATE - INTERVAL 7 DAY
-              AND sent_weighted_avg IS NOT NULL
+              AND sentiment_weighted IS NOT NULL
             """,
             [ticker],
         ).fetchone()
