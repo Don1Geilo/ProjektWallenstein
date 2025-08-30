@@ -3,7 +3,6 @@ import os
 from typing import List
 
 import duckdb
-
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -186,10 +185,10 @@ async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     with duckdb.connect(DB_PATH) as con:
         row = con.execute(
             """
-            SELECT AVG(sentiment_weighted), COUNT(*)
-            FROM reddit_enriched
-            WHERE ticker = ? AND created_utc >= CURRENT_DATE - INTERVAL 7 DAY
-              AND sentiment_weighted IS NOT NULL
+            SELECT AVG(sent_weighted_avg), SUM(post_count)
+            FROM reddit_sentiment_daily
+            WHERE ticker = ? AND date >= CURRENT_DATE - INTERVAL 7 DAY
+              AND sent_weighted_avg IS NOT NULL
             """,
             [ticker],
         ).fetchone()
