@@ -65,10 +65,10 @@ def init_schema(db_path: str | None = None) -> None:
     try:
         import duckdb
         with duckdb.connect(db_path or settings.WALLENSTEIN_DB_PATH) as con:
-            n = seed_from_json(con)
-            if n:
+            new_rows = seed_from_json(con)
+            if new_rows:
                 log = logging.getLogger("wallenstein")
-                log.info(f"Aliase aus JSON importiert: {n}")
+                log.info(f"Aliase aus JSON importiert: {new_rows} neue Zeilen")
     except Exception as e:  # pragma: no cover - best effort
         logging.getLogger("wallenstein").warning(
             f"Alias-Seed übersprungen: {e}"
