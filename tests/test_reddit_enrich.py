@@ -41,7 +41,7 @@ def test_enrich_reddit_posts(monkeypatch):
         "SELECT id, ticker, sentiment_dict, sentiment_weighted FROM reddit_enriched"
     ).fetchone()
 
-    assert row[0] == int("abc", 36)
+    assert row[0] == "abc"
     assert row[1] == "ABC"
     assert row[2] == 0.5
     assert row[3] == pytest.approx(0.5 * math.log(10))
@@ -54,7 +54,7 @@ def test_compute_reddit_trends():
     df = pd.DataFrame(
         [
             {
-                "id": 1,
+                "id": "1",
                 "ticker": "ABC",
                 "created_utc": datetime(2024, 1, 1, 12, tzinfo=timezone.utc),
                 "text": "",
@@ -67,7 +67,7 @@ def test_compute_reddit_trends():
                 "return_7d": None,
             },
             {
-                "id": 2,
+                "id": "2",
                 "ticker": "ABC",
                 "created_utc": datetime(2024, 1, 1, 18, tzinfo=timezone.utc),
                 "text": "",
@@ -102,7 +102,7 @@ def test_compute_returns():
     post_df = pd.DataFrame(
         [
             {
-                "id": 1,
+                "id": "1",
                 "ticker": "ABC",
                 "created_utc": datetime(2024, 1, 1, tzinfo=timezone.utc),
                 "text": "",
@@ -168,7 +168,7 @@ def test_compute_returns():
     reddit_enrich.compute_returns(con)
 
     row = con.execute(
-        "SELECT return_1d, return_3d, return_7d FROM reddit_enriched WHERE id=1"
+        "SELECT return_1d, return_3d, return_7d FROM reddit_enriched WHERE id='1'"
     ).fetchone()
 
     assert row[0] == pytest.approx(0.1)
