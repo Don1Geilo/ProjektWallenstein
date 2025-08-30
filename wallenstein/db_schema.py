@@ -19,7 +19,7 @@ SCHEMAS = {
         "upvotes": "INTEGER",
     },
     "reddit_enriched": {
-        "id": "BIGINT",
+        "id": "TEXT",
         "ticker": "TEXT",
         "created_utc": "TIMESTAMP",
         "text": "TEXT",
