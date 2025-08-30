@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 import duckdb
 
 from wallenstein.config import settings
@@ -69,8 +67,6 @@ def generate_overview(
             if usd_per_eur:
                 prices_eur[t] = px / usd_per_eur
 
-    cutoff = datetime.utcnow() - timedelta(days=7)
-
     def _hotness_to_emoji(val: float | None) -> str:
         if val is None or val <= 0:
             return ""
@@ -96,15 +92,29 @@ def generate_overview(
                 sent_row = con.execute(
                     """
                     SELECT AVG(sentiment_dict) AS s, AVG(sentiment_weighted) AS w
-                    FROM reddit_enriched
-                    WHERE ticker = ? AND created_utc >= ? AND sentiment_dict IS NOT NULL
+                    FROM reddit_sentiment_daily
+                    WHERE ticker = ? AND date >= CURRENT_DATE - INTERVAL 7 DAY
                     """,
-                    [t, cutoff],
+                    [t],
                 ).fetchone()
             except duckdb.Error:
                 sent_row = None
             w_sent = sent_row[1] if sent_row and sent_row[1] is not None else 0.0
             lines.append(f"Sentiment (7d, weighted): {w_sent:+.2f}")
+
+            try:
+                sent_row_24h = con.execute(
+                    """
+                    SELECT AVG(sentiment_weighted) AS w
+                    FROM reddit_sentiment_hourly
+                    WHERE ticker = ? AND created_utc >= NOW() - INTERVAL 24 HOUR
+                    """,
+                    [t],
+                ).fetchone()
+            except duckdb.Error:
+                sent_row_24h = None
+            if sent_row_24h and sent_row_24h[0] is not None:
+                lines.append(f"Sentiment (24h, weighted): {sent_row_24h[0]:+.2f}")
 
             try:
                 trend_today = con.execute(
