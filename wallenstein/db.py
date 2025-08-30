@@ -8,6 +8,7 @@ Python code.
 
 from __future__ import annotations
 
+import logging
 from importlib import resources
 from pathlib import Path
 
@@ -42,3 +43,33 @@ def init_schema(db_path: str | None = None) -> None:
         schema_sql = resources.files(__package__).joinpath("schema.sql").read_text()
         _execute_script(con, schema_sql)
         ensure_tables(con)
+        con.execute(
+            """
+        CREATE TABLE IF NOT EXISTS ticker_aliases (
+          ticker VARCHAR,
+          alias  VARCHAR,
+          source VARCHAR,
+          added_at TIMESTAMP DEFAULT NOW(),
+          UNIQUE(ticker, alias)
+        )
+        """
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ticker_aliases_alias ON ticker_aliases(alias)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ticker_aliases_tkr ON ticker_aliases(ticker)"
+        )
+
+    from wallenstein.aliases import seed_from_json
+    try:
+        import duckdb
+        with duckdb.connect(db_path or settings.WALLENSTEIN_DB_PATH) as con:
+            n = seed_from_json(con)
+            if n:
+                log = logging.getLogger("wallenstein")
+                log.info(f"Aliase aus JSON importiert: {n}")
+    except Exception as e:  # pragma: no cover - best effort
+        logging.getLogger("wallenstein").warning(
+            f"Alias-Seed übersprungen: {e}"
+        )
