@@ -1,5 +1,6 @@
 import logging
 import math
+from datetime import date, timedelta
 
 import duckdb
 import pandas as pd
@@ -133,3 +134,27 @@ def test_get_last_close_returns_nan_when_missing(tmp_path):
     val = stock_data.get_last_close(con, "NONE")
     con.close()
     assert math.isnan(val)
+
+
+def test_purge_old_prices_removes_expired_rows(tmp_path, monkeypatch):
+    db = tmp_path / "purge.duckdb"
+    con = duckdb.connect(str(db))
+    stock_data._ensure_prices_table(con)
+    old_date = date.today() - timedelta(days=40)
+    new_date = date.today()
+    con.execute(
+        "INSERT INTO prices VALUES (?,?,?,?,?,?,?,?)",
+        (old_date, "AAA", 1, 1, 1, 1, 1, 1),
+    )
+    con.execute(
+        "INSERT INTO prices VALUES (?,?,?,?,?,?,?,?)",
+        (new_date, "AAA", 1, 1, 1, 1, 1, 1),
+    )
+    con.close()
+
+    monkeypatch.setattr(stock_data, "DATA_RETENTION_DAYS", 30)
+    stock_data.purge_old_prices(str(db))
+
+    with duckdb.connect(str(db)) as con:
+        rows = con.execute("SELECT date FROM prices ORDER BY date").fetchall()
+    assert rows == [(new_date,)]

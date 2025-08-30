@@ -74,7 +74,7 @@ from wallenstein.reddit_enrich import (
     enrich_reddit_posts,
 )
 from wallenstein.sentiment import analyze_sentiment_batch
-from wallenstein.stock_data import update_fx_rates, update_prices
+from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
 
 
 def resolve_tickers(override: str | None = None) -> list[str]:
@@ -134,6 +134,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 log.info(f"✅ Kursdaten aktualisiert: +{added} neue Zeilen")
         except Exception as e:
             log.error(f"❌ Kursupdate fehlgeschlagen: {e}")
+        purge_old_prices(DB_PATH)
 
         try:
             reddit_posts = fut_reddit.result()
