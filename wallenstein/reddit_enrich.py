@@ -23,10 +23,9 @@ def enrich_reddit_posts(
     for ticker in tickers:
         for post in posts.get(ticker, []):
             raw_id = post.get("id")
-            try:
-                post_id = int(raw_id, 36)
-            except Exception:
+            if not raw_id:
                 continue
+            post_id = str(raw_id)
             created = pd.to_datetime(post.get("created_utc"), utc=True)
             text = str(post.get("text", ""))
             upvotes = int(post.get("upvotes") or 0)
@@ -65,7 +64,7 @@ def enrich_reddit_posts(
             ).fetchall()
         )
         if existing:
-            mask = ~df.apply(lambda r: (int(r["id"]), r["ticker"]) in existing, axis=1)
+            mask = ~df.apply(lambda r: (r["id"], r["ticker"]) in existing, axis=1)
             df = df.loc[mask]
     if df.empty:
         return 0
