@@ -19,7 +19,7 @@ SCHEMAS = {
         "upvotes": "INTEGER",
     },
     "reddit_enriched": {
-        "id": "BIGINT",
+        "id": "VARCHAR",
         "ticker": "TEXT",
         "created_utc": "TIMESTAMP",
         "text": "TEXT",
@@ -111,9 +111,18 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
                 pass
 
         if table == "reddit_enriched":
+            info = con.execute("PRAGMA table_info('reddit_enriched')").fetchall()
+            col_types = {row[1]: row[2].upper() for row in info}
+            if col_types.get("id") != "VARCHAR":
+                try:
+                    con.execute(
+                        "ALTER TABLE reddit_enriched ALTER COLUMN id SET DATA TYPE VARCHAR"
+                    )
+                except duckdb.Error:
+                    pass
             try:
                 con.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS reddit_enriched_idx ON reddit_enriched(id, ticker)"
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_reddit_enriched_id_ticker ON reddit_enriched(id, ticker)"
                 )
             except duckdb.Error:
                 pass
