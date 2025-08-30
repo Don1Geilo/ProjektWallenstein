@@ -101,7 +101,6 @@ def resolve_tickers(override: str | None = None) -> list[str]:
     return tickers
 
 
-
 # ---------- Main ----------
 def run_pipeline(tickers: list[str] | None = None) -> int:
     t0 = time.time()
@@ -118,7 +117,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     fx_added = 0
 
     # Parallel: Preise, Reddit, FX
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=settings.PIPELINE_MAX_WORKERS) as executor:
         fut_prices = executor.submit(update_prices, DB_PATH, tickers)
         fut_reddit = executor.submit(
             update_reddit_data,
@@ -180,9 +179,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 df_posts["sentiment"] = analyze_sentiment_batch(
                     df_posts["text"].astype(str).tolist()
                 )
-                df_posts["sentiment"] = pd.to_numeric(
-                    df_posts["sentiment"], errors="coerce"
-                )
+                df_posts["sentiment"] = pd.to_numeric(df_posts["sentiment"], errors="coerce")
             else:
                 df_posts["sentiment"] = 0.0
 
@@ -201,13 +198,9 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 sentiment_frames[ticker] = (
                     df_valid.groupby("date")["sentiment"].mean().reset_index()
                 )
-                sentiments[ticker] = float(
-                    df_valid["sentiment"].dropna().mean() or 0.0
-                )
+                sentiments[ticker] = float(df_valid["sentiment"].dropna().mean() or 0.0)
             else:
-                sentiment_frames[ticker] = pd.DataFrame(
-                    columns=["date", "sentiment"]
-                )
+                sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
                 sentiments[ticker] = 0.0
         else:
             sentiments[ticker] = 0.0
@@ -239,7 +232,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             log.warning(f"{t}: Modelltraining fehlgeschlagen: {e}")
             return t, None, None, None, None, None
 
-    with ThreadPoolExecutor() as ex:
+    with ThreadPoolExecutor(max_workers=settings.PIPELINE_MAX_WORKERS) as ex:
         for t, acc, f1, roc_auc, precision, recall in ex.map(_train, tickers):
             if acc is not None:
                 roc_disp = roc_auc if roc_auc is not None else float("nan")
@@ -257,6 +250,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
     log.info(f"🏁 Fertig in {time.time() - t0:.1f}s")
     return 0
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Wallenstein pipeline")
