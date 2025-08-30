@@ -2,6 +2,8 @@ import logging
 import os
 from typing import List
 
+import duckdb
+
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -42,6 +44,8 @@ HELP = (
     "• `/remove NVDA` – Ticker entfernen\n"
     "• `/list` – Watchlist anzeigen\n"
     "• `/alerts` – aktive Alerts listen (falls konfiguriert)\n"
+    "• `/trends` – Top 5 Ticker des Tages\n"
+    "• `/sentiment NVDA` – 7d-Sentiment für Ticker\n"
 )
 
 
@@ -99,7 +103,7 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for t in tickers:
         add_ticker(t)  # nutzt settings.WALLENSTEIN_DB_PATH intern
-    await update.message.reply_text("Hinzugefügt: " + ", ".join(tickers))
+    await update.message.reply_text(", ".join(tickers) + " added.")
 
 
 async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -115,7 +119,7 @@ async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     for t in tickers:
         remove_ticker(t)
-    await update.message.reply_text("Entfernt: " + ", ".join(tickers))
+    await update.message.reply_text(", ".join(tickers) + " removed.")
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -149,6 +153,42 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("\n".join(lines))
 
 
+async def cmd_trends(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    with duckdb.connect(DB_PATH) as con:
+        rows = con.execute(
+            "SELECT ticker, hotness FROM reddit_trends WHERE date = CURRENT_DATE ORDER BY hotness DESC LIMIT 5"
+        ).fetchall()
+    if not rows:
+        await update.message.reply_text("Keine Trends heute.")
+        return
+    lines = [f"{t}: {int(h)}" for t, h in rows]
+    await update.message.reply_text("\n".join(lines))
+
+
+async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /sentiment TICKER")
+        return
+    ticker = context.args[0].upper()
+    with duckdb.connect(DB_PATH) as con:
+        row = con.execute(
+            """
+            SELECT AVG(sentiment_weighted) FROM reddit_enriched
+            WHERE ticker = ? AND created_utc >= CURRENT_DATE - INTERVAL 7 DAY
+              AND sentiment_weighted IS NOT NULL
+            """,
+            [ticker],
+        ).fetchone()
+    if row and row[0] is not None:
+        await update.message.reply_text(f"{ticker}: {row[0]:+.2f}")
+    else:
+        await update.message.reply_text("Keine Daten.")
+
+
 def main() -> None:
     """Startet den Telegram-Bot und lauscht auf Befehle."""
     token = (settings.TELEGRAM_BOT_TOKEN or "").strip()
@@ -164,6 +204,8 @@ def main() -> None:
     app.add_handler(CommandHandler("remove", cmd_remove))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("alerts", cmd_alerts))
+    app.add_handler(CommandHandler("trends", cmd_trends))
+    app.add_handler(CommandHandler("sentiment", cmd_sentiment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticker))
 
     app.run_polling()

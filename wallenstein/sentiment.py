@@ -460,7 +460,7 @@ def analyze_sentiment_bert(text: str) -> float:
     return 0.0
 
 
-def analyze_sentiment(text: str) -> float:
+def analyze_sentiment(text: str) -> float | None:
     """Return a sentiment score for ``text``.
 
     Preference:
@@ -488,10 +488,11 @@ def analyze_sentiment(text: str) -> float:
     return _keyword_score_cached(_preprocess(text))
 
 
-def _keyword_score(text: str) -> float:
+def _keyword_score(text: str) -> float | None:
     text = apply_negation(text)
     tokens = text.split()
-    score = 0
+    score = 0.0
+    matched = False
     i = 0
     while i < len(tokens):
         token = tokens[i]
@@ -500,15 +501,18 @@ def _keyword_score(text: str) -> float:
             multiplier = INTENSITY_WEIGHTS[token]
             i += 1
             token = tokens[i]
-        score += KEYWORD_SCORES.get(token, 0) * multiplier
+        val = KEYWORD_SCORES.get(token)
+        if val:
+            matched = True
+            score += val * multiplier
         i += 1
-    return score
+    return score if matched else None
 
 
 _keyword_score_cached = lru_cache(maxsize=2048)(_keyword_score)
 
 
-def analyze_sentiment_batch(texts: list[str]) -> list[float]:
+def analyze_sentiment_batch(texts: list[str]) -> list[float | None]:
     """Return sentiment scores for multiple texts.
 
     If BERT is active/available we process the whole list in one pipeline call.
@@ -574,10 +578,15 @@ def aggregate_sentiment_by_ticker(ticker_texts: dict[str, Iterable[dict]]) -> di
         entries = list(entries)
         if entries:
             total = 0.0
+            count = 0
             for entry in entries:
                 text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
-                total += analyze_sentiment(text)
-            result[ticker] = total / len(entries)
+                score = analyze_sentiment(text)
+                if score is None:
+                    continue
+                total += score
+                count += 1
+            result[ticker] = total / count if count else 0.0
         else:
             result[ticker] = 0.0
     return result

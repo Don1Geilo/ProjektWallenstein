@@ -56,10 +56,17 @@ def add_symbols(
     if not norm:
         return []
     data = [(str(chat_id), sym, note) for sym in norm]
-    con.executemany(
-        "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES (?, ?, ?)",
-        data,
-    )
+    if hasattr(con, "executemany"):
+        con.executemany(
+            "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES (?, ?, ?)",
+            data,
+        )
+    else:  # pragma: no cover - fallback for simple test stubs
+        for params in data:
+            con.execute(
+                "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES (?, ?, ?)",
+                params,
+            )
     return norm
 
 

@@ -16,6 +16,27 @@ SCHEMAS = {
         "created_utc": "TIMESTAMP",
         "title": "TEXT",
         "text": "TEXT",
+        "upvotes": "INTEGER",
+    },
+    "reddit_enriched": {
+        "id": "BIGINT",
+        "ticker": "TEXT",
+        "created_utc": "TIMESTAMP",
+        "text": "TEXT",
+        "upvotes": "INTEGER",
+        "sentiment_dict": "DOUBLE",
+        "sentiment_weighted": "DOUBLE",
+        "sentiment_ml": "DOUBLE",
+        "return_1d": "DOUBLE",
+        "return_3d": "DOUBLE",
+        "return_7d": "DOUBLE",
+    },
+    "reddit_trends": {
+        "date": "DATE",
+        "ticker": "TEXT",
+        "mentions": "INTEGER",
+        "avg_upvotes": "DOUBLE",
+        "hotness": "DOUBLE",
     },
     "sentiments": {
         "post_id": "TEXT",
@@ -45,9 +66,17 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
         coldefs = ", ".join(f"{c} {t}" for c, t in cols.items())
         if table == "prices":
             coldefs += ", PRIMARY KEY (date, ticker)"
+        if table == "reddit_trends":
+            coldefs += ", PRIMARY KEY (date, ticker)"
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({coldefs});")
         if table == "reddit_posts":
             info = con.execute("PRAGMA table_info('reddit_posts')").fetchall()
+            cols_existing = {row[1] for row in info}
+            if "upvotes" not in cols_existing:
+                try:
+                    con.execute("ALTER TABLE reddit_posts ADD COLUMN upvotes INTEGER")
+                except duckdb.Error:
+                    pass
             has_pk = any(row[1] == "id" and row[5] for row in info)
             if not has_pk:
                 try:
@@ -57,10 +86,10 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
                     pass
             if not has_pk:
                 con.execute(
-                    "CREATE TABLE reddit_posts_tmp (id TEXT PRIMARY KEY, created_utc TIMESTAMP, title TEXT, text TEXT)"
+                    "CREATE TABLE reddit_posts_tmp (id TEXT PRIMARY KEY, created_utc TIMESTAMP, title TEXT, text TEXT, upvotes INTEGER)"
                 )
                 con.execute(
-                    "INSERT INTO reddit_posts_tmp SELECT id, created_utc, title, text FROM reddit_posts"
+                    "INSERT INTO reddit_posts_tmp SELECT id, created_utc, title, text, COALESCE(upvotes,0) FROM reddit_posts"
                 )
                 con.execute("DROP TABLE reddit_posts")
                 con.execute("ALTER TABLE reddit_posts_tmp RENAME TO reddit_posts")
@@ -72,7 +101,13 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             except duckdb.Error:  # pragma: no cover - index may exist already
                 pass
 
-            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS reddit_posts_id_idx ON reddit_posts(id)")
+        if table == "reddit_enriched":
+            try:
+                con.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS reddit_enriched_idx ON reddit_enriched(id, ticker)"
+                )
+            except duckdb.Error:
+                pass
         if table == "fx_rates":
             try:
                 con.execute(

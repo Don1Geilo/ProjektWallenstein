@@ -141,6 +141,7 @@ def fetch_reddit_posts(
                 "title": post.title or "",
                 "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
                 "text": post.selftext or "",
+                "upvotes": getattr(post, "score", 0),
             }
         )
 
@@ -160,6 +161,7 @@ def fetch_reddit_posts(
                             tz=timezone.utc,
                         ),
                         "text": comment.body or "",
+                        "upvotes": getattr(comment, "score", 0),
                     }
                 )
 
@@ -213,11 +215,11 @@ def _load_posts_from_db() -> pd.DataFrame:
     with duckdb.connect(DB_PATH) as con:
         try:
             df = con.execute(
-                "SELECT id, created_utc, title, text FROM reddit_posts ORDER BY created_utc DESC"
+                "SELECT id, created_utc, title, text, upvotes FROM reddit_posts ORDER BY created_utc DESC"
             ).fetch_df()
         except Exception:
             # Falls Tabelle noch nicht existiert
-            df = pd.DataFrame(columns=["id", "created_utc", "title", "text"])
+            df = pd.DataFrame(columns=["id", "created_utc", "title", "text", "upvotes"])
     return df
 
 
@@ -318,10 +320,12 @@ def update_reddit_data(
 
     if frames:
         df_all = pd.concat(frames, ignore_index=True)
+        if "upvotes" not in df_all.columns:
+            df_all["upvotes"] = 0
         df_all.drop_duplicates(subset="id", inplace=True)
 
         if not df_all.empty:
-            df_all = df_all[["id", "created_utc", "title", "text"]]
+            df_all = df_all[["id", "created_utc", "title", "text", "upvotes"]]
             ids = df_all["id"].tolist()
             with duckdb.connect(DB_PATH) as con:
                 ensure_tables(con)
@@ -336,16 +340,20 @@ def update_reddit_data(
                     con.register("df_all", df_all)
                     validate_df(df_all, "reddit_posts")
                     cur = con.execute(
-                        "INSERT INTO reddit_posts (id, created_utc, title, text) "
-                        "SELECT id, created_utc, title, text FROM df_all"
+                        "INSERT INTO reddit_posts (id, created_utc, title, text, upvotes) "
+                        "SELECT id, created_utc, title, text, upvotes FROM df_all"
                     )
-                    log.info(f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)")
+                    log.info(
+                        f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
+                    )
 
     # Alte Einträge entfernen
     purge_old_posts()
 
     # 2) Posts aus DB lesen
     df = _load_posts_from_db()
+    if "upvotes" not in df.columns:
+        df["upvotes"] = 0
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     # Nur Posts weiterverarbeiten, die überhaupt einen der Ticker erwähnen
@@ -362,7 +370,9 @@ def update_reddit_data(
         pattern = "|".join(p.pattern for p in _compile_patterns(tkr))
         mask = df["combined"].str.contains(pattern, regex=True, case=False, na=False)
         bucket_df = (
-            df.loc[mask, ["created_utc", "combined"]].head(100).rename(columns={"combined": "text"})
+            df.loc[mask, ["id", "created_utc", "combined", "upvotes"]]
+            .head(100)
+            .rename(columns={"combined": "text"})
         )
         bucket_df["text"] = bucket_df["text"].str[:2000]
         bucket_df["sentiment"] = bucket_df["text"].apply(analyze_sentiment)
