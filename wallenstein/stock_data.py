@@ -20,7 +20,7 @@ import logging
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 import duckdb
@@ -56,6 +56,8 @@ REFRESH_SAME_DAY = True  # HEUTE immer aktualisieren (Intraday/Close-Refresh)
 STOOQ_HEADERS = {"User-Agent": settings.STOOQ_USER_AGENT}
 # Datenquelle: 'yahoo' (primär Yahoo) oder 'stooq' (primär Stooq)
 DATA_SOURCE = (settings.WALLENSTEIN_DATA_SOURCE or "yahoo").strip().lower()
+# Anzahl der Tage, die Kursdaten vorgehalten werden
+DATA_RETENTION_DAYS = settings.DATA_RETENTION_DAYS
 
 log = logging.getLogger(__name__)
 
@@ -798,6 +800,17 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
         try:
             con.close()
         except Exception:
+            pass
+
+
+def purge_old_prices(db_path: str) -> None:
+    """Remove price rows older than ``DATA_RETENTION_DAYS``."""
+    cutoff = date.today() - timedelta(days=DATA_RETENTION_DAYS)
+    with duckdb.connect(db_path) as con:
+        try:
+            con.execute("DELETE FROM prices WHERE date < ?", [cutoff])
+        except Exception:
+            # Tabelle existiert noch nicht – dann gibt es nichts zu löschen
             pass
 
 

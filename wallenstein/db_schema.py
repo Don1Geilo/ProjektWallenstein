@@ -58,6 +58,13 @@ SCHEMAS = {
         "pair": "TEXT",
         "rate_usd_per_eur": "DOUBLE",
     },
+    "alerts": {
+        "id": "INTEGER",
+        "ticker": "TEXT",
+        "op": "TEXT",
+        "price": "DOUBLE",
+        "active": "BOOLEAN",
+    },
 }
 
 
@@ -68,6 +75,8 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             coldefs += ", PRIMARY KEY (date, ticker)"
         if table == "reddit_trends":
             coldefs += ", PRIMARY KEY (date, ticker)"
+        if table == "alerts":
+            coldefs += ", PRIMARY KEY (id)"
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({coldefs});")
         if table == "reddit_posts":
             info = con.execute("PRAGMA table_info('reddit_posts')").fetchall()

@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import duckdb
@@ -74,11 +75,30 @@ from wallenstein.reddit_enrich import (
     enrich_reddit_posts,
 )
 from wallenstein.sentiment import analyze_sentiment_batch
-from wallenstein.stock_data import update_fx_rates, update_prices
+from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
 
 
 def resolve_tickers(override: str | None = None) -> list[str]:
-    """Ermittle die zu verarbeitenden Ticker (CLI-Override > DB-Watchlist)."""
+    """Return the list of ticker symbols to process.
+
+    The function looks for a comma separated list of tickers provided via
+    ``override`` first.  If no override is given, the symbols are read from the
+    persisted watchlist stored in the DuckDB database.  All symbols are
+    upper–cased and duplicates are removed by the underlying SQL query.
+
+    Parameters
+    ----------
+    override:
+        Optional comma separated string of tickers supplied via the CLI.  When
+        provided it takes precedence over the watchlist stored in the database.
+
+    Returns
+    -------
+    list[str]
+        A list of upper–case ticker symbols.  An empty list is returned if no
+        symbols could be resolved from either source.
+    """
+
     if override:
         tickers = [t.strip().upper() for t in override.split(",") if t.strip()]
         if not tickers:
@@ -101,8 +121,82 @@ def resolve_tickers(override: str | None = None) -> list[str]:
     return tickers
 
 
+
+def train_model_for_ticker(
+    ticker: str,
+    db_path: str,
+    sentiment_frames: dict[str, pd.DataFrame],
+) -> tuple[str, float | None, float | None, float | None, float | None, float | None]:
+    """Train the per-stock model for a single ticker.
+
+    Parameters
+    ----------
+    ticker:
+        The stock symbol to train on.
+    db_path:
+        Path to the DuckDB database containing the price history.
+    sentiment_frames:
+        Pre-computed daily sentiment scores for each ticker.
+
+    Returns
+    -------
+    tuple
+        ``(ticker, acc, f1, roc_auc, precision, recall)`` where each metric may
+        be ``None`` if training could not be performed.
+    """
+
+    try:
+        with duckdb.connect(db_path) as con:
+            df_price = con.execute(
+                "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
+                [ticker],
+            ).fetchdf()
+        if df_price.empty:
+            log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
+            return ticker, None, None, None, None, None
+
+        df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
+        df_sent = sentiment_frames.get(ticker, pd.DataFrame(columns=["date", "sentiment"])).copy()
+        if not df_sent.empty:
+            df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
+
+        df_stock = pd.merge(df_price, df_sent, on="date", how="left")
+        acc, f1, roc_auc, precision, recall = train_per_stock(df_stock)
+        if acc is None:
+            log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
+        return ticker, acc, f1, roc_auc, precision, recall
+    except Exception as e:  # pragma: no cover - unexpected failures
+        log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
+        return ticker, None, None, None, None, None
+
+
+
 # ---------- Main ----------
 def run_pipeline(tickers: list[str] | None = None) -> int:
+    """Execute the complete Wallenstein data pipeline.
+
+    The pipeline performs the following steps:
+
+    1. Determine the list of tickers (if not provided).
+    2. Update market prices, Reddit posts and foreign exchange rates in
+       parallel.
+    3. Enrich Reddit data, compute trends and returns and load recent prices.
+    4. Derive sentiment scores for each ticker and train a per-stock model.
+    5. Generate a summary and optionally send a Telegram notification.
+
+    Parameters
+    ----------
+    tickers:
+        Optional list of ticker symbols.  If ``None`` the list is obtained via
+        :func:`resolve_tickers`.
+
+    Returns
+    -------
+    int
+        ``0`` on success and ``1`` if no tickers were available and the
+        pipeline aborted early.
+    """
+
     t0 = time.time()
     log.info("🚀 Start Wallenstein: Pipeline-Run")
 
@@ -133,6 +227,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 log.info(f"✅ Kursdaten aktualisiert: +{added} neue Zeilen")
         except Exception as e:
             log.error(f"❌ Kursupdate fehlgeschlagen: {e}")
+        purge_old_prices(DB_PATH)
 
         try:
             reddit_posts = fut_reddit.result()
@@ -166,7 +261,6 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             log.warning(f"Alertprüfung fehlgeschlagen: {e}")
 
     # Sentiment je Ticker aus Reddit-Posts
-    sentiments: dict[str, float] = {}
     sentiment_frames: dict[str, pd.DataFrame] = {}
 
     for ticker, texts in reddit_posts.items():
@@ -202,11 +296,17 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             else:
                 sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
                 sentiments[ticker] = 0.0
+
+                # Durchschnittliches Sentiment für den Ticker (derzeit nicht weiterverwendet)
+                _ = float(df_valid["sentiment"].dropna().mean() or 0.0)
+            else:
+                sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
+
         else:
-            sentiments[ticker] = 0.0
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
 
     # --- Per-Stock-Modell trainieren (parallel, read-only Zugriffe auf DuckDB sind ok) ---
+
     def _train(t: str):
         try:
             with duckdb.connect(DB_PATH) as con:
@@ -234,6 +334,11 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
     with ThreadPoolExecutor(max_workers=settings.PIPELINE_MAX_WORKERS) as ex:
         for t, acc, f1, roc_auc, precision, recall in ex.map(_train, tickers):
+
+    train = partial(train_model_for_ticker, db_path=DB_PATH, sentiment_frames=sentiment_frames)
+    with ThreadPoolExecutor() as ex:
+        for t, acc, f1, roc_auc, precision, recall in ex.map(train, tickers):
+
             if acc is not None:
                 roc_disp = roc_auc if roc_auc is not None else float("nan")
                 log.info(
