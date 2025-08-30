@@ -322,7 +322,7 @@ def update_reddit_data(
         df_all = pd.concat(frames, ignore_index=True)
         if "upvotes" not in df_all.columns:
             df_all["upvotes"] = 0
-        df_all.drop_duplicates(subset="id", inplace=True)
+        df_all = df_all.drop_duplicates(subset="id")
 
         if not df_all.empty:
             df_all = df_all[["id", "created_utc", "title", "text", "upvotes"]]
