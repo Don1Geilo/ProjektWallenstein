@@ -121,7 +121,6 @@ def resolve_tickers(override: str | None = None) -> list[str]:
     return tickers
 
 
-
 def train_model_for_ticker(
     ticker: str,
     db_path: str,
@@ -168,7 +167,6 @@ def train_model_for_ticker(
     except Exception as e:  # pragma: no cover - unexpected failures
         log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
         return ticker, None, None, None, None, None
-
 
 
 # ---------- Main ----------
@@ -242,9 +240,10 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
         except Exception as e:
             log.error(f"❌ FX-Update fehlgeschlagen: {e}")
 
+    # Enrichment + Trends + Returns
     try:
         with duckdb.connect(DB_PATH) as con:
-            enriched = enrich_reddit_posts(con, reddit_posts, tickers)
+            enriched = enrich_reddit_posts(con, reddit_posts)
             log.info(f"Reddit-Enrichment: +{enriched} Zeilen")
             trends = compute_reddit_trends(con)
             log.info(f"Trends aktualisiert: {trends}")
@@ -264,6 +263,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             log.warning(f"Alertprüfung fehlgeschlagen: {e}")
 
     # Sentiment je Ticker aus Reddit-Posts
+    sentiments: dict[str, float] = {}
     sentiment_frames: dict[str, pd.DataFrame] = {}
 
     for ticker, texts in reddit_posts.items():
@@ -295,44 +295,20 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 sentiment_frames[ticker] = (
                     df_valid.groupby("date")["sentiment"].mean().reset_index()
                 )
-                sentiments[ticker] = float(df_valid["sentiment"].dropna().mean() or 0.0)
+                series = pd.to_numeric(df_valid.get("sentiment"), errors="coerce")
+                mean_val = series.mean(skipna=True)
+                sentiments[ticker] = 0.0 if pd.isna(mean_val) else float(mean_val)
             else:
                 sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
                 sentiments[ticker] = 0.0
         else:
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
+            sentiments[ticker] = 0.0
 
     # --- Per-Stock-Modell trainieren (parallel, read-only Zugriffe auf DuckDB sind ok) ---
-
-    def _train(t: str):
-        try:
-            with duckdb.connect(DB_PATH) as con:
-                df_price = con.execute(
-                    "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
-                    [t],
-                ).fetchdf()
-            if df_price.empty:
-                log.info(f"{t}: Keine Preisdaten – Training übersprungen")
-                return t, None, None, None, None, None
-
-            df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
-            df_sent = sentiment_frames.get(t, pd.DataFrame(columns=["date", "sentiment"])).copy()
-            if not df_sent.empty:
-                df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
-
-            df_stock = pd.merge(df_price, df_sent, on="date", how="left")
-            acc, f1, roc_auc, precision, recall = train_per_stock(df_stock)
-            if acc is None:
-                log.info(f"{t}: Zu wenige Daten für Modelltraining")
-            return t, acc, f1, roc_auc, precision, recall
-        except Exception as e:
-            log.warning(f"{t}: Modelltraining fehlgeschlagen: {e}")
-            return t, None, None, None, None, None
-
     train = partial(train_model_for_ticker, db_path=DB_PATH, sentiment_frames=sentiment_frames)
     with ThreadPoolExecutor() as ex:
         for t, acc, f1, roc_auc, precision, recall in ex.map(train, tickers):
-
             if acc is not None:
                 roc_disp = roc_auc if roc_auc is not None else float("nan")
                 log.info(

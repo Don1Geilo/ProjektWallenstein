@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple, Optional
+from typing import Optional, List, Tuple
 
 import duckdb
 import pandas as pd
@@ -10,10 +10,12 @@ from .db_schema import validate_df
 from .sentiment import analyze_sentiment
 
 
-# ---------- helpers ----------
+# =========================
+# Helper
+# =========================
 
 def _to_str_id(value) -> Optional[str]:
-    """Reddit-ID immer als String speichern (keine Base36->Int-Konvertierung!)."""
+    """Reddit-ID immer als String speichern (kein Base36->Int-Cast)."""
     if value is None:
         return None
     try:
@@ -40,18 +42,29 @@ def _to_ts_utc_naive(value) -> Optional[pd.Timestamp]:
         return None
     if pd.isna(ts):
         return None
-    # als naive UTC (ohne tz) speichern
+    # als naive UTC (ohne tz) zurückgeben – passt zu DuckDB TIMESTAMP
     return ts.tz_convert(None)
 
 
-# ---------- main funcs ----------
+def _chunk(seq: list, n: int = 2000):
+    """Yield in stabilen Batches (für große Inserts)."""
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
+# =========================
+# Main Functions
+# =========================
 
 def enrich_reddit_posts(
     con: duckdb.DuckDBPyConnection,
     posts_by_ticker: dict[str, list[dict]],
 ) -> int:
-    """Enrich und persistiere Reddit-Posts in reddit_enriched.
-    Gibt die Anzahl der eingefügten Zeilen zurück.
+    """
+    Enrich und persistiere Reddit-Posts in reddit_enriched.
+    - sentiment_dict: Keyword-Heuristik
+    - sentiment_weighted: sentiment_dict * ln(upvotes+1)
+    Gibt die Anzahl der eingefügten/ersetzten Zeilen zurück.
     """
     rows: list[dict] = []
 
@@ -64,14 +77,15 @@ def enrich_reddit_posts(
 
             text = str(post.get("text") or "")[:4096]
             upvotes = _to_upvotes(post.get("upvotes", post.get("score")))
-            sent = analyze_sentiment(text)  # darf None sein
-            weighted = None if sent is None else float(sent) * math.log1p(upvotes)
+            s_raw = analyze_sentiment(text)  # darf None sein
+            sent = float(s_raw) if s_raw is not None else None
+            weighted = None if sent is None else sent * math.log1p(upvotes)
 
             rows.append(
                 {
                     "id": post_id,
-                    "ticker": ticker.upper(),
-                    "created_utc": created.to_pydatetime(),  # duckdb py binding mag py datetime
+                    "ticker": str(ticker).upper(),
+                    "created_utc": created.to_pydatetime(),  # duckdb mag py datetime
                     "text": text,
                     "upvotes": upvotes,
                     "sentiment_dict": sent,
@@ -89,9 +103,18 @@ def enrich_reddit_posts(
     df = pd.DataFrame(rows).drop_duplicates(subset=["id", "ticker"])
     validate_df(df, "reddit_enriched")
 
-    # id+ticker als Schlüssel: delete+insert (deterministisch, upsert-sicher)
-    key_pairs = df[["id", "ticker"]].values.tolist()
-    con.executemany("DELETE FROM reddit_enriched WHERE id = ? AND ticker = ?", key_pairs)
+    # Key-Paare für Upsert
+    key_pairs: list[Tuple[str, str]] = df[["id", "ticker"]].values.tolist()
+
+    # Effizienter Batch-Delete via VALUES + USING Join (ein Roundtrip)
+    con.execute(
+        """
+        DELETE FROM reddit_enriched
+        USING (SELECT * FROM (VALUES {}) AS v(id, ticker)) AS del
+        WHERE reddit_enriched.id = del.id AND reddit_enriched.ticker = del.ticker
+        """.format(", ".join(["(?, ?)"] * len(key_pairs))),
+        [x for pair in key_pairs for x in pair],
+    )
 
     cols = [
         "id",
@@ -106,16 +129,24 @@ def enrich_reddit_posts(
         "return_3d",
         "return_7d",
     ]
-    con.executemany(
-        f"INSERT INTO reddit_enriched ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})",
-        df[cols].values.tolist(),
-    )
-    return len(df)
+    values = df[cols].values.tolist()
+
+    # Große Inserts sicher chunked
+    inserted = 0
+    stmt = f"INSERT INTO reddit_enriched ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})"
+    for chunk in _chunk(values, 2000):
+        con.executemany(stmt, chunk)
+        inserted += len(chunk)
+
+    return inserted
 
 
 def compute_reddit_trends(con: duckdb.DuckDBPyConnection) -> int:
-    """Aggregiere tägliche Reddit-Trends in reddit_trends."""
-    # DuckDB akzeptiert INSERT OR REPLACE – falls nicht, alternativ: DELETE+INSERT via Temp-Table
+    """
+    Aggregiere tägliche Reddit-Trends in reddit_trends.
+    Voraussetzung: reddit_trends(date, ticker) hat PRIMARY KEY (date, ticker).
+    Hinweis: rowcount kann in DuckDB 0 sein, obwohl geschrieben wurde.
+    """
     result = con.execute(
         """
         INSERT OR REPLACE INTO reddit_trends
@@ -130,7 +161,6 @@ def compute_reddit_trends(con: duckdb.DuckDBPyConnection) -> int:
         GROUP BY 1, 2
         """
     )
-    # rowcount kann bei DuckDB 0 sein, obwohl Daten geschrieben wurden; nicht kritisch
     return int(getattr(result, "rowcount", 0) or 0)
 
 
@@ -138,7 +168,10 @@ def compute_returns(
     con: duckdb.DuckDBPyConnection,
     horizon_days: tuple[int, ...] = (1, 3, 7),
 ) -> int:
-    """Berechne Forward-Returns (1d/3d/7d) je Post in reddit_enriched."""
+    """
+    Berechne Forward-Returns (1d/3d/7d) je Post in reddit_enriched.
+    Wichtig: N = Anzahl HANDELStage (Index-Offset), nicht Kalendertage.
+    """
     if not horizon_days:
         return 0
 
@@ -157,15 +190,13 @@ def compute_returns(
 
     updated = 0
 
-    # Gruppiere Preise je Ticker für effiziente Suche
+    # Je Ticker effizient iterieren
     for tkr, grp in df_prices.groupby("ticker"):
         grp = grp.sort_values("date").reset_index(drop=True)
-        # Posts für diesen Ticker:
         posts_t = df_posts[df_posts["ticker"] == tkr]
         if posts_t.empty:
             continue
 
-        dates = grp["date"].values
         closes = grp["close"].values
 
         for r in posts_t.itertuples(index=False):
@@ -175,9 +206,9 @@ def compute_returns(
                 continue
             base_close = float(closes[idx0])
 
-            ret_vals: list[Optional[float]] = []
+            ret_vals: List[Optional[float]] = []
             for h in horizon_days:
-                idxN = idx0 + h  # N Handelstage weiter (nicht Kalendertage)
+                idxN = idx0 + h  # h Handelstage weiter
                 if idxN >= len(grp):
                     ret_vals.append(None)
                 else:
