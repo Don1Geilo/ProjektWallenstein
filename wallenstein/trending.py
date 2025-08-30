@@ -1,9 +1,13 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Set, List, Dict
+from typing import Dict, List, Set
+
 import duckdb
 import pandas as pd
+
 from .aliases import alias_map
+
 
 @dataclass
 class TrendCandidate:
@@ -113,15 +117,20 @@ def auto_add_candidates_to_watchlist(
     if not rows:
         return []
 
-    wl = set(s for (s,) in con.execute("SELECT DISTINCT symbol FROM watchlist").fetchall())
+    wl = {s for (s,) in con.execute("SELECT DISTINCT symbol FROM watchlist").fetchall()}
     added: List[str] = []
-    for sym, mentions, base, lift in rows:
-        if len(added) >= max_new: break
-        if sym in wl: continue
-        if mentions is None or lift is None: continue
+    for sym, mentions, _base, lift in rows:
+        if len(added) >= max_new:
+            break
+        if sym in wl:
+            continue
+        if mentions is None or lift is None:
+            continue
         if mentions >= min_mentions and lift >= min_lift:
-            con.execute("INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES ('GLOBAL', ?, ?)",
-                        [sym, f"auto-added {mentions} m24h, lift {lift:.1f}"])
+            con.execute(
+                "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES ('GLOBAL', ?, ?)",
+                [sym, f"auto-added {mentions} m24h, lift {lift:.1f}"],
+            )
             added.append(sym)
 
     if added and notify_fn:
