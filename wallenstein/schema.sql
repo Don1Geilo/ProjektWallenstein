@@ -8,11 +8,9 @@ CREATE TABLE IF NOT EXISTS watchlists (
 );
 
 CREATE TABLE IF NOT EXISTS alerts (
-    chat_id TEXT NOT NULL,
+    id INTEGER PRIMARY KEY,
     ticker TEXT NOT NULL,
-    target_price DOUBLE NOT NULL,
-    direction TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    triggered_at TIMESTAMP,
-    PRIMARY KEY (chat_id, ticker, target_price, direction)
+    op TEXT NOT NULL,
+    price DOUBLE NOT NULL,
+    active BOOLEAN DEFAULT TRUE
 );
