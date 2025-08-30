@@ -9,10 +9,34 @@ from .db_schema import validate_df
 from .sentiment import analyze_sentiment
 
 
+def _to_str_id(value) -> str | None:
+    try:
+        return str(int(str(value), 36))
+    except Exception:
+        return None
+
+
+def _to_upvotes(value) -> int:
+    try:
+        up = int(value)
+    except Exception:
+        up = 0
+    return max(0, min(10_000_000, up))
+
+
+def _to_ts(value) -> pd.Timestamp | None:
+    try:
+        ts = pd.to_datetime(value, utc=True)
+    except Exception:
+        return None
+    if pd.isna(ts):
+        return None
+    return ts
+
+
 def enrich_reddit_posts(
     con: duckdb.DuckDBPyConnection,
-    posts: dict[str, list[dict]],
-    tickers: list[str],
+    posts_by_ticker: dict[str, list[dict]],
 ) -> int:
     """Enrich and persist Reddit posts.
 
@@ -20,16 +44,14 @@ def enrich_reddit_posts(
     """
 
     rows: list[dict] = []
-    for ticker in tickers:
-        for post in posts.get(ticker, []):
-            raw_id = post.get("id")
-            try:
-                post_id = int(raw_id, 36)
-            except Exception:
+    for ticker, posts in posts_by_ticker.items():
+        for post in posts:
+            post_id = _to_str_id(post.get("id"))
+            created = _to_ts(post.get("created_utc"))
+            if not post_id or created is None:
                 continue
-            created = pd.to_datetime(post.get("created_utc"), utc=True)
             text = str(post.get("text", ""))
-            upvotes = int(post.get("upvotes") or 0)
+            upvotes = _to_upvotes(post.get("upvotes"))
             sent = analyze_sentiment(text)
             weighted = None if sent is None else sent * math.log(upvotes + 1)
             rows.append(
@@ -51,40 +73,38 @@ def enrich_reddit_posts(
     if not rows:
         return 0
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows).drop_duplicates(subset=["id", "ticker"])
     validate_df(df, "reddit_enriched")
 
-    ids = df[["id", "ticker"]].values.tolist()
-    if ids:
-        placeholders = ",".join("(?, ?)" for _ in ids)
-        flat = [item for pair in ids for item in pair]
-        existing = set(
-            con.execute(
-                f"SELECT id, ticker FROM reddit_enriched WHERE (id, ticker) IN ({placeholders})",
-                flat,
-            ).fetchall()
+    id_pairs = df[["id", "ticker"]].values.tolist()
+    if id_pairs:
+        con.executemany(
+            "DELETE FROM reddit_enriched WHERE id = ? AND ticker = ?",
+            id_pairs,
         )
-        if existing:
-            mask = ~df.apply(lambda r: (int(r["id"]), r["ticker"]) in existing, axis=1)
-            df = df.loc[mask]
-    if df.empty:
-        return 0
 
-    con.register("df_enriched", df)
-    inserted = con.execute(
-        """
+    cols = [
+        "id",
+        "ticker",
+        "created_utc",
+        "text",
+        "upvotes",
+        "sentiment_dict",
+        "sentiment_weighted",
+        "sentiment_ml",
+        "return_1d",
+        "return_3d",
+        "return_7d",
+    ]
+    con.executemany(
+        f"""
         INSERT INTO reddit_enriched (
-            id, ticker, created_utc, text, upvotes,
-            sentiment_dict, sentiment_weighted, sentiment_ml,
-            return_1d, return_3d, return_7d
-        )
-        SELECT id, ticker, created_utc, text, upvotes,
-               sentiment_dict, sentiment_weighted, sentiment_ml,
-               return_1d, return_3d, return_7d
-        FROM df_enriched
+            {', '.join(cols)}
+        ) VALUES ({', '.join('?' for _ in cols)})
         """,
-    ).rowcount
-    return int(inserted)
+        df[cols].values.tolist(),
+    )
+    return len(df)
 
 
 def compute_reddit_trends(con: duckdb.DuckDBPyConnection) -> int:
