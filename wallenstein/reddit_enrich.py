@@ -270,18 +270,26 @@ def compute_reddit_sentiment(
 
     if lookback > 0:
         con.execute(
-            f"DELETE FROM reddit_sentiment_hourly WHERE created_utc >= NOW() - INTERVAL {lookback_hours} HOUR",
+            "DELETE FROM reddit_sentiment_hourly "
+            "WHERE created_utc >= NOW() - ? * INTERVAL 1 HOUR",
+            [lookback_hours],
         )
         con.execute(
-            f"DELETE FROM reddit_sentiment_daily WHERE date >= CURRENT_DATE - INTERVAL {lookback} DAY",
+            "DELETE FROM reddit_sentiment_daily "
+            "WHERE date >= CURRENT_DATE - ? * INTERVAL 1 DAY",
+            [lookback],
         )
-        hour_filter = f"AND created_utc >= NOW() - INTERVAL {lookback_hours} HOUR"
-        day_filter = f"AND created_utc >= CURRENT_DATE - INTERVAL {lookback} DAY"
+        hour_filter = "AND created_utc >= NOW() - ? * INTERVAL 1 HOUR"
+        day_filter = "AND created_utc >= CURRENT_DATE - ? * INTERVAL 1 DAY"
+        hour_params = [lookback_hours]
+        day_params = [lookback]
     else:
         con.execute("DELETE FROM reddit_sentiment_hourly")
         con.execute("DELETE FROM reddit_sentiment_daily")
         hour_filter = ""
         day_filter = ""
+        hour_params = []
+        day_params = []
 
     con.execute(
         f"""
@@ -296,6 +304,7 @@ def compute_reddit_sentiment(
         WHERE sentiment_weighted IS NOT NULL {hour_filter}
         GROUP BY 1, 2
         """,
+        hour_params,
     )
 
     con.execute(
@@ -311,15 +320,18 @@ def compute_reddit_sentiment(
         WHERE sentiment_weighted IS NOT NULL {day_filter}
         GROUP BY 1, 2
         """,
+        day_params,
     )
 
     rows_hourly = con.execute(
-        "SELECT COUNT(*) FROM reddit_sentiment_hourly "
-        + (f"WHERE created_utc >= NOW() - INTERVAL {lookback_hours} HOUR" if lookback > 0 else ""),
+        "SELECT COUNT(*) FROM reddit_sentiment_hourly"
+        + (" WHERE created_utc >= NOW() - ? * INTERVAL 1 HOUR" if lookback > 0 else ""),
+        ([] if lookback <= 0 else [lookback_hours]),
     ).fetchone()[0]
     rows_daily = con.execute(
-        "SELECT COUNT(*) FROM reddit_sentiment_daily "
-        + (f"WHERE date >= CURRENT_DATE - INTERVAL {lookback} DAY" if lookback > 0 else ""),
+        "SELECT COUNT(*) FROM reddit_sentiment_daily"
+        + (" WHERE date >= CURRENT_DATE - ? * INTERVAL 1 DAY" if lookback > 0 else ""),
+        ([] if lookback <= 0 else [lookback]),
     ).fetchone()[0]
 
     return int(rows_hourly or 0), int(rows_daily or 0)
