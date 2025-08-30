@@ -256,8 +256,12 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     # Sentiment-Aggregate berechnen
     try:
         with duckdb.connect(DB_PATH) as con:
-            agg_rows = compute_reddit_sentiment_aggregates(con, backfill_days=14)
-            log.info(f"Sentiment-Aggregate aktualisiert: {agg_rows}")
+            h_count, d_count = compute_reddit_sentiment_aggregates(
+                con, backfill_days=14
+            )
+            log.info(
+                f"Sentiment-Aggregate aktualisiert: hourly rows ~{h_count}, daily rows ~{d_count}"
+            )
     except Exception as e:
         log.error(f"❌ Sentiment-Aggregate fehlgeschlagen: {e}")
 
