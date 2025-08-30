@@ -51,6 +51,7 @@ pre-commit install
   BERT model if the `transformers` package is available, otherwise a lightweight
   keyword approach. Set to `1`/`true` to force BERT or `0`/`false` to force the
   keyword method.
+- `PIPELINE_MAX_WORKERS` = number of parallel threads for price, Reddit and FX updates (default `4`)
 
 ### Structure
 ```
