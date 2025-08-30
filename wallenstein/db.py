@@ -54,22 +54,20 @@ def init_schema(db_path: str | None = None) -> None:
         )
         """
         )
-        con.execute(
-            "CREATE INDEX IF NOT EXISTS idx_ticker_aliases_alias ON ticker_aliases(alias)"
-        )
-        con.execute(
-            "CREATE INDEX IF NOT EXISTS idx_ticker_aliases_tkr ON ticker_aliases(ticker)"
-        )
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ticker_aliases_alias ON ticker_aliases(alias)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ticker_aliases_tkr ON ticker_aliases(ticker)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_alias_lower ON ticker_aliases(LOWER(alias))")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_name_lower ON ticker_aliases(LOWER(ticker))")
 
     from wallenstein.aliases import seed_from_json
+
     try:
         import duckdb
+
         with duckdb.connect(db_path or settings.WALLENSTEIN_DB_PATH) as con:
             new_rows = seed_from_json(con)
             if new_rows:
                 log = logging.getLogger("wallenstein")
                 log.info(f"Aliase aus JSON importiert: {new_rows} neue Zeilen")
     except Exception as e:  # pragma: no cover - best effort
-        logging.getLogger("wallenstein").warning(
-            f"Alias-Seed übersprungen: {e}"
-        )
+        logging.getLogger("wallenstein").warning(f"Alias-Seed übersprungen: {e}")

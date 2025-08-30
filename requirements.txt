@@ -6,7 +6,9 @@ python-dotenv
 praw
 scikit-learn
 pyyaml
-imbalanced-learn
+imbalanced-learn>=0.12
+langdetect>=1.0.9
+transformers>=4.41
 optuna
 optuna-integration[sklearn]
 

@@ -34,16 +34,16 @@ SCHEMAS = {
     "reddit_sentiment_hourly": {
         "created_utc": "TIMESTAMP",
         "ticker": "TEXT",
-        "sent_dict_avg": "DOUBLE",
-        "sent_weighted_avg": "DOUBLE",
-        "post_count": "INTEGER",
+        "sentiment_dict": "DOUBLE",
+        "sentiment_weighted": "DOUBLE",
+        "posts": "INTEGER",
     },
     "reddit_sentiment_daily": {
         "date": "DATE",
         "ticker": "TEXT",
-        "sent_dict_avg": "DOUBLE",
-        "sent_weighted_avg": "DOUBLE",
-        "post_count": "INTEGER",
+        "sentiment_dict": "DOUBLE",
+        "sentiment_weighted": "DOUBLE",
+        "posts": "INTEGER",
     },
     "reddit_trends": {
         "date": "DATE",
@@ -133,9 +133,7 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             col_types = {row[1]: row[2].upper() for row in info}
             if col_types.get("id") != "VARCHAR":
                 try:
-                    con.execute(
-                        "ALTER TABLE reddit_enriched ALTER COLUMN id SET DATA TYPE VARCHAR"
-                    )
+                    con.execute("ALTER TABLE reddit_enriched ALTER COLUMN id SET DATA TYPE VARCHAR")
                 except duckdb.Error:
                     pass
             try:
@@ -173,7 +171,6 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS fx_rates_date_pair_idx ON fx_rates(date, pair)"
             )
-
 
 
 def validate_df(df, table_name: str):

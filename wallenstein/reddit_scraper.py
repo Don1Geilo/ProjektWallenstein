@@ -16,7 +16,7 @@ import praw
 
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
-from wallenstein.sentiment import analyze_sentiment
+from wallenstein.sentiment_analysis import analyze_sentiment
 
 try:  # Optional dependency
     import yaml  # type: ignore
@@ -329,6 +329,7 @@ def update_reddit_data(
             ids = df_all["id"].tolist()
             with duckdb.connect(DB_PATH) as con:
                 ensure_tables(con)
+                before = con.execute("SELECT COUNT(*) FROM reddit_posts").fetchone()[0]
                 existing_ids: set[str] = set()
                 if ids:
                     placeholders = ",".join("?" for _ in ids)
@@ -339,13 +340,13 @@ def update_reddit_data(
                 if not df_all.empty:
                     con.register("df_all", df_all)
                     validate_df(df_all, "reddit_posts")
-                    cur = con.execute(
+                    con.execute(
                         "INSERT INTO reddit_posts (id, created_utc, title, text, upvotes) "
                         "SELECT id, created_utc, title, text, upvotes FROM df_all"
                     )
-                    log.info(
-                        f"Wrote {len(df_all)} posts to reddit_posts ({cur.rowcount} new)"
-                    )
+                after = con.execute("SELECT COUNT(*) FROM reddit_posts").fetchone()[0]
+                added = max(0, after - before)
+                log.info(f"Wrote {after} posts ({added} new)")
 
     # Alte Einträge entfernen
     purge_old_posts()

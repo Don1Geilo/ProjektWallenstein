@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 
@@ -76,6 +77,7 @@ from wallenstein.reddit_enrich import (
     enrich_reddit_posts,
 )
 from wallenstein.sentiment import analyze_sentiment_batch
+from wallenstein.sentiment_analysis import analyze_sentiment, post_weight
 from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
 from wallenstein.trending import (
     auto_add_candidates_to_watchlist,
@@ -100,6 +102,7 @@ def resolve_tickers(override: str | None = None) -> list[str]:
     # Aus DuckDB lesen (chat-übergreifend, DISTINCT)
     try:
         from wallenstein.watchlist import all_unique_symbols as wl_all
+
         with duckdb.connect(DB_PATH) as con:
             tickers = [s.strip().upper() for s in wl_all(con)]
     except Exception as exc:  # pragma: no cover
@@ -140,6 +143,79 @@ def train_model_for_ticker(
     except Exception as e:  # pragma: no cover
         log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
         return ticker, None, None, None, None, None
+
+
+# --- Sentiment aggregation helpers ---
+
+
+def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
+    if posts.empty:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "ticker",
+                "n_posts",
+                "sentiment_mean",
+                "sentiment_weighted",
+                "sentiment_median",
+                "updated_at",
+            ]
+        )
+    posts = posts.copy()
+    posts["text"] = posts["title"].fillna("") + " " + posts["selftext"].fillna("")
+    posts["sentiment"] = posts["text"].map(analyze_sentiment)
+    posts["weight"] = posts.apply(
+        lambda r: post_weight(int(r.get("ups", 0)), int(r.get("num_comments", 0))), axis=1
+    )
+    posts["date"] = pd.to_datetime(posts["created_utc"], unit="s").dt.tz_localize("UTC").dt.date
+    agg = (
+        posts.groupby(["date", "ticker"])
+        .apply(
+            lambda g: pd.Series(
+                {
+                    "n_posts": int(len(g)),
+                    "sentiment_mean": float(g["sentiment"].mean()),
+                    "sentiment_weighted": float(
+                        (g["sentiment"] * g["weight"]).sum() / max(1e-9, g["weight"].sum())
+                    ),
+                    "sentiment_median": float(g["sentiment"].median()),
+                }
+            )
+        )
+        .reset_index()
+    )
+    agg["updated_at"] = datetime.now(timezone.utc)
+    return agg
+
+
+def upsert_reddit_daily_sentiment(con, df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reddit_daily_sentiment(
+            date DATE,
+            ticker TEXT,
+            n_posts INTEGER,
+            sentiment_mean DOUBLE,
+            sentiment_weighted DOUBLE,
+            sentiment_median DOUBLE,
+            updated_at TIMESTAMP
+        )
+        """
+    )
+    try:
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rds_ticker_date ON reddit_daily_sentiment(ticker, date)"
+        )
+    except Exception:
+        pass
+    con.register("df", df)
+    con.execute(
+        "DELETE FROM reddit_daily_sentiment WHERE (date, ticker) IN (SELECT date, ticker FROM df)"
+    )
+    con.execute("INSERT INTO reddit_daily_sentiment SELECT * FROM df")
+    return len(df)
 
 
 # ---------- Main ----------
@@ -189,6 +265,37 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             log.info(f"FX-Update: +{fx_added} neue EURUSD-Zeilen")
         except Exception as e:
             log.error(f"❌ FX-Update fehlgeschlagen: {e}")
+
+    # Sentiment aggregation and persistence
+    try:
+        rows_list: list[dict] = []
+        for tkr, posts in reddit_posts.items():
+            for p in posts:
+                created = p.get("created_utc")
+                if hasattr(created, "timestamp"):
+                    created_val = int(created.timestamp())
+                else:
+                    created_val = created
+                rows_list.append(
+                    {
+                        "id": p.get("id"),
+                        "created_utc": created_val,
+                        "ticker": tkr,
+                        "title": p.get("title", ""),
+                        "selftext": p.get("text", ""),
+                        "ups": p.get("upvotes", 0),
+                        "num_comments": p.get("num_comments", 0),
+                    }
+                )
+        posts_df = pd.DataFrame(rows_list)
+        with duckdb.connect(DB_PATH) as con:
+            agg = aggregate_daily_sentiment(posts_df)
+            rows = upsert_reddit_daily_sentiment(con, agg)
+        log.info(
+            f"✅ Sentiment: {rows} rows upserted across {agg['ticker'].nunique() if not agg.empty else 0} tickers"
+        )
+    except Exception as e:
+        log.error(f"❌ Sentiment-Aggregation fehlgeschlagen: {e}")
 
     # Enrichment + Trends + Returns
     try:
