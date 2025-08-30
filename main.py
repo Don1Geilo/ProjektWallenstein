@@ -10,7 +10,6 @@ import duckdb
 import pandas as pd
 from dotenv import find_dotenv, load_dotenv
 
-
 # --- .env laden ---
 env_loaded = load_dotenv(find_dotenv(usecwd=True), override=True)
 if not env_loaded:
@@ -78,6 +77,10 @@ from wallenstein.reddit_enrich import (
 )
 from wallenstein.sentiment import analyze_sentiment_batch
 from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
+from wallenstein.trending import (
+    auto_add_candidates_to_watchlist,
+    scan_reddit_for_candidates,
+)
 
 
 def resolve_tickers(override: str | None = None) -> list[str]:
@@ -202,6 +205,34 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             log.info(f"Sentiment-Aggregate aktualisiert: hourly≈{h_count}, daily≈{d_count}")
     except Exception as e:
         log.error(f"❌ Reddit-Enrichment/Sentiments fehlgeschlagen: {e}")
+    try:
+        with duckdb.connect(DB_PATH) as con:
+            cands = scan_reddit_for_candidates(
+                con,
+                lookback_days=7,
+                window_hours=24,
+                min_mentions=20,
+                min_lift=3.0,
+            )
+            if cands:
+                top_preview = ", ".join(
+                    [f"{c.symbol} (m24h={c.mentions_24h}, x{c.lift:.1f})" for c in cands[:5]]
+                )
+                log.info(f"Trending-Kandidaten (Top 5): {top_preview}")
+            else:
+                log.info("Trending-Kandidaten: keine")
+
+            added_syms = auto_add_candidates_to_watchlist(
+                con,
+                notify_fn=notify_telegram,
+                max_new=3,
+                min_mentions=30,
+                min_lift=4.0,
+            )
+            if added_syms:
+                log.info(f"Auto zur Watchlist hinzugefügt: {', '.join(added_syms)}")
+    except Exception as e:
+        log.warning(f"Trending-Scan fehlgeschlagen: {e}")
 
     # View sicherstellen & Preise ziehen
     ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
