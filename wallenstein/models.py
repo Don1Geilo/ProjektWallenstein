@@ -1,5 +1,6 @@
 import logging
 
+import numpy as np
 import pandas as pd
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
@@ -153,6 +154,12 @@ def train_per_stock(
         return None, None, None, None, None
 
     X, y = df[features], df["y"]
+    class_counts = np.bincount(y.astype(int), minlength=2)
+    min_class = int(class_counts.min())
+    if min_class < 2:
+        log.info("Insufficient samples per class: %s", class_counts.tolist())
+        return None, None, None, None, None
+    n_splits = min(3, max(2, min_class))
 
     # Baselines (Logging)
     class_distribution = y.value_counts().sort_index().to_dict()
@@ -270,7 +277,7 @@ def train_per_stock(
             while y_train.value_counts().min() < 2 and len(df_train) < len(df):
                 df_train = df.iloc[: len(df_train) + 1]
                 y_train = df_train["y"]
-            df_test = df.iloc[len(df_train):]
+            df_test = df.iloc[len(df_train) :]
         X_train = df_train[features]
         y_train = df_train["y"]
         if y_train.nunique() < 2 and not df_test.empty:
@@ -283,7 +290,7 @@ def train_per_stock(
                 return 0.0, 0.0, None, 0.0, 0.0
             return None, None, None, None, None
         cv = StratifiedKFold(
-            n_splits=min(3, max(2, y_train.value_counts().min())),
+            n_splits=n_splits,
             shuffle=True,
             random_state=42,
         )
