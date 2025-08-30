@@ -31,6 +31,20 @@ SCHEMAS = {
         "return_3d": "DOUBLE",
         "return_7d": "DOUBLE",
     },
+    "reddit_sentiment_hourly": {
+        "created_utc": "TIMESTAMP",
+        "ticker": "TEXT",
+        "sent_dict_avg": "DOUBLE",
+        "sent_weighted_avg": "DOUBLE",
+        "post_count": "INTEGER",
+    },
+    "reddit_sentiment_daily": {
+        "date": "DATE",
+        "ticker": "TEXT",
+        "sent_dict_avg": "DOUBLE",
+        "sent_weighted_avg": "DOUBLE",
+        "post_count": "INTEGER",
+    },
     "reddit_trends": {
         "date": "DATE",
         "ticker": "TEXT",
@@ -77,6 +91,10 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             coldefs += ", PRIMARY KEY (date, ticker)"
         if table == "alerts":
             coldefs += ", PRIMARY KEY (id)"
+        if table == "reddit_sentiment_hourly":
+            coldefs += ", PRIMARY KEY (ticker, created_utc)"
+        if table == "reddit_sentiment_daily":
+            coldefs += ", PRIMARY KEY (date, ticker)"
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({coldefs});")
         if table == "reddit_posts":
             info = con.execute("PRAGMA table_info('reddit_posts')").fetchall()
@@ -123,6 +141,12 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             try:
                 con.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_reddit_enriched_id_ticker ON reddit_enriched(id, ticker)"
+                )
+            except duckdb.Error:
+                pass
+            try:
+                con.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_reddit_enriched_tkr_date ON reddit_enriched(ticker, created_utc)"
                 )
             except duckdb.Error:
                 pass
