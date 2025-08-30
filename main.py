@@ -244,7 +244,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
     try:
         with duckdb.connect(DB_PATH) as con:
-            enriched = enrich_reddit_posts(con, reddit_posts, tickers)
+            enriched = enrich_reddit_posts(con, reddit_posts)
             log.info(f"Reddit-Enrichment: +{enriched} Zeilen")
             trends = compute_reddit_trends(con)
             log.info(f"Trends aktualisiert: {trends}")
@@ -265,6 +265,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
     # Sentiment je Ticker aus Reddit-Posts
     sentiment_frames: dict[str, pd.DataFrame] = {}
+    sentiments: dict[str, float] = {}
 
     for ticker, texts in reddit_posts.items():
         texts = list(texts) if texts is not None else []

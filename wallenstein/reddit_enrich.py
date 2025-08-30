@@ -12,7 +12,6 @@ from .sentiment import analyze_sentiment
 def enrich_reddit_posts(
     con: duckdb.DuckDBPyConnection,
     posts: dict[str, list[dict]],
-    tickers: list[str],
 ) -> int:
     """Enrich and persist Reddit posts.
 
@@ -20,18 +19,17 @@ def enrich_reddit_posts(
     """
 
     rows: list[dict] = []
-    for ticker in tickers:
-        for post in posts.get(ticker, []):
+    for ticker, items in posts.items():
+        for post in items:
             raw_id = post.get("id")
-            try:
-                post_id = int(raw_id, 36)
-            except Exception:
+            if raw_id is None:
                 continue
+            post_id = str(raw_id)
             created = pd.to_datetime(post.get("created_utc"), utc=True)
             text = str(post.get("text", ""))
             upvotes = int(post.get("upvotes") or 0)
             sent = analyze_sentiment(text)
-            weighted = None if sent is None else sent * math.log(upvotes + 1)
+            weighted = None if sent is None else sent * math.log1p(upvotes)
             rows.append(
                 {
                     "id": post_id,
@@ -65,7 +63,7 @@ def enrich_reddit_posts(
             ).fetchall()
         )
         if existing:
-            mask = ~df.apply(lambda r: (int(r["id"]), r["ticker"]) in existing, axis=1)
+            mask = ~df.apply(lambda r: (r["id"], r["ticker"]) in existing, axis=1)
             df = df.loc[mask]
     if df.empty:
         return 0

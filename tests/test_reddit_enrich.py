@@ -33,18 +33,18 @@ def test_enrich_reddit_posts(monkeypatch):
     }
     monkeypatch.setattr(reddit_enrich, "analyze_sentiment", lambda text: 0.5)
 
-    reddit_enrich.enrich_reddit_posts(con, posts, ["ABC"])
+    reddit_enrich.enrich_reddit_posts(con, posts)
     # second call should not create duplicates
-    reddit_enrich.enrich_reddit_posts(con, posts, ["ABC"])
+    reddit_enrich.enrich_reddit_posts(con, posts)
 
     row = con.execute(
         "SELECT id, ticker, sentiment_dict, sentiment_weighted FROM reddit_enriched"
     ).fetchone()
 
-    assert row[0] == int("abc", 36)
+    assert row[0] == "abc"
     assert row[1] == "ABC"
     assert row[2] == 0.5
-    assert row[3] == pytest.approx(0.5 * math.log(10))
+    assert row[3] == pytest.approx(0.5 * math.log1p(9))
     count = con.execute("SELECT COUNT(*) FROM reddit_enriched").fetchone()[0]
     assert count == 1
 
@@ -54,7 +54,7 @@ def test_compute_reddit_trends():
     df = pd.DataFrame(
         [
             {
-                "id": 1,
+                "id": "1",
                 "ticker": "ABC",
                 "created_utc": datetime(2024, 1, 1, 12, tzinfo=timezone.utc),
                 "text": "",
@@ -67,7 +67,7 @@ def test_compute_reddit_trends():
                 "return_7d": None,
             },
             {
-                "id": 2,
+                "id": "2",
                 "ticker": "ABC",
                 "created_utc": datetime(2024, 1, 1, 18, tzinfo=timezone.utc),
                 "text": "",
@@ -102,7 +102,7 @@ def test_compute_returns():
     post_df = pd.DataFrame(
         [
             {
-                "id": 1,
+                "id": "1",
                 "ticker": "ABC",
                 "created_utc": datetime(2024, 1, 1, tzinfo=timezone.utc),
                 "text": "",
@@ -168,7 +168,7 @@ def test_compute_returns():
     reddit_enrich.compute_returns(con)
 
     row = con.execute(
-        "SELECT return_1d, return_3d, return_7d FROM reddit_enriched WHERE id=1"
+        "SELECT return_1d, return_3d, return_7d FROM reddit_enriched WHERE id='1'"
     ).fetchone()
 
     assert row[0] == pytest.approx(0.1)
