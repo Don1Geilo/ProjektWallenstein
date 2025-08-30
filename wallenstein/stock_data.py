@@ -443,7 +443,7 @@ def _download_single_safe(
             "Adj Close": "adj_close",
             "Volume": "volume",
         }
-        df.rename(columns={k: v for k, v in colmap.items() if k in df.columns}, inplace=True)
+        df = df.rename(columns={k: v for k, v in colmap.items() if k in df.columns})
         for c in ("adj_close", "volume"):
             if c not in df.columns:
                 df[c] = pd.NA
