@@ -14,6 +14,7 @@ from pathlib import Path
 import duckdb
 
 from .config import settings
+from .db_schema import ensure_tables
 
 
 def get_connection(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
@@ -40,3 +41,4 @@ def init_schema(db_path: str | None = None) -> None:
     with get_connection(db_path) as con:
         schema_sql = resources.files(__package__).joinpath("schema.sql").read_text()
         _execute_script(con, schema_sql)
+        ensure_tables(con)
