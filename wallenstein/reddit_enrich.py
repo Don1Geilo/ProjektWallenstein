@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from typing import Optional, List, Tuple
 
 import duckdb
 import pandas as pd
@@ -9,12 +8,12 @@ import pandas as pd
 from .db_schema import validate_df
 from .sentiment import analyze_sentiment
 
-
 # =========================
 # Helper
 # =========================
 
-def _to_str_id(value) -> Optional[str]:
+
+def _to_str_id(value) -> str | None:
     """Reddit-ID immer als String speichern (kein Base36->Int-Cast)."""
     if value is None:
         return None
@@ -34,7 +33,7 @@ def _to_upvotes(value) -> int:
     return max(0, min(10_000_000, up))
 
 
-def _to_ts_utc_naive(value) -> Optional[pd.Timestamp]:
+def _to_ts_utc_naive(value) -> pd.Timestamp | None:
     """Nach UTC parsen und tz-naiv zurückgeben (kompatibel zu DuckDB TIMESTAMP)."""
     try:
         ts = pd.to_datetime(value, utc=True, errors="coerce")
@@ -49,16 +48,18 @@ def _to_ts_utc_naive(value) -> Optional[pd.Timestamp]:
 def _chunk(seq: list, n: int = 2000):
     """Yield in stabilen Batches (für große Inserts)."""
     for i in range(0, len(seq), n):
-        yield seq[i:i + n]
+        yield seq[i : i + n]
 
 
 # =========================
 # Main Functions
 # =========================
 
+
 def enrich_reddit_posts(
     con: duckdb.DuckDBPyConnection,
     posts_by_ticker: dict[str, list[dict]],
+    _known_tickers: list[str] | None = None,
 ) -> int:
     """
     Enrich und persistiere Reddit-Posts in reddit_enriched.
@@ -104,7 +105,7 @@ def enrich_reddit_posts(
     validate_df(df, "reddit_enriched")
 
     # Key-Paare für Upsert
-    key_pairs: list[Tuple[str, str]] = df[["id", "ticker"]].values.tolist()
+    key_pairs: list[tuple[str, str]] = df[["id", "ticker"]].values.tolist()
 
     # Effizienter Batch-Delete via VALUES + USING Join (ein Roundtrip)
     con.execute(
@@ -112,7 +113,9 @@ def enrich_reddit_posts(
         DELETE FROM reddit_enriched
         USING (SELECT * FROM (VALUES {}) AS v(id, ticker)) AS del
         WHERE reddit_enriched.id = del.id AND reddit_enriched.ticker = del.ticker
-        """.format(", ".join(["(?, ?)"] * len(key_pairs))),
+        """.format(
+            ", ".join(["(?, ?)"] * len(key_pairs))
+        ),
         [x for pair in key_pairs for x in pair],
     )
 
@@ -133,7 +136,9 @@ def enrich_reddit_posts(
 
     # Große Inserts sicher chunked
     inserted = 0
-    stmt = f"INSERT INTO reddit_enriched ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})"
+    stmt = (
+        f"INSERT INTO reddit_enriched ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})"
+    )
     for chunk in _chunk(values, 2000):
         con.executemany(stmt, chunk)
         inserted += len(chunk)
@@ -175,9 +180,7 @@ def compute_returns(
     if not horizon_days:
         return 0
 
-    df_posts = con.execute(
-        "SELECT id, ticker, created_utc FROM reddit_enriched"
-    ).fetch_df()
+    df_posts = con.execute("SELECT id, ticker, created_utc FROM reddit_enriched").fetch_df()
     if df_posts.empty:
         return 0
 
@@ -206,9 +209,10 @@ def compute_returns(
                 continue
             base_close = float(closes[idx0])
 
-            ret_vals: List[Optional[float]] = []
+            ret_vals: list[float | None] = []
             for h in horizon_days:
-                idxN = idx0 + h  # h Handelstage weiter
+                target = r.created_utc + pd.Timedelta(days=h)
+                idxN = grp["date"].searchsorted(target, side="left")
                 if idxN >= len(grp):
                     ret_vals.append(None)
                 else:
@@ -224,4 +228,66 @@ def compute_returns(
     return updated
 
 
-__all__ = ["enrich_reddit_posts", "compute_reddit_trends", "compute_returns"]
+def compute_reddit_sentiment_aggregates(
+    con: duckdb.DuckDBPyConnection,
+    backfill_days: int = 7,
+) -> int:
+    """Aggregate weighted sentiment per day and ticker.
+
+    The function writes per-day sentiment averages into
+    ``reddit_sentiment_aggregates`` and returns the number of inserted rows.
+    Existing rows within the backfill window are replaced.
+    """
+
+    # Ensure table exists
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reddit_sentiment_aggregates (
+            date DATE,
+            ticker TEXT,
+            avg_sentiment DOUBLE,
+            posts INTEGER,
+            PRIMARY KEY (date, ticker)
+        )
+        """
+    )
+
+    lookback = int(backfill_days or 0)
+    if lookback > 0:
+        con.execute(
+            f"DELETE FROM reddit_sentiment_aggregates WHERE date >= CURRENT_DATE - INTERVAL {lookback} DAY"
+        )
+        date_filter = f"AND created_utc >= CURRENT_DATE - INTERVAL {lookback} DAY"
+    else:
+        con.execute("DELETE FROM reddit_sentiment_aggregates")
+        date_filter = ""
+
+    rows = con.execute(
+        f"""
+        SELECT
+            DATE_TRUNC('day', created_utc) AS date,
+            ticker,
+            AVG(sentiment_weighted) AS avg_sentiment,
+            COUNT(*) AS posts
+        FROM reddit_enriched
+        WHERE sentiment_weighted IS NOT NULL {date_filter}
+        GROUP BY 1, 2
+        """
+    ).fetchall()
+
+    if not rows:
+        return 0
+
+    con.executemany(
+        "INSERT OR REPLACE INTO reddit_sentiment_aggregates (date, ticker, avg_sentiment, posts) VALUES (?, ?, ?, ?)",
+        rows,
+    )
+    return len(rows)
+
+
+__all__ = [
+    "enrich_reddit_posts",
+    "compute_reddit_trends",
+    "compute_returns",
+    "compute_reddit_sentiment_aggregates",
+]
