@@ -34,16 +34,16 @@ SCHEMAS = {
     "reddit_sentiment_hourly": {
         "created_utc": "TIMESTAMP",
         "ticker": "TEXT",
-        "sent_dict_avg": "DOUBLE",
-        "sent_weighted_avg": "DOUBLE",
-        "post_count": "INTEGER",
+        "sentiment_dict": "DOUBLE",
+        "sentiment_weighted": "DOUBLE",
+        "posts": "INTEGER",
     },
     "reddit_sentiment_daily": {
         "date": "DATE",
         "ticker": "TEXT",
-        "sent_dict_avg": "DOUBLE",
-        "sent_weighted_avg": "DOUBLE",
-        "post_count": "INTEGER",
+        "sentiment_dict": "DOUBLE",
+        "sentiment_weighted": "DOUBLE",
+        "posts": "INTEGER",
     },
     "reddit_trends": {
         "date": "DATE",

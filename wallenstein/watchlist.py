@@ -13,7 +13,7 @@ Configuration:
 
 from __future__ import annotations
 
-from typing import Iterable, List, Tuple, Optional, Union
+from typing import Iterable, List, Optional, Tuple, Union
 
 import duckdb
 

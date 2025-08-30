@@ -9,6 +9,7 @@ from .sentiment import (
 # Ensure ``pytest`` is available as a built-in for tests that expect it
 try:  # pragma: no cover - only relevant during testing
     import builtins
+
     import pytest
 
     builtins.pytest = pytest
