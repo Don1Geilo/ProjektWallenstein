@@ -31,8 +31,13 @@ def seed_from_json(con: duckdb.DuckDBPyConnection) -> int:
             rows.append((tkr.upper(), a, "seed"))
     if not rows:
         return 0
-    con.executemany("INSERT OR IGNORE INTO ticker_aliases (ticker, alias, source) VALUES (?, ?, ?)", rows)
-    return len(rows)
+    pre_count = con.execute("SELECT COUNT(*) FROM ticker_aliases").fetchone()[0]
+    con.executemany(
+        "INSERT OR IGNORE INTO ticker_aliases (ticker, alias, source) VALUES (?, ?, ?)",
+        rows,
+    )
+    post_count = con.execute("SELECT COUNT(*) FROM ticker_aliases").fetchone()[0]
+    return post_count - pre_count
 
 def add_alias(con: duckdb.DuckDBPyConnection, ticker: str, alias: str, source="manual") -> bool:
     ensure_table(con)
