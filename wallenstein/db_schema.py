@@ -34,16 +34,16 @@ SCHEMAS = {
     "reddit_sentiment_hourly": {
         "created_utc": "TIMESTAMP",
         "ticker": "TEXT",
-        "sent_dict_avg": "DOUBLE",
-        "sent_weighted_avg": "DOUBLE",
-        "post_count": "INTEGER",
+        "sentiment_dict": "DOUBLE",
+        "sentiment_weighted": "DOUBLE",
+        "posts": "INTEGER",
     },
     "reddit_sentiment_daily": {
         "date": "DATE",
         "ticker": "TEXT",
-        "sent_dict_avg": "DOUBLE",
-        "sent_weighted_avg": "DOUBLE",
-        "post_count": "INTEGER",
+        "sentiment_dict": "DOUBLE",
+        "sentiment_weighted": "DOUBLE",
+        "posts": "INTEGER",
     },
     "reddit_trends": {
         "date": "DATE",
@@ -92,7 +92,7 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
         if table == "alerts":
             coldefs += ", PRIMARY KEY (id)"
         if table == "reddit_sentiment_hourly":
-            coldefs += ", PRIMARY KEY (ticker, created_utc)"
+            coldefs += ", PRIMARY KEY (created_utc, ticker)"
         if table == "reddit_sentiment_daily":
             coldefs += ", PRIMARY KEY (date, ticker)"
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({coldefs});")
