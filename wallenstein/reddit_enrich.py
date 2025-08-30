@@ -228,24 +228,37 @@ def compute_returns(
     return updated
 
 
-def compute_reddit_sentiment_aggregates(
+def compute_reddit_sentiment(
     con: duckdb.DuckDBPyConnection,
     backfill_days: int = 7,
-) -> int:
-    """Aggregate weighted sentiment per day and ticker.
+) -> tuple[int, int]:
+    """Aggregate weighted sentiment per hour and per day.
 
-    The function writes per-day sentiment averages into
-    ``reddit_sentiment_aggregates`` and returns the number of inserted rows.
-    Existing rows within the backfill window are replaced.
+    Results are written to ``reddit_sentiment_hourly`` and
+    ``reddit_sentiment_daily`` using ``INSERT OR REPLACE``. Rows inside the
+    backfill window are replaced. Returns a tuple of row counts for the recent
+    hourly and daily windows.
     """
 
-    # Ensure table exists
     con.execute(
         """
-        CREATE TABLE IF NOT EXISTS reddit_sentiment_aggregates (
+        CREATE TABLE IF NOT EXISTS reddit_sentiment_hourly (
+            created_utc TIMESTAMP,
+            ticker TEXT,
+            sentiment_dict DOUBLE,
+            sentiment_weighted DOUBLE,
+            posts INTEGER,
+            PRIMARY KEY (created_utc, ticker)
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reddit_sentiment_daily (
             date DATE,
             ticker TEXT,
-            avg_sentiment DOUBLE,
+            sentiment_dict DOUBLE,
+            sentiment_weighted DOUBLE,
             posts INTEGER,
             PRIMARY KEY (date, ticker)
         )
@@ -253,41 +266,67 @@ def compute_reddit_sentiment_aggregates(
     )
 
     lookback = int(backfill_days or 0)
+    lookback_hours = lookback * 24
+
     if lookback > 0:
         con.execute(
-            f"DELETE FROM reddit_sentiment_aggregates WHERE date >= CURRENT_DATE - INTERVAL {lookback} DAY"
+            f"DELETE FROM reddit_sentiment_hourly WHERE created_utc >= NOW() - INTERVAL {lookback_hours} HOUR",
         )
-        date_filter = f"AND created_utc >= CURRENT_DATE - INTERVAL {lookback} DAY"
+        con.execute(
+            f"DELETE FROM reddit_sentiment_daily WHERE date >= CURRENT_DATE - INTERVAL {lookback} DAY",
+        )
+        hour_filter = f"AND created_utc >= NOW() - INTERVAL {lookback_hours} HOUR"
+        day_filter = f"AND created_utc >= CURRENT_DATE - INTERVAL {lookback} DAY"
     else:
-        con.execute("DELETE FROM reddit_sentiment_aggregates")
-        date_filter = ""
+        con.execute("DELETE FROM reddit_sentiment_hourly")
+        con.execute("DELETE FROM reddit_sentiment_daily")
+        hour_filter = ""
+        day_filter = ""
 
-    rows = con.execute(
+    con.execute(
         f"""
+        INSERT OR REPLACE INTO reddit_sentiment_hourly
+        SELECT
+            DATE_TRUNC('hour', created_utc) AS created_utc,
+            ticker,
+            AVG(sentiment_dict) AS sentiment_dict,
+            AVG(sentiment_weighted) AS sentiment_weighted,
+            COUNT(*) AS posts
+        FROM reddit_enriched
+        WHERE sentiment_weighted IS NOT NULL {hour_filter}
+        GROUP BY 1, 2
+        """,
+    )
+
+    con.execute(
+        f"""
+        INSERT OR REPLACE INTO reddit_sentiment_daily
         SELECT
             DATE_TRUNC('day', created_utc) AS date,
             ticker,
-            AVG(sentiment_weighted) AS avg_sentiment,
+            AVG(sentiment_dict) AS sentiment_dict,
+            AVG(sentiment_weighted) AS sentiment_weighted,
             COUNT(*) AS posts
         FROM reddit_enriched
-        WHERE sentiment_weighted IS NOT NULL {date_filter}
+        WHERE sentiment_weighted IS NOT NULL {day_filter}
         GROUP BY 1, 2
-        """
-    ).fetchall()
-
-    if not rows:
-        return 0
-
-    con.executemany(
-        "INSERT OR REPLACE INTO reddit_sentiment_aggregates (date, ticker, avg_sentiment, posts) VALUES (?, ?, ?, ?)",
-        rows,
+        """,
     )
-    return len(rows)
 
+    rows_hourly = con.execute(
+        "SELECT COUNT(*) FROM reddit_sentiment_hourly "
+        + (f"WHERE created_utc >= NOW() - INTERVAL {lookback_hours} HOUR" if lookback > 0 else ""),
+    ).fetchone()[0]
+    rows_daily = con.execute(
+        "SELECT COUNT(*) FROM reddit_sentiment_daily "
+        + (f"WHERE date >= CURRENT_DATE - INTERVAL {lookback} DAY" if lookback > 0 else ""),
+    ).fetchone()[0]
+
+    return int(rows_hourly or 0), int(rows_daily or 0)
 
 __all__ = [
     "enrich_reddit_posts",
     "compute_reddit_trends",
     "compute_returns",
-    "compute_reddit_sentiment_aggregates",
+    "compute_reddit_sentiment",
 ]

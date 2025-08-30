@@ -174,3 +174,53 @@ def test_compute_returns():
     assert row[0] == pytest.approx(0.1)
     assert row[1] == pytest.approx(0.4)
     assert row[2] == pytest.approx(1.0)
+
+
+def test_compute_reddit_sentiment():
+    con = _setup_db()
+    df = pd.DataFrame(
+        [
+            {
+                "id": "1",
+                "ticker": "ABC",
+                "created_utc": datetime.now(timezone.utc) - pd.Timedelta(hours=2),
+                "text": "",
+                "upvotes": 0,
+                "sentiment_dict": 0.2,
+                "sentiment_weighted": 0.2,
+                "sentiment_ml": None,
+                "return_1d": None,
+                "return_3d": None,
+                "return_7d": None,
+            },
+            {
+                "id": "2",
+                "ticker": "ABC",
+                "created_utc": datetime.now(timezone.utc) - pd.Timedelta(hours=1),
+                "text": "",
+                "upvotes": 0,
+                "sentiment_dict": 0.4,
+                "sentiment_weighted": 0.4,
+                "sentiment_ml": None,
+                "return_1d": None,
+                "return_3d": None,
+                "return_7d": None,
+            },
+        ]
+    )
+    con.register("df", df)
+    con.execute("INSERT INTO reddit_enriched SELECT * FROM df")
+
+    rows_hourly, rows_daily = reddit_enrich.compute_reddit_sentiment(con)
+
+    assert rows_hourly == 2
+    assert rows_daily == 1
+
+    daily_row = con.execute(
+        "SELECT date, ticker, sentiment_dict, sentiment_weighted, posts FROM reddit_sentiment_daily"
+    ).fetchone()
+
+    assert daily_row[1] == "ABC"
+    assert daily_row[2] == pytest.approx(0.3)
+    assert daily_row[3] == pytest.approx(0.3)
+    assert daily_row[4] == 2
