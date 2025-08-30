@@ -185,7 +185,7 @@ async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     with duckdb.connect(DB_PATH) as con:
         row = con.execute(
             """
-            SELECT AVG(sent_weighted_avg), SUM(post_count)
+            SELECT AVG(sent_weighted_avg), SUM(posts)
             FROM reddit_sentiment_daily
             WHERE ticker = ? AND date >= CURRENT_DATE - INTERVAL 7 DAY
               AND sent_weighted_avg IS NOT NULL
@@ -193,8 +193,8 @@ async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             [ticker],
         ).fetchone()
     if row and row[0] is not None:
-        avg, cnt = row
-        await update.message.reply_text(f"{ticker}: {avg:+.2f} ({cnt} Posts)")
+        avg_sent, posts = row
+        await update.message.reply_text(f"{ticker}: {avg_sent:+.2f} ({posts} posts)")
     else:
         await update.message.reply_text("Keine Daten.")
 
