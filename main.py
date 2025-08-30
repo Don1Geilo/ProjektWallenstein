@@ -244,9 +244,12 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
     try:
         with duckdb.connect(DB_PATH) as con:
-            enrich_reddit_posts(con, reddit_posts, tickers)
-            compute_reddit_trends(con)
-            compute_returns(con)
+            enriched = enrich_reddit_posts(con, reddit_posts, tickers)
+            log.info(f"Reddit-Enrichment: +{enriched} Zeilen")
+            trends = compute_reddit_trends(con)
+            log.info(f"Trends aktualisiert: {trends}")
+            returns = compute_returns(con)
+            log.info(f"Returns berechnet: {returns} Posts")
     except Exception as e:
         log.error(f"❌ Reddit-Enrichment fehlgeschlagen: {e}")
 
@@ -296,12 +299,6 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             else:
                 sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
                 sentiments[ticker] = 0.0
-
-                # Durchschnittliches Sentiment für den Ticker (derzeit nicht weiterverwendet)
-                _ = float(df_valid["sentiment"].dropna().mean() or 0.0)
-            else:
-                sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
-
         else:
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
 
@@ -331,9 +328,6 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
         except Exception as e:
             log.warning(f"{t}: Modelltraining fehlgeschlagen: {e}")
             return t, None, None, None, None, None
-
-    with ThreadPoolExecutor(max_workers=settings.PIPELINE_MAX_WORKERS) as ex:
-        for t, acc, f1, roc_auc, precision, recall in ex.map(_train, tickers):
 
     train = partial(train_model_for_ticker, db_path=DB_PATH, sentiment_frames=sentiment_frames)
     with ThreadPoolExecutor() as ex:

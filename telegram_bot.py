@@ -158,12 +158,21 @@ async def cmd_trends(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     with duckdb.connect(DB_PATH) as con:
         rows = con.execute(
-            "SELECT ticker, hotness FROM reddit_trends WHERE date = CURRENT_DATE ORDER BY hotness DESC LIMIT 5"
+            """
+            SELECT ticker, mentions, avg_upvotes, hotness
+            FROM reddit_trends
+            WHERE date = CURRENT_DATE
+            ORDER BY hotness DESC
+            LIMIT 5
+            """
         ).fetchall()
     if not rows:
         await update.message.reply_text("Keine Trends heute.")
         return
-    lines = [f"{t}: {int(h)}" for t, h in rows]
+    lines = [
+        f"{t} – Mentions {m}, AvgUp {avg:.1f}, Hotness {h:.1f}"
+        for t, m, avg, h in rows
+    ]
     await update.message.reply_text("\n".join(lines))
 
 
@@ -177,14 +186,16 @@ async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     with duckdb.connect(DB_PATH) as con:
         row = con.execute(
             """
-            SELECT AVG(sentiment_weighted) FROM reddit_enriched
+            SELECT AVG(sentiment_weighted), COUNT(*)
+            FROM reddit_enriched
             WHERE ticker = ? AND created_utc >= CURRENT_DATE - INTERVAL 7 DAY
               AND sentiment_weighted IS NOT NULL
             """,
             [ticker],
         ).fetchone()
     if row and row[0] is not None:
-        await update.message.reply_text(f"{ticker}: {row[0]:+.2f}")
+        avg, cnt = row
+        await update.message.reply_text(f"{ticker}: {avg:+.2f} ({cnt} Posts)")
     else:
         await update.message.reply_text("Keine Daten.")
 
