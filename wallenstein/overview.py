@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
+import duckdb
+
 from wallenstein.config import settings
 
 from .db_utils import get_latest_prices
-from .sentiment import analyze_sentiment_batch, derive_recommendation
+from .sentiment import derive_recommendation
 
 DB_PATH = settings.WALLENSTEIN_DB_PATH
 
@@ -66,34 +70,87 @@ def generate_overview(
             if usd_per_eur:
                 prices_eur[t] = px / usd_per_eur
 
-    reddit_posts = reddit_posts or {t: [] for t in tickers}
+    cutoff = datetime.utcnow() - timedelta(days=7)
 
-    sentiments = {}
-    for ticker in tickers:
-        posts = reddit_posts.get(ticker, [])
-        texts = [p.get("text", "") for p in posts if p.get("text")]
-        if texts:
-            scores = analyze_sentiment_batch(texts)
-            sentiments[ticker] = sum(scores) / len(scores)
-        else:
-            sentiments[ticker] = 0.0
+    def _hotness_to_emoji(val: float | None) -> str:
+        if val is None or val <= 0:
+            return ""
+        if val >= 100:
+            return "🔥🔥🔥"
+        if val >= 50:
+            return "🔥🔥"
+        return "🔥"
 
-    price_lines = []
-    sentiment_lines = []
-    for t in tickers:
-        usd = prices_usd.get(t)
-        eur = prices_eur.get(t)
-        if usd is not None and eur is not None:
-            price_lines.append(f"{t}: {usd:.2f} USD ({eur:.2f} EUR)")
-        elif usd is not None:
-            price_lines.append(f"{t}: {usd:.2f} USD")
-        elif eur is not None:
-            price_lines.append(f"{t}: {eur:.2f} EUR")
-        else:
-            price_lines.append(f"{t}: n/a")
+    lines = ["📊 Wallenstein Übersicht"]
+    with duckdb.connect(DB_PATH) as con:
+        for t in tickers:
+            usd = prices_usd.get(t)
+            eur = prices_eur.get(t)
+            lines.append(f"📈 {t}")
+            if usd is not None and eur is not None:
+                lines.append(f"{t}: {usd:.2f} USD ({eur:.2f} EUR)")
+            elif usd is not None:
+                lines.append(f"{t}: {usd:.2f} USD")
+            elif eur is not None:
+                lines.append(f"{t}: {eur:.2f} EUR")
+            else:
+                lines.append(f"{t}: n/a")
 
-        sent = sentiments.get(t, 0.0)
-        rec = derive_recommendation(sent)
-        sentiment_lines.append(f"{t}: Sentiment {sent:+.2f} | {rec}")
+            try:
+                sent_row = con.execute(
+                    """
+                    SELECT AVG(sentiment_dict) AS s, AVG(sentiment_weighted) AS w
+                    FROM reddit_enriched
+                    WHERE ticker = ? AND created_utc >= ? AND sentiment_dict IS NOT NULL
+                    """,
+                    [t, cutoff],
+                ).fetchone()
+            except duckdb.Error:
+                sent_row = None
+            sent = sent_row[0] if sent_row and sent_row[0] is not None else 0.0
+            w_sent = sent_row[1] if sent_row and sent_row[1] is not None else 0.0
+            rec = derive_recommendation(sent)
+            lines.append(f"Sentiment: {sent:+.2f} (weighted {w_sent:+.2f})")
 
-    return "📊 Wallenstein Übersicht\n" + "\n".join(price_lines + sentiment_lines)
+            try:
+                trend_today = con.execute(
+                    "SELECT mentions, hotness FROM reddit_trends WHERE date = CURRENT_DATE AND ticker = ?",
+                    [t],
+                ).fetchone()
+            except duckdb.Error:
+                trend_today = None
+            mentions = trend_today[0] if trend_today else 0
+            hotness = trend_today[1] if trend_today else 0
+            try:
+                trend_avg = con.execute(
+                    """
+                    SELECT AVG(mentions) FROM reddit_trends
+                    WHERE date >= CURRENT_DATE - INTERVAL 7 DAY
+                      AND date < CURRENT_DATE AND ticker = ?
+                    """,
+                    [t],
+                ).fetchone()
+            except duckdb.Error:
+                trend_avg = None
+            avg_mentions = trend_avg[0] if trend_avg and trend_avg[0] else 0
+            change = ((mentions / avg_mentions) - 1) * 100 if avg_mentions else 0.0
+            lines.append(f"Mentions: {mentions} ({change:+.0f}% ggü. 7d Ø)")
+            lines.append(f"Hotness: {_hotness_to_emoji(hotness)}")
+
+            try:
+                top_post = con.execute(
+                    """
+                    SELECT return_3d FROM reddit_enriched
+                    WHERE ticker = ? AND sentiment_weighted IS NOT NULL AND return_3d IS NOT NULL
+                    ORDER BY sentiment_weighted DESC LIMIT 1
+                    """,
+                    [t],
+                ).fetchone()
+            except duckdb.Error:
+                top_post = None
+            if top_post and top_post[0] is not None:
+                lines.append(f"Kurs seit Top-Post (+3d): {top_post[0] * 100:+.1f}%")
+
+            lines.append("")
+
+    return "\n".join(lines).strip()
