@@ -68,6 +68,11 @@ TELEGRAM_CHAT_ID = (settings.TELEGRAM_CHAT_ID or "").strip()
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
 from wallenstein.models import train_per_stock
 from wallenstein.overview import generate_overview
+from wallenstein.reddit_enrich import (
+    compute_reddit_trends,
+    compute_returns,
+    enrich_reddit_posts,
+)
 from wallenstein.sentiment import analyze_sentiment_batch
 from wallenstein.stock_data import update_fx_rates, update_prices
 
@@ -143,6 +148,14 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
         except Exception as e:
             log.error(f"❌ FX-Update fehlgeschlagen: {e}")
 
+    try:
+        with duckdb.connect(DB_PATH) as con:
+            enrich_reddit_posts(con, reddit_posts, tickers)
+            compute_reddit_trends(con)
+            compute_returns(con)
+    except Exception as e:
+        log.error(f"❌ Reddit-Enrichment fehlgeschlagen: {e}")
+
     # View sicherstellen & Preise ziehen
     ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
     prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
@@ -167,6 +180,9 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 df_posts["sentiment"] = analyze_sentiment_batch(
                     df_posts["text"].astype(str).tolist()
                 )
+                df_posts["sentiment"] = pd.to_numeric(
+                    df_posts["sentiment"], errors="coerce"
+                )
             else:
                 df_posts["sentiment"] = 0.0
 
@@ -185,9 +201,13 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 sentiment_frames[ticker] = (
                     df_valid.groupby("date")["sentiment"].mean().reset_index()
                 )
-                sentiments[ticker] = float(df_valid["sentiment"].mean())
+                sentiments[ticker] = float(
+                    df_valid["sentiment"].dropna().mean() or 0.0
+                )
             else:
-                sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
+                sentiment_frames[ticker] = pd.DataFrame(
+                    columns=["date", "sentiment"]
+                )
                 sentiments[ticker] = 0.0
         else:
             sentiments[ticker] = 0.0
