@@ -9,7 +9,6 @@ import duckdb
 from wallenstein.config import settings
 
 from .db_utils import get_latest_prices
-from .sentiment import derive_recommendation
 
 DB_PATH = settings.WALLENSTEIN_DB_PATH
 
@@ -75,11 +74,8 @@ def generate_overview(
     def _hotness_to_emoji(val: float | None) -> str:
         if val is None or val <= 0:
             return ""
-        if val >= 100:
-            return "🔥🔥🔥"
-        if val >= 50:
-            return "🔥🔥"
-        return "🔥"
+        count = min(int(val // 500), 3)
+        return "🔥" * count
 
     lines = ["📊 Wallenstein Übersicht"]
     with duckdb.connect(DB_PATH) as con:
@@ -107,10 +103,8 @@ def generate_overview(
                 ).fetchone()
             except duckdb.Error:
                 sent_row = None
-            sent = sent_row[0] if sent_row and sent_row[0] is not None else 0.0
             w_sent = sent_row[1] if sent_row and sent_row[1] is not None else 0.0
-            rec = derive_recommendation(sent)
-            lines.append(f"Sentiment: {sent:+.2f} (weighted {w_sent:+.2f})")
+            lines.append(f"Sentiment (7d, weighted): {w_sent:+.2f}")
 
             try:
                 trend_today = con.execute(
@@ -135,7 +129,9 @@ def generate_overview(
             avg_mentions = trend_avg[0] if trend_avg and trend_avg[0] else 0
             change = ((mentions / avg_mentions) - 1) * 100 if avg_mentions else 0.0
             lines.append(f"Mentions: {mentions} ({change:+.0f}% ggü. 7d Ø)")
-            lines.append(f"Hotness: {_hotness_to_emoji(hotness)}")
+            emoji = _hotness_to_emoji(hotness)
+            if emoji:
+                lines.append(f"Hotness: {emoji}")
 
             try:
                 top_post = con.execute(
