@@ -70,7 +70,7 @@ from wallenstein.db_utils import ensure_prices_view, get_latest_prices
 from wallenstein.models import train_per_stock
 from wallenstein.overview import generate_overview
 from wallenstein.reddit_enrich import (
-    compute_reddit_sentiment_aggregates,
+    compute_reddit_sentiment,
     compute_reddit_trends,
     compute_returns,
     enrich_reddit_posts,
@@ -256,7 +256,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     # Sentiment-Aggregate berechnen
     try:
         with duckdb.connect(DB_PATH) as con:
-            agg_rows = compute_reddit_sentiment_aggregates(con, backfill_days=14)
+            agg_rows = compute_reddit_sentiment(con, backfill_days=14)
             log.info(f"Sentiment-Aggregate aktualisiert: {agg_rows}")
     except Exception as e:
         log.error(f"❌ Sentiment-Aggregate fehlgeschlagen: {e}")
