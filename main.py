@@ -78,7 +78,6 @@ from wallenstein.reddit_enrich import (
     enrich_reddit_posts,
 )
 from wallenstein.sentiment import analyze_sentiment_batch
-from wallenstein.sentiment_analysis import analyze_sentiment
 from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
 from wallenstein.trending import (
     auto_add_candidates_to_watchlist,
@@ -166,7 +165,8 @@ def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
         )
     posts = posts.copy()
     posts["text"] = posts["title"].fillna("") + " " + posts["selftext"].fillna("")
-    posts["sentiment"] = posts["text"].map(analyze_sentiment)
+    scores = analyze_sentiment_batch(posts["text"].astype(str).tolist())
+    posts["sentiment"] = [0.0 if s is None else float(s) for s in scores]
     posts["ups"] = pd.to_numeric(posts["ups"], errors="coerce").fillna(0).astype(int)
     posts["num_comments"] = (
         pd.to_numeric(posts["num_comments"], errors="coerce").fillna(0).astype(int)
