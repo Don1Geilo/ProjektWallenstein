@@ -13,7 +13,7 @@ def test_update_prices_fetches_full_history_for_new_ticker(monkeypatch, tmp_path
     db = tmp_path / "prices.duckdb"
     called = {}
 
-    def fake_fetch_one(ticker, start=None):
+    def fake_fetch_one(ticker, start=None, session=None):
         called["start"] = start
         return pd.DataFrame({
             "date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
@@ -50,7 +50,7 @@ def test_update_prices_skips_weekend(monkeypatch, tmp_path, caplog):
 
     called = {"stooq": 0}
 
-    def fake_fetch_one(ticker, start=None):
+    def fake_fetch_one(ticker, start=None, session=None):
         called["stooq"] += 1
         return pd.DataFrame()
 
