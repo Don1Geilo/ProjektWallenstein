@@ -190,6 +190,17 @@ def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
     agg["sentiment_weighted"] = agg["sent_w_sum"] / agg["weight_sum"].clip(lower=1e-9)
     agg = agg.drop(columns=["sent_w_sum", "weight_sum"])
     agg["updated_at"] = datetime.now(timezone.utc)
+    agg = agg[
+        [
+            "date",
+            "ticker",
+            "n_posts",
+            "sentiment_mean",
+            "sentiment_weighted",
+            "sentiment_median",
+            "updated_at",
+        ]
+    ]
     return agg
 
 
