@@ -228,18 +228,16 @@ class SentimentEngine:
 
                 if pipe:
                     out = pipe(txt)
-                    # pipeline gibt List[List[dict]] oder List[dict]; normal: List[dict]
-                    if isinstance(out, list) and out and isinstance(out[0], (list, tuple)):
-                        scores = out[0]
+                    if isinstance(out, list) and out:
+                        first = out[0]
+                        if isinstance(first, dict):
+                            scores = out
+                        elif isinstance(first, (list, tuple)):
+                            scores = first
+                        else:
+                            scores = out
                     else:
                         scores = out
-
-                    # pipeline gibt List[ List[dict] ] oder List[dict]; normal: List[dict]
-                    scores = (
-                        out[0]
-                        if (isinstance(out, list) and out and isinstance(out[0], dict))
-                        else out
-                    )
 
                     scalar, by = self._scores_to_scalar(scores)  # type: ignore[arg-type]
                     score = max(-1.0, min(1.0, scalar + kw))

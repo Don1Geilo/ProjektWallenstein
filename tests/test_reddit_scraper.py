@@ -127,7 +127,7 @@ def test_sentiment_added_to_buckets(monkeypatch):
     monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", lambda *a, **k: df)
     monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df)
     monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
-    monkeypatch.setattr(reddit_scraper, "analyze_sentiment", lambda text: 0.5)
+    monkeypatch.setattr(reddit_scraper, "analyze_sentiment_batch", lambda texts: [0.5 for _ in texts])
 
     out = reddit_scraper.update_reddit_data(["ABC"], subreddits=None)
     assert out["ABC"][0]["sentiment"] == 0.5
