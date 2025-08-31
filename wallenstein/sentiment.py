@@ -460,32 +460,29 @@ def analyze_sentiment_bert(text: str) -> float:
     return 0.0
 
 
-def analyze_sentiment(text: str) -> float | None:
-    """Return a sentiment score for ``text``.
-
-    Preference:
-    1) If explicitly requested (env/settings) -> try BERT; fallback to keywords.
-    2) Else if transformers installed -> try BERT; fallback to keywords.
-    3) Else -> keywords.
-    """
+def analyze_sentiment(text: str) -> float:
+    """Return a sentiment score in [-1.0, +1.0]; never returns None."""
     # Try BERT if requested
     if _should_use_bert():
         try:
-            return analyze_sentiment_bert(text)
-        except Exception:  # pragma: no cover - defensive
+            val = analyze_sentiment_bert(text)
+            return float(val if val is not None else 0.0)
+        except Exception:
             _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
     else:
-        # Not requested, but available? Try opportunistically.
+        # Opportunistisch BERT, wenn installiert
         if _transformers_available():
             try:
-                return analyze_sentiment_bert(text)
-            except Exception:  # pragma: no cover - defensive
+                val = analyze_sentiment_bert(text)
+                return float(val if val is not None else 0.0)
+            except Exception:
                 _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
         else:
             _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
 
     # Keyword fallback
-    return _keyword_score_cached(_preprocess(text))
+    val = _keyword_score_cached(_preprocess(text))
+    return float(val if val is not None else 0.0)
 
 
 def _keyword_score(text: str) -> float | None:
@@ -610,3 +607,67 @@ __all__ = [
     "BertSentiment",
     "FinBertAdapter",
 ]
+def _post_weight(upvotes: int = 0, num_comments: int = 0) -> float:
+    return 1.0 + math.log10(1 + max(0, upvotes)) + 0.2 * math.log10(1 + max(0, num_comments))
+
+def _ensure_datetime_series(s: pd.Series, tz: str = "Europe/Berlin") -> pd.Series:
+    s = pd.to_datetime(s, errors="coerce", utc=True)
+    return s.dt.tz_convert(ZoneInfo(tz))
+
+def _safe_float(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(s, errors="coerce").astype(float)
+
+def compute_daily_sentiment(
+    df: pd.DataFrame,
+    *,
+    text_col: str = "text",
+    ts_col: str = "created_at",
+    ticker_col: str = "ticker",
+    upvotes_col: str = "upvotes",
+    comments_col: str = "num_comments",
+) -> pd.DataFrame:
+    """
+    Liefert pro Tag (lokal EU/Berlin) und Ticker den gewichteten Sentiment-Mittelwert.
+    Rückgabe: DataFrame[date, ticker, posts, wgt_sum, wgt_mean]
+    """
+    if df.empty:
+        return pd.DataFrame(columns=["date", "ticker", "posts", "wgt_sum", "wgt_mean"])
+
+    # Zeitstempel → Europe/Berlin; Tagesbucket
+    ts = _ensure_datetime_series(df[ts_col], tz="Europe/Berlin")
+    date = ts.dt.normalize()  # 00:00 lokale Zeit
+    tmp = df.copy()
+
+    # Scores berechnen (immer float, nie None)
+    scores = tmp[text_col].astype(str).map(analyze_sentiment).astype(float)
+
+    # Gewichte (robust gegen fehlende Spalten)
+    ups = _safe_float(tmp.get(upvotes_col, 0))
+    com = _safe_float(tmp.get(comments_col, 0))
+    weights = (_post_weight(ups.fillna(0).astype(int), com.fillna(0).astype(int))
+               if hasattr(ups, "astype") and hasattr(com, "astype")
+               else pd.Series(1.0, index=tmp.index))
+
+    # Numerik
+    weights = pd.to_numeric(weights, errors="coerce").fillna(1.0)
+    scores = pd.to_numeric(scores, errors="coerce").fillna(0.0)
+
+    tmp["_date"] = date
+    tmp["_score"] = scores
+    tmp["_w"] = weights
+
+    # Gruppieren
+    g = tmp.groupby([ticker_col, "_date"], as_index=False).agg(
+        posts=("text", "count"),
+        wgt_sum=("_score", lambda s: float((s * tmp.loc[s.index, "_w"]).sum())),
+        w_sum=("_w", "sum"),
+    )
+    g["wgt_mean"] = (g["wgt_sum"] / g["w_sum"]).replace([float("inf"), -float("inf")], 0.0).fillna(0.0)
+
+    # Ausgabe-Form
+    out = g.rename(columns={ticker_col: "ticker", "_date": "date"})[
+        ["date", "ticker", "posts", "wgt_sum", "wgt_mean"]
+    ]
+    # Typen defensiv halten (keine harte int-Casts -> vermeidet "cannot convert float NaN to integer")
+    out["posts"] = pd.to_numeric(out["posts"], errors="coerce").fillna(0).astype("Int64")
+    return out.sort_values(["date", "ticker"]).reset_index(drop=True)
