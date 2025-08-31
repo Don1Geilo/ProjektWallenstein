@@ -116,16 +116,18 @@ def resolve_tickers(override: str | None = None) -> list[str]:
 
 def train_model_for_ticker(
     ticker: str,
-    db_path: str,
+    _con: duckdb.DuckDBPyConnection,
+    price_frames: dict[str, pd.DataFrame],
     sentiment_frames: dict[str, pd.DataFrame],
 ) -> tuple[str, float | None, float | None, float | None, float | None, float | None]:
-    """Train the per-stock model for a single ticker."""
+    """Train the per-stock model for a single ticker.
+
+    Eine offene DuckDB-Verbindung wird übergeben, wird hier jedoch nicht genutzt,
+    da alle benötigten Preisdaten bereits vorgeladen sind.  ``_con`` existiert nur,
+    um den Worker mit einer extern verwalteten Verbindung aufzurufen.
+    """
     try:
-        with duckdb.connect(db_path) as con:
-            df_price = con.execute(
-                "SELECT date, close FROM prices WHERE ticker = ? ORDER BY date",
-                [ticker],
-            ).fetchdf()
+        df_price = price_frames.get(ticker, pd.DataFrame(columns=["date", "close"])).copy()
         if df_price.empty:
             log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
             return ticker, None, None, None, None, None
@@ -396,16 +398,32 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
             sentiments[ticker] = 0.0
 
-    # --- Per-Stock-Modell trainieren (parallel, read-only) ---
-    train = partial(train_model_for_ticker, db_path=DB_PATH, sentiment_frames=sentiment_frames)
-    with ThreadPoolExecutor() as ex:
-        for t, acc, f1, roc_auc, precision, recall in ex.map(train, tickers):
-            if acc is not None:
-                roc_disp = roc_auc if roc_auc is not None else float("nan")
-                log.info(
-                    f"{t}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f} | ROC-AUC {roc_disp:.2f}"
-                    f" | Precision {precision:.2f} | Recall {recall:.2f}"
-                )
+    # --- Preisdaten einmalig laden und Modelle trainieren ---
+    with duckdb.connect(DB_PATH, read_only=True) as con:
+        placeholder = ",".join("?" * len(tickers)) or "''"
+        df_prices = con.execute(
+            f"SELECT ticker, date, close FROM prices WHERE ticker IN ({placeholder}) ORDER BY ticker, date",
+            tickers,
+        ).fetchdf()
+
+        price_frames = {
+            t: g.drop(columns="ticker") for t, g in df_prices.groupby("ticker", sort=False)
+        }
+
+        train = partial(
+            train_model_for_ticker,
+            _con=con,
+            price_frames=price_frames,
+            sentiment_frames=sentiment_frames,
+        )
+        with ThreadPoolExecutor() as ex:
+            for t, acc, f1, roc_auc, precision, recall in ex.map(train, tickers):
+                if acc is not None:
+                    roc_disp = roc_auc if roc_auc is not None else float("nan")
+                    log.info(
+                        f"{t}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f} | ROC-AUC {roc_disp:.2f}"
+                        f" | Precision {precision:.2f} | Recall {recall:.2f}"
+                    )
 
     # Übersicht & Notify
     try:
