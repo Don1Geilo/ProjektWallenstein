@@ -45,6 +45,7 @@ def _ensure_vader():
     try:
         import nltk  # type: ignore
         from nltk.sentiment import SentimentIntensityAnalyzer  # type: ignore
+
         return SentimentIntensityAnalyzer
     except Exception:
         try:
@@ -69,10 +70,6 @@ def _ensure_vader():
             nltk.data.find("sentiment/vader_lexicon.zip")
 
         return SentimentIntensityAnalyzer
-    except Exception as e2:  # pragma: no cover
-        log.warning("VADER not available: %s", str(e2).splitlines()[0])
-        return None
-
 
 
 def _detect_lang(text: str) -> str:
@@ -228,18 +225,11 @@ class SentimentEngine:
 
                 if pipe:
                     out = pipe(txt)
-                    # pipeline gibt List[List[dict]] oder List[dict]; normal: List[dict]
+                    # pipeline gibt List[List[dict]] (bei top_k=None) oder List[dict]
                     if isinstance(out, list) and out and isinstance(out[0], (list, tuple)):
                         scores = out[0]
                     else:
                         scores = out
-
-                    # pipeline gibt List[ List[dict] ] oder List[dict]; normal: List[dict]
-                    scores = (
-                        out[0]
-                        if (isinstance(out, list) and out and isinstance(out[0], dict))
-                        else out
-                    )
 
                     scalar, by = self._scores_to_scalar(scores)  # type: ignore[arg-type]
                     score = max(-1.0, min(1.0, scalar + kw))
