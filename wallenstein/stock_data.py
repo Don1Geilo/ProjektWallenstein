@@ -21,7 +21,8 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
-from typing import Dict, List, Optional
+from threading import Lock, local
+from typing import Dict, List, Optional, Set
 
 import duckdb
 import pandas as pd
@@ -195,18 +196,22 @@ def _stooq_fetch_many(
         )
     results: List[pd.DataFrame] = []
     max_workers = min(5, len(tickers))
-    sessions = [requests.Session() for _ in range(max_workers)]
+    thread_local = local()
+    sessions: Set[requests.Session] = set()
+    sessions_lock = Lock()
 
-    def _fetch(t: str, sess: requests.Session) -> pd.DataFrame:
+    def _fetch(t: str) -> pd.DataFrame:
+        if not hasattr(thread_local, "session"):
+            sess = requests.Session()
+            thread_local.session = sess
+            with sessions_lock:
+                sessions.add(sess)
         s = start_map.get(t) if start_map else None
-        return _stooq_fetch_one(t, start=s, session=sess)
+        return _stooq_fetch_one(t, start=s, session=thread_local.session)
 
     try:
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            futures = {
-                ex.submit(_fetch, t, sessions[i % max_workers]): t
-                for i, t in enumerate(tickers)
-            }
+            futures = {ex.submit(_fetch, t): t for t in tickers}
             for fut in as_completed(futures):
                 df = fut.result()
                 if not df.empty:
