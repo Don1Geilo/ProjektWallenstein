@@ -10,6 +10,7 @@ Broker-target support is temporarily disabled pending a new data provider.
 ## Quickstart
 ```bash
 pip install -r requirements.txt
+python -c "import nltk; nltk.download('vader_lexicon')"  # pre-install VADER lexicon
 cp .env.example .env   # and fill values
 python main.py
 python -m bot.telegram_bot  # optional: manage watchlist via Telegram
@@ -128,8 +129,9 @@ lower‑cased before sentiment analysis. When the optional `transformers` packag
 is available the engine uses the multilingual
 `cardiffnlp/twitter-xlm-roberta-base-sentiment` model to obtain probabilities
 for negative, neutral and positive labels. If `transformers` or its
-dependencies are missing, the system falls back to NLTK's VADER lexicon, which
-is downloaded automatically when needed.
+dependencies are missing, the system falls back to NLTK's VADER lexicon. The
+lexicon downloads automatically when online; to prepare an offline environment
+run `python -c "import nltk; nltk.download('vader_lexicon')"` ahead of time.
 
 Simple keyword boosts adjust the score (`+0.2` for "long"/"call", `-0.2` for
 "short"/"put" with a cap of ±0.4). Each post receives a weight of

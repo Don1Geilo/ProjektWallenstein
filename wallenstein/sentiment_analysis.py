@@ -4,8 +4,9 @@ import logging
 import math
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 log = logging.getLogger("wallenstein")
 
@@ -17,35 +18,54 @@ MAX_ABS_KEYWORD = 0.4
 # Für stabilere Tokenizer-Läufe in CI
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+
 # --------------------------
 # Lazy imports / fallbacks
 # --------------------------
 def _try_import_transformers():
     try:
         from transformers import pipeline  # type: ignore
+
         return pipeline
     except Exception:
         return None
 
 
+def _has_internet() -> bool:
+    try:  # pragma: no cover - simple connectivity check
+        import urllib.request
+
+        urllib.request.urlopen("https://www.nltk.org", timeout=1)
+        return True
+    except Exception:
+        return False
+
+
 def _ensure_vader():
     try:
+        import nltk  # type: ignore
         from nltk.sentiment import SentimentIntensityAnalyzer  # type: ignore
-        return SentimentIntensityAnalyzer
-    except Exception:
+
         try:
-            import nltk  # type: ignore
-            nltk.download("vader_lexicon", quiet=True)
-            from nltk.sentiment import SentimentIntensityAnalyzer  # type: ignore
-            return SentimentIntensityAnalyzer
-        except Exception as e2:  # pragma: no cover
-            log.warning(f"VADER not available: {e2}")
-            return None
+            nltk.data.find("sentiment/vader_lexicon.zip")
+        except LookupError:
+            if _has_internet():
+                try:
+                    nltk.download("vader_lexicon", quiet=True)
+                except Exception:
+                    pass
+            nltk.data.find("sentiment/vader_lexicon.zip")
+
+        return SentimentIntensityAnalyzer
+    except Exception as e2:  # pragma: no cover
+        log.warning("VADER not available: %s", str(e2).splitlines()[0])
+        return None
 
 
 def _detect_lang(text: str) -> str:
     try:
         from langdetect import detect  # type: ignore
+
         return detect(text)
     except Exception:
         # Fallback: Englisch annehmen
@@ -53,6 +73,8 @@ def _detect_lang(text: str) -> str:
 
 
 _clean_re = re.compile(r"(https?://\S+)|(@\w+)|[#*`>|]|(&amp;)|\s+")
+
+
 # Cashtags ($NVDA) und Zahlen/Buchstaben bleiben erhalten.
 def preprocess(text: str) -> str:
     if not text:
@@ -111,8 +133,8 @@ class SentimentEngine:
 
     def __init__(self) -> None:
         self._pipeline = _try_import_transformers()
-        self._hf_finbert: Optional[Callable] = None
-        self._hf_xlmr: Optional[Callable] = None
+        self._hf_finbert: Callable | None = None
+        self._hf_xlmr: Callable | None = None
         self._vader = None
         self._setup_vader()
 
@@ -194,10 +216,16 @@ class SentimentEngine:
                 if pipe:
                     out = pipe(txt)
                     # pipeline gibt List[ List[dict] ] oder List[dict]; normal: List[dict]
-                    scores = out[0] if (isinstance(out, list) and out and isinstance(out[0], dict)) else out
+                    scores = (
+                        out[0]
+                        if (isinstance(out, list) and out and isinstance(out[0], dict))
+                        else out
+                    )
                     scalar, by = self._scores_to_scalar(scores)  # type: ignore[arg-type]
                     score = max(-1.0, min(1.0, scalar + kw))
-                    return SentimentResult(score, f"hf:{model_id}", {"lang": lang, "scores": by, "kw": kw})
+                    return SentimentResult(
+                        score, f"hf:{model_id}", {"lang": lang, "scores": by, "kw": kw}
+                    )
             except Exception as e:  # pragma: no cover
                 log.debug(f"HF inference failed, fallback to VADER: {e}")
 
