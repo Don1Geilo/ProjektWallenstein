@@ -165,7 +165,10 @@ def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
         )
     posts = posts.copy()
     posts["text"] = posts["title"].fillna("") + " " + posts["selftext"].fillna("")
-    scores = analyze_sentiment_batch(posts["text"].astype(str).tolist())
+    texts = posts["text"].astype(str).tolist()
+    scores: list[float | None] = []
+    for i in range(0, len(texts), 64):
+        scores.extend(analyze_sentiment_batch(texts[i : i + 64]))
     posts["sentiment"] = [0.0 if s is None else float(s) for s in scores]
     posts["ups"] = pd.to_numeric(posts["ups"], errors="coerce").fillna(0).astype(int)
     posts["num_comments"] = (
