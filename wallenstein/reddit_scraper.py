@@ -17,6 +17,7 @@ import praw
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
 from wallenstein.sentiment_analysis import analyze_sentiment
+from wallenstein.sentiment import analyze_sentiment_batch
 
 try:  # Optional dependency
     import yaml  # type: ignore
@@ -358,25 +359,36 @@ def update_reddit_data(
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     # Nur Posts weiterverarbeiten, die überhaupt einen der Ticker erwähnen
-    patterns: list[str] = []
-    for tkr in tickers:
-        patterns.extend(p.pattern for p in _compile_patterns(tkr))
-    if patterns:
-        combined_pattern = "|".join(patterns)
-        df = df[df["combined"].str.contains(combined_pattern, regex=True, case=False, na=False)]
+    pattern_map = {
+        t: "|".join(p.pattern for p in _compile_patterns(t)) for t in tickers
+    }
+    if pattern_map:
+        combined_pattern = "|".join(pattern_map.values())
+        df = df[
+            df["combined"].str.contains(
+                combined_pattern, regex=True, case=False, na=False
+            )
+        ]
+        df = df.assign(
+            **{
+                t: df["combined"].str.contains(pat, regex=True, case=False, na=False)
+                for t, pat in pattern_map.items()
+            }
+        )
 
     # 3) Je Ticker Texte sammeln
     out: dict[str, list[dict]] = {}
     for tkr in tickers:
-        pattern = "|".join(p.pattern for p in _compile_patterns(tkr))
-        mask = df["combined"].str.contains(pattern, regex=True, case=False, na=False)
+        if tkr not in df.columns:
+            continue
         bucket_df = (
-            df.loc[mask, ["id", "created_utc", "combined", "upvotes"]]
+            df.loc[df[tkr], ["id", "created_utc", "combined", "upvotes"]]
             .head(100)
             .rename(columns={"combined": "text"})
         )
-        bucket_df["text"] = bucket_df["text"].str[:2000]
-        bucket_df["sentiment"] = bucket_df["text"].apply(analyze_sentiment)
+        texts = bucket_df["text"].astype(str).str[:2000].tolist()
+        bucket_df["text"] = texts
+        bucket_df["sentiment"] = analyze_sentiment_batch(texts)
         bucket = bucket_df.to_dict(orient="records")
         log.debug(f"{tkr}: {len(bucket)} matched posts")
         out[tkr] = bucket
