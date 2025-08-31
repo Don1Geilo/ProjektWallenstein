@@ -164,9 +164,11 @@ def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
     posts = posts.copy()
     posts["text"] = posts["title"].fillna("") + " " + posts["selftext"].fillna("")
     posts["sentiment"] = posts["text"].map(analyze_sentiment)
-    posts["weight"] = posts.apply(
-        lambda r: post_weight(int(r.get("ups", 0)), int(r.get("num_comments", 0))), axis=1
+    posts["ups"] = pd.to_numeric(posts["ups"], errors="coerce").fillna(0).astype(int)
+    posts["num_comments"] = (
+        pd.to_numeric(posts["num_comments"], errors="coerce").fillna(0).astype(int)
     )
+    posts["weight"] = posts.apply(lambda r: post_weight(r["ups"], r["num_comments"]), axis=1)
     posts["date"] = pd.to_datetime(posts["created_utc"], unit="s").dt.tz_localize("UTC").dt.date
     agg = (
         posts.groupby(["date", "ticker"])
