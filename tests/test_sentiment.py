@@ -22,6 +22,7 @@ from wallenstein.sentiment import (
 def _disable_bert(monkeypatch):
     """Use keyword sentiment by default for tests."""
     monkeypatch.setattr(sentiment.settings, "USE_BERT_SENTIMENT", False)
+    sentiment._bert_analyzer = None
 
 def test_analyze_sentiment_keywords():
     text = "I'm going long and want to buy more calls, not sell"
