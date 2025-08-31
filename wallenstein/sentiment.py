@@ -250,7 +250,8 @@ def _load_keywords_from_file(
     if keywords:
         for word, score in keywords.items():
             try:
-                KEYWORD_SCORES.setdefault(str(word).lower(), int(score))
+                norm = normalize_token(str(word).lower())
+                KEYWORD_SCORES.setdefault(norm, int(score))
             except Exception:
                 continue
 
@@ -280,7 +281,8 @@ def _load_keywords_from_file(
 
             for word, score in (data or {}).items():
                 try:
-                    KEYWORD_SCORES.setdefault(str(word).lower(), int(score))
+                    norm = normalize_token(str(word).lower())
+                    KEYWORD_SCORES.setdefault(norm, int(score))
                 except Exception:
                     continue
         except Exception as exc:  # pragma: no cover - defensive
