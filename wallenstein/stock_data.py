@@ -140,39 +140,47 @@ def _stooq_symbol(t: str) -> str:
 
 
 def _stooq_fetch_one(
-    ticker: str, start: Optional[pd.Timestamp] = None, session: Optional[requests.Session] = None
+    ticker: str,
+    start: Optional[pd.Timestamp] = None,
+    session: Optional[requests.Session] = None,
 ) -> pd.DataFrame:
     sym = _stooq_symbol(ticker)
     url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
-    sess = session or requests
-    for attempt in range(MAX_RETRIES):
-        try:
-            r = sess.get(url, timeout=20, headers=STOOQ_HEADERS)
-            if not r.ok or not r.text:
-                raise RuntimeError(f"stooq bad response status={r.status_code}")
-            df = pd.read_csv(io.StringIO(r.text))
-            if df.empty:
-                raise RuntimeError("stooq empty dataframe")
-            df = df.rename(
-                columns={
-                    "Date": "date",
-                    "Open": "open",
-                    "High": "high",
-                    "Low": "low",
-                    "Close": "close",
-                    "Volume": "volume",
-                }
-            )
-            df["ticker"] = ticker
-            df["date"] = pd.to_datetime(df["date"]).dt.date
-            if start is not None:
-                start_d = pd.to_datetime(start).date()
-                df = df[df["date"] >= start_d]
-            df["adj_close"] = pd.NA
-            return df[["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]]
-        except Exception as e:
-            log.debug(f"Stooq {_stooq_symbol(ticker)} attempt#{attempt+1} failed: {e}")
-            _retry_sleep(attempt)
+    sess = session or requests.Session()
+    try:
+        for attempt in range(MAX_RETRIES):
+            try:
+                r = sess.get(url, timeout=20, headers=STOOQ_HEADERS)
+                if not r.ok or not r.text:
+                    raise RuntimeError(f"stooq bad response status={r.status_code}")
+                df = pd.read_csv(io.StringIO(r.text))
+                if df.empty:
+                    raise RuntimeError("stooq empty dataframe")
+                df = df.rename(
+                    columns={
+                        "Date": "date",
+                        "Open": "open",
+                        "High": "high",
+                        "Low": "low",
+                        "Close": "close",
+                        "Volume": "volume",
+                    }
+                )
+                df["ticker"] = ticker
+                df["date"] = pd.to_datetime(df["date"]).dt.date
+                if start is not None:
+                    start_d = pd.to_datetime(start).date()
+                    df = df[df["date"] >= start_d]
+                df["adj_close"] = pd.NA
+                return df[
+                    ["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
+                ]
+            except Exception as e:
+                log.debug(f"Stooq {_stooq_symbol(ticker)} attempt#{attempt+1} failed: {e}")
+                _retry_sleep(attempt)
+    finally:
+        if session is None:
+            sess.close()
     return pd.DataFrame(
         columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
     )
@@ -186,17 +194,26 @@ def _stooq_fetch_many(
             columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
         )
     results: List[pd.DataFrame] = []
+    max_workers = min(5, len(tickers))
+    sessions = [requests.Session() for _ in range(max_workers)]
 
-    def _fetch(t: str) -> pd.DataFrame:
+    def _fetch(t: str, sess: requests.Session) -> pd.DataFrame:
         s = start_map.get(t) if start_map else None
-        return _stooq_fetch_one(t, start=s)
+        return _stooq_fetch_one(t, start=s, session=sess)
 
-    with ThreadPoolExecutor(max_workers=min(5, len(tickers))) as ex:
-        futures = {ex.submit(_fetch, t): t for t in tickers}
-        for fut in as_completed(futures):
-            df = fut.result()
-            if not df.empty:
-                results.append(df)
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {
+                ex.submit(_fetch, t, sessions[i % max_workers]): t
+                for i, t in enumerate(tickers)
+            }
+            for fut in as_completed(futures):
+                df = fut.result()
+                if not df.empty:
+                    results.append(df)
+    finally:
+        for sess in sessions:
+            sess.close()
     if not results:
         return pd.DataFrame(
             columns=["date", "ticker", "open", "high", "low", "close", "adj_close", "volume"]
