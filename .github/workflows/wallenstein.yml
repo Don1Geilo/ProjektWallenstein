@@ -6,6 +6,10 @@ on:
     - cron: '0 6-14 * * 1-5'
     - cron: '30 14-21 * * 1-5'
 
+concurrency:
+  group: wallenstein-${{ github.ref }}
+  cancel-in-progress: true    
+
 jobs:
   run:
     concurrency:
