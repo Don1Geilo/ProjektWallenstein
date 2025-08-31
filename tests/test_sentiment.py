@@ -125,7 +125,8 @@ def test_keywords_loaded_from_file():
         kw_file.write_text(json.dumps({"superbull": 1, "schrott": -1}))
         importlib.reload(sentiment)
         assert sentiment.KEYWORD_SCORES["superbull"] == 1
-        assert sentiment.KEYWORD_SCORES["schrott"] == -1
+        norm = sentiment.normalize_token("schrott")
+        assert sentiment.KEYWORD_SCORES[norm] == -1
     finally:
         if original is None:
             kw_file.unlink()

@@ -14,10 +14,14 @@
   "benefit": 1,
   "betrug": -1,
   "caution": -1,
+  "chance": 1,
+  "danger": -1,
   "enttäuscht": -1,
+  "erfolg": 1,
   "erfolgreich": 1,
   "fail": -1,
   "fantastisch": 1,
+  "gefahr": -1,
   "glücklich": 1,
   "grandios": 1,
   "growth": 1,
@@ -25,6 +29,7 @@
   "improve": 1,
   "katastrophe": -1,
   "liability": -1,
+  "opportunity": 1,
   "pleite": -1,
   "profitability": 1,
   "risk": -1,
@@ -40,3 +45,4 @@
   "zufrieden": 1,
   "überragend": 1
 }
+
