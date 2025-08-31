@@ -171,11 +171,7 @@ def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
     posts["num_comments"] = (
         pd.to_numeric(posts["num_comments"], errors="coerce").fillna(0).astype(int)
     )
-    posts["weight"] = (
-        1
-        + np.log10(1 + posts["ups"])
-        + 0.2 * np.log10(1 + posts["num_comments"])
-    )
+    posts["weight"] = 1 + np.log10(1 + posts["ups"]) + 0.2 * np.log10(1 + posts["num_comments"])
     posts["date"] = pd.to_datetime(posts["created_utc"], unit="s").dt.tz_localize("UTC").dt.date
     posts["sentiment_weight"] = posts["sentiment"] * posts["weight"]
     agg = (
@@ -225,23 +221,9 @@ def upsert_reddit_daily_sentiment(con, df: pd.DataFrame) -> int:
     return len(df)
 
 
-# ---------- Main ----------
-def run_pipeline(tickers: list[str] | None = None) -> int:
-    """Execute the complete Wallenstein data pipeline."""
-    t0 = time.time()
-    log.info("🚀 Start Wallenstein: Pipeline-Run")
-
-    if tickers is None:
-        tickers = resolve_tickers()
-    if not tickers:
-        log.warning("Keine Ticker zur Verarbeitung – Pipeline abgebrochen")
-        return 1
-
-    reddit_posts = {t: [] for t in tickers}
-    added = 0
-    fx_added = 0
-
-    # Parallel: Preise, Reddit, FX
+def fetch_updates(tickers: list[str]) -> dict[str, list]:
+    """Fetch price, Reddit and FX updates in parallel."""
+    reddit_posts: dict[str, list] = {t: [] for t in tickers}
     with ThreadPoolExecutor(max_workers=settings.PIPELINE_MAX_WORKERS) as executor:
         fut_prices = executor.submit(update_prices, DB_PATH, tickers)
         fut_reddit = executor.submit(
@@ -251,7 +233,6 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             include_comments=True,
         )
         fut_fx = executor.submit(update_fx_rates, DB_PATH)
-
         try:
             added = fut_prices.result()
             if added:
@@ -259,21 +240,22 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
         except Exception as e:
             log.error(f"❌ Kursupdate fehlgeschlagen: {e}")
         purge_old_prices(DB_PATH)
-
         try:
             reddit_posts = fut_reddit.result()
             log.info("✅ Reddit-Daten aktualisiert")
         except Exception as e:
             log.error(f"❌ Reddit-Update fehlgeschlagen: {e}")
             reddit_posts = {t: [] for t in tickers}
-
         try:
             fx_added = fut_fx.result()
             log.info(f"FX-Update: +{fx_added} neue EURUSD-Zeilen")
         except Exception as e:
             log.error(f"❌ FX-Update fehlgeschlagen: {e}")
+    return reddit_posts
 
-    # Sentiment aggregation and persistence
+
+def persist_sentiment(reddit_posts: dict[str, list]) -> None:
+    """Aggregate sentiment from Reddit posts and persist to DuckDB."""
     try:
         rows_list: list[dict] = []
         for tkr, posts in reddit_posts.items():
@@ -304,7 +286,9 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     except Exception as e:
         log.error(f"❌ Sentiment-Aggregation fehlgeschlagen: {e}")
 
-    # Enrichment + Trends + Returns
+
+def generate_trends(reddit_posts: dict[str, list]) -> None:
+    """Enrich posts, compute trends, returns and scan for candidates."""
     try:
         with duckdb.connect(DB_PATH) as con:
             enriched = enrich_reddit_posts(con, reddit_posts)
@@ -313,8 +297,6 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             log.info(f"Trends aktualisiert: {trends}")
             returns = compute_returns(con)
             log.info(f"Returns berechnet: {returns} Posts")
-
-            # Sentiment-Aggregate (hourly/daily) direkt nachziehen
             h_count, d_count = compute_reddit_sentiment(con, backfill_days=14)
             log.info(f"Sentiment-Aggregate aktualisiert: hourly≈{h_count}, daily≈{d_count}")
     except Exception as e:
@@ -335,7 +317,6 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 log.info(f"Trending-Kandidaten (Top 5): {top_preview}")
             else:
                 log.info("Trending-Kandidaten: keine")
-
             added_syms = auto_add_candidates_to_watchlist(
                 con,
                 notify_fn=notify_telegram,
@@ -348,26 +329,14 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     except Exception as e:
         log.warning(f"Trending-Scan fehlgeschlagen: {e}")
 
-    # View sicherstellen & Preise ziehen
-    ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
-    prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
-    log.info(f"USD: {prices_usd}")
-    if alerts_api:
-        try:
-            alerts_api.active_alerts(prices_usd, notify_telegram)
-        except Exception as e:  # pragma: no cover
-            log.warning(f"Alertprüfung fehlgeschlagen: {e}")
 
-    # Sentiment je Ticker aus Rohposts (für Modelle)
-    sentiments: dict[str, float] = {}
+def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
+    """Train per-stock models using parallel execution."""
     sentiment_frames: dict[str, pd.DataFrame] = {}
-
     for ticker, texts in reddit_posts.items():
         texts = list(texts) if texts is not None else []
         if texts:
             df_posts = pd.DataFrame(texts)
-
-            # Erwartete Spalte: "text"
             if "text" in df_posts:
                 df_posts["sentiment"] = analyze_sentiment_batch(
                     df_posts["text"].astype(str).tolist()
@@ -375,8 +344,6 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 df_posts["sentiment"] = pd.to_numeric(df_posts["sentiment"], errors="coerce")
             else:
                 df_posts["sentiment"] = 0.0
-
-            # Erwartete Spalte: "created_utc"
             if "created_utc" in df_posts:
                 df_posts["date"] = (
                     pd.to_datetime(df_posts["created_utc"], errors="coerce", utc=True)
@@ -385,34 +352,24 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 )
             else:
                 df_posts["date"] = pd.NaT
-
             df_valid = df_posts.dropna(subset=["date"])
             if not df_valid.empty:
                 sentiment_frames[ticker] = (
                     df_valid.groupby("date")["sentiment"].mean().reset_index()
                 )
-                series = pd.to_numeric(df_valid.get("sentiment"), errors="coerce")
-                mean_val = series.mean(skipna=True)
-                sentiments[ticker] = 0.0 if pd.isna(mean_val) else float(mean_val)
             else:
                 sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
-                sentiments[ticker] = 0.0
         else:
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
-            sentiments[ticker] = 0.0
-
-    # --- Preisdaten einmalig laden und Modelle trainieren ---
     with duckdb.connect(DB_PATH, read_only=True) as con:
         placeholder = ",".join("?" * len(tickers)) or "''"
         df_prices = con.execute(
             f"SELECT ticker, date, close FROM prices WHERE ticker IN ({placeholder}) ORDER BY ticker, date",
             tickers,
         ).fetchdf()
-
         price_frames = {
             t: g.drop(columns="ticker") for t, g in df_prices.groupby("ticker", sort=False)
         }
-
         train = partial(
             train_model_for_ticker,
             _con=con,
@@ -428,7 +385,36 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                         f" | Precision {precision:.2f} | Recall {recall:.2f}"
                     )
 
-    # Übersicht & Notify
+
+# ---------- Main ----------
+
+
+def run_pipeline(tickers: list[str] | None = None) -> int:
+    """Execute the complete Wallenstein data pipeline."""
+    t0 = time.time()
+    log.info("🚀 Start Wallenstein: Pipeline-Run")
+
+    if tickers is None:
+        tickers = resolve_tickers()
+    if not tickers:
+        log.warning("Keine Ticker zur Verarbeitung – Pipeline abgebrochen")
+        return 1
+
+    reddit_posts = fetch_updates(tickers)
+    persist_sentiment(reddit_posts)
+    generate_trends(reddit_posts)
+
+    ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
+    prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
+    log.info(f"USD: {prices_usd}")
+    if alerts_api:
+        try:
+            alerts_api.active_alerts(prices_usd, notify_telegram)
+        except Exception as e:  # pragma: no cover
+            log.warning(f"Alertprüfung fehlgeschlagen: {e}")
+
+    train_models(tickers, reddit_posts)
+
     try:
         msg = generate_overview(tickers, reddit_posts=reddit_posts)
         notify_telegram(msg)
