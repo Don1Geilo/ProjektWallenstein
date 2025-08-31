@@ -8,6 +8,7 @@ from functools import partial
 from pathlib import Path
 
 import duckdb
+import numpy as np
 import pandas as pd
 from dotenv import find_dotenv, load_dotenv
 
@@ -77,7 +78,7 @@ from wallenstein.reddit_enrich import (
     enrich_reddit_posts,
 )
 from wallenstein.sentiment import analyze_sentiment_batch
-from wallenstein.sentiment_analysis import analyze_sentiment, post_weight
+from wallenstein.sentiment_analysis import analyze_sentiment
 from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
 from wallenstein.trending import (
     auto_add_candidates_to_watchlist,
@@ -170,24 +171,26 @@ def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
     posts["num_comments"] = (
         pd.to_numeric(posts["num_comments"], errors="coerce").fillna(0).astype(int)
     )
-    posts["weight"] = posts.apply(lambda r: post_weight(r["ups"], r["num_comments"]), axis=1)
+    posts["weight"] = (
+        1
+        + np.log10(1 + posts["ups"])
+        + 0.2 * np.log10(1 + posts["num_comments"])
+    )
     posts["date"] = pd.to_datetime(posts["created_utc"], unit="s").dt.tz_localize("UTC").dt.date
+    posts["sentiment_weight"] = posts["sentiment"] * posts["weight"]
     agg = (
         posts.groupby(["date", "ticker"])
-        .apply(
-            lambda g: pd.Series(
-                {
-                    "n_posts": int(len(g)),
-                    "sentiment_mean": float(g["sentiment"].mean()),
-                    "sentiment_weighted": float(
-                        (g["sentiment"] * g["weight"]).sum() / max(1e-9, g["weight"].sum())
-                    ),
-                    "sentiment_median": float(g["sentiment"].median()),
-                }
-            )
+        .agg(
+            n_posts=("sentiment", "size"),
+            sentiment_mean=("sentiment", "mean"),
+            sent_w_sum=("sentiment_weight", "sum"),
+            weight_sum=("weight", "sum"),
+            sentiment_median=("sentiment", "median"),
         )
         .reset_index()
     )
+    agg["sentiment_weighted"] = agg["sent_w_sum"] / agg["weight_sum"].clip(lower=1e-9)
+    agg = agg.drop(columns=["sent_w_sum", "weight_sum"])
     agg["updated_at"] = datetime.now(timezone.utc)
     return agg
 
