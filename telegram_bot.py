@@ -183,18 +183,41 @@ async def cmd_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     ticker = context.args[0].upper()
     with duckdb.connect(DB_PATH) as con:
-        row = con.execute(
+        row_7d = con.execute(
             """
-            SELECT AVG(sent_weighted_avg), SUM(posts)
+            SELECT AVG(sentiment_weighted), SUM(posts)
             FROM reddit_sentiment_daily
             WHERE ticker = ? AND date >= CURRENT_DATE - INTERVAL 7 DAY
-              AND sent_weighted_avg IS NOT NULL
+              AND sentiment_weighted IS NOT NULL
             """,
             [ticker],
         ).fetchone()
-    if row and row[0] is not None:
-        avg_sent, posts = row
-        await update.message.reply_text(f"{ticker}: {avg_sent:+.2f} ({posts} posts)")
+        row_daily = con.execute(
+            """
+            SELECT sentiment_weighted, posts
+            FROM reddit_sentiment_daily
+            WHERE ticker = ? AND date = (
+                SELECT MAX(date) FROM reddit_sentiment_daily WHERE ticker = ?
+            )
+            """,
+            [ticker, ticker],
+        ).fetchone()
+        row_hour = con.execute(
+            """
+            SELECT AVG(sentiment_weighted), SUM(posts)
+            FROM reddit_sentiment_hourly
+            WHERE ticker = ? AND created_utc >= NOW() - INTERVAL 1 HOUR
+              AND sentiment_weighted IS NOT NULL
+            """,
+            [ticker],
+        ).fetchone()
+    if row_7d and row_7d[0] is not None:
+        msgs = [f"7d {row_7d[0]:+.2f} ({row_7d[1]} posts)"]
+        if row_daily and row_daily[0] is not None:
+            msgs.append(f"1d {row_daily[0]:+.2f} ({row_daily[1]} posts)")
+        if row_hour and row_hour[0] is not None:
+            msgs.append(f"1h {row_hour[0]:+.2f} ({row_hour[1]} posts)")
+        await update.message.reply_text(f"{ticker}: " + " | ".join(msgs))
     else:
         await update.message.reply_text("Keine Daten.")
 
