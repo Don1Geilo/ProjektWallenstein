@@ -1,6 +1,7 @@
 pandas
 yfinance
 duckdb
+sqlparse
 requests
 python-dotenv
 praw
