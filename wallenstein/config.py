@@ -50,6 +50,9 @@ class Settings:
     REDDIT_CLIENT_SECRET = _get("REDDIT_CLIENT_SECRET", "CLIENT_SECRET")
     REDDIT_USER_AGENT = _get("REDDIT_USER_AGENT", "USER_AGENT")
 
+    # HuggingFace Hub
+    HUGGING_FACE_HUB_TOKEN = _get("HUGGING_FACE_HUB_TOKEN", "HF_TOKEN")
+
     USE_BERT_SENTIMENT = _as_bool(_get("USE_BERT_SENTIMENT"), default=False)
     LOG_LEVEL = _get("LOG_LEVEL") or "INFO"
     REQUEST_TIMEOUT = int(_get("REQUEST_TIMEOUT") or "15")

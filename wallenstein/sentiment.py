@@ -8,11 +8,18 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import math
 import os
 import re
 from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+try:  # Optional dependency for data handling
+    import pandas as pd  # type: ignore
+except Exception:  # pragma: no cover - optional
+    pd = None
 
 try:  # Optional dependency
     import yaml  # type: ignore
@@ -31,8 +38,19 @@ except Exception:  # pragma: no cover - optional
 
 from wallenstein.config import settings
 
+try:  # Optional dependency for Hugging Face login
+    from huggingface_hub import login  # type: ignore
+except Exception:  # pragma: no cover - optional
+    login = None
+
 logger = logging.getLogger(__name__)
 _keyword_hint_logged = False
+
+if login and settings.HUGGING_FACE_HUB_TOKEN:
+    try:
+        login(token=settings.HUGGING_FACE_HUB_TOKEN)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("HuggingFace login failed: %s", exc)
 
 _url_re = re.compile(r"https?://\S+")
 
@@ -80,19 +98,10 @@ def normalize_token(token: str) -> str:
                 _stemmer_de = False
         if _stemmer_de not in (None, False):
             try:
-                return _stemmer_de.stem(token)  # type: ignore[union-attr]
+                token = _stemmer_de.stem(token)  # type: ignore[union-attr]
             except Exception:
                 pass
-        if _stemmer_en is None:
-            try:
-                _stemmer_en = SnowballStemmer("english")  # type: ignore[call-arg]
-            except Exception:
-                _stemmer_en = False
-        if _stemmer_en not in (None, False):
-            try:
-                return _stemmer_en.stem(token)  # type: ignore[union-attr]
-            except Exception:
-                pass
+        # English stemming skipped to avoid overly aggressive reductions
     if len(token) > 4:
         if token.endswith("st"):
             return token[:-2] + "en"
@@ -183,6 +192,7 @@ def _load_sentiment_config(path: str | Path | None = None) -> None:
             NEGATION_MARKERS.add(str(marker).lower())
         except Exception:
             continue
+
 
 # keyword -> sentiment score mapping used by :func:`analyze_sentiment`
 KEYWORD_SCORES: dict[str, int] = {
@@ -356,9 +366,7 @@ class FinBertAdapter:
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self._model = AutoModelForSequenceClassification.from_pretrained(
-                self.model_name
-            )
+            self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
         return self._model
 
     @property
@@ -609,15 +617,20 @@ __all__ = [
     "BertSentiment",
     "FinBertAdapter",
 ]
+
+
 def _post_weight(upvotes: int = 0, num_comments: int = 0) -> float:
     return 1.0 + math.log10(1 + max(0, upvotes)) + 0.2 * math.log10(1 + max(0, num_comments))
+
 
 def _ensure_datetime_series(s: pd.Series, tz: str = "Europe/Berlin") -> pd.Series:
     s = pd.to_datetime(s, errors="coerce", utc=True)
     return s.dt.tz_convert(ZoneInfo(tz))
 
+
 def _safe_float(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce").astype(float)
+
 
 def compute_daily_sentiment(
     df: pd.DataFrame,
@@ -646,9 +659,11 @@ def compute_daily_sentiment(
     # Gewichte (robust gegen fehlende Spalten)
     ups = _safe_float(tmp.get(upvotes_col, 0))
     com = _safe_float(tmp.get(comments_col, 0))
-    weights = (_post_weight(ups.fillna(0).astype(int), com.fillna(0).astype(int))
-               if hasattr(ups, "astype") and hasattr(com, "astype")
-               else pd.Series(1.0, index=tmp.index))
+    weights = (
+        _post_weight(ups.fillna(0).astype(int), com.fillna(0).astype(int))
+        if hasattr(ups, "astype") and hasattr(com, "astype")
+        else pd.Series(1.0, index=tmp.index)
+    )
 
     # Numerik
     weights = pd.to_numeric(weights, errors="coerce").fillna(1.0)
@@ -664,7 +679,9 @@ def compute_daily_sentiment(
         wgt_sum=("_score", lambda s: float((s * tmp.loc[s.index, "_w"]).sum())),
         w_sum=("_w", "sum"),
     )
-    g["wgt_mean"] = (g["wgt_sum"] / g["w_sum"]).replace([float("inf"), -float("inf")], 0.0).fillna(0.0)
+    g["wgt_mean"] = (
+        (g["wgt_sum"] / g["w_sum"]).replace([float("inf"), -float("inf")], 0.0).fillna(0.0)
+    )
 
     # Ausgabe-Form
     out = g.rename(columns={ticker_col: "ticker", "_date": "date"})[

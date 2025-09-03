@@ -30,6 +30,9 @@ jobs:
       REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
       REDDIT_USER_AGENT:    ${{ secrets.REDDIT_USER_AGENT }}
 
+      # HuggingFace
+      HUGGING_FACE_HUB_TOKEN: ${{ secrets.HUGGING_FACE_HUB_TOKEN }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
