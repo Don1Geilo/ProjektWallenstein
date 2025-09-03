@@ -73,7 +73,8 @@ def test_compute_reddit_trends():
                 "text": "",
                 "upvotes": 3,
                 "sentiment_dict": 0.2,
-                "sentiment_weighted": 0.2,
+                # simulate legacy rows weighted via log1p(upvotes)
+                "sentiment_weighted": 0.0,
                 "sentiment_ml": None,
                 "return_1d": None,
                 "return_3d": None,
@@ -187,7 +188,8 @@ def test_compute_reddit_sentiment():
                 "text": "",
                 "upvotes": 0,
                 "sentiment_dict": 0.2,
-                "sentiment_weighted": 0.2,
+                # simulate legacy rows weighted via log1p(upvotes)
+                "sentiment_weighted": 0.0,
                 "sentiment_ml": None,
                 "return_1d": None,
                 "return_3d": None,
@@ -200,7 +202,8 @@ def test_compute_reddit_sentiment():
                 "text": "",
                 "upvotes": 0,
                 "sentiment_dict": 0.4,
-                "sentiment_weighted": 0.4,
+                # simulate legacy rows weighted via log1p(upvotes)
+                "sentiment_weighted": 0.0,
                 "sentiment_ml": None,
                 "return_1d": None,
                 "return_3d": None,

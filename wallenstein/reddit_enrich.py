@@ -291,10 +291,11 @@ def compute_reddit_sentiment(
             DATE_TRUNC('hour', created_utc) AS created_utc,
             ticker,
             AVG(sentiment_dict) AS sentiment_dict,
-            SUM(sentiment_weighted) / NULLIF(SUM(1 + LOG10(1 + upvotes)), 0) AS sentiment_weighted,
+            SUM(sentiment_dict * (1 + LOG10(1 + upvotes)))
+                / NULLIF(SUM(1 + LOG10(1 + upvotes)), 0) AS sentiment_weighted,
             COUNT(*) AS posts
         FROM reddit_enriched
-        WHERE sentiment_weighted IS NOT NULL {hour_filter}
+        WHERE sentiment_dict IS NOT NULL {hour_filter}
         GROUP BY 1, 2
         """,
     )
@@ -306,10 +307,11 @@ def compute_reddit_sentiment(
             DATE_TRUNC('day', created_utc) AS date,
             ticker,
             AVG(sentiment_dict) AS sentiment_dict,
-            SUM(sentiment_weighted) / NULLIF(SUM(1 + LOG10(1 + upvotes)), 0) AS sentiment_weighted,
+            SUM(sentiment_dict * (1 + LOG10(1 + upvotes)))
+                / NULLIF(SUM(1 + LOG10(1 + upvotes)), 0) AS sentiment_weighted,
             COUNT(*) AS posts
         FROM reddit_enriched
-        WHERE sentiment_weighted IS NOT NULL {day_filter}
+        WHERE sentiment_dict IS NOT NULL {day_filter}
         GROUP BY 1, 2
         """,
     )
