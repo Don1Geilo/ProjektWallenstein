@@ -10,6 +10,13 @@ from typing import Any
 
 log = logging.getLogger("wallenstein")
 
+from wallenstein.config import settings
+
+try:  # Optional dependency for Hugging Face login
+    from huggingface_hub import login  # type: ignore
+except Exception:  # pragma: no cover - optional
+    login = None
+
 # --- Keyword-Boosts (konfigurierbar) ---
 POS_BOOST = {"long": 0.2, "call": 0.2}
 NEG_BOOST = {"short": -0.2, "put": -0.2}
@@ -116,6 +123,12 @@ class SentimentEngine:
     XLMR_ID = "cardiffnlp/twitter-xlm-roberta-base-sentiment"
 
     def __init__(self) -> None:
+        if login and settings.HUGGING_FACE_HUB_TOKEN:
+            try:
+                login(token=settings.HUGGING_FACE_HUB_TOKEN)
+            except Exception as exc:  # pragma: no cover - best effort
+                log.warning("HuggingFace login failed: %s", exc)
+
         self._pipeline = _try_import_transformers()
         self._hf_finbert: Callable | None = None
         self._hf_xlmr: Callable | None = None
