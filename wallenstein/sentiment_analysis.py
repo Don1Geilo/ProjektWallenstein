@@ -31,48 +31,19 @@ def _try_import_transformers():
         return None
 
 
-def _has_internet() -> bool:
-    try:  # pragma: no cover - simple connectivity check
-        import urllib.request
-
-        urllib.request.urlopen("https://www.nltk.org", timeout=1)
-        return True
-    except Exception:
-        return False
-
-
 def _ensure_vader():
     try:
         import nltk  # type: ignore
         from nltk.sentiment import SentimentIntensityAnalyzer  # type: ignore
-        return SentimentIntensityAnalyzer
-    except Exception:
-        try:
-            import nltk  # type: ignore
-
-            nltk.download("vader_lexicon", quiet=True)
-            from nltk.sentiment import SentimentIntensityAnalyzer  # type: ignore
-
-            return SentimentIntensityAnalyzer
-        except Exception as e2:  # pragma: no cover
-            log.warning(f"VADER not available: {e2}")
-            return None
 
         try:
             nltk.data.find("sentiment/vader_lexicon.zip")
         except LookupError:
-            if _has_internet():
-                try:
-                    nltk.download("vader_lexicon", quiet=True)
-                except Exception:
-                    pass
-            nltk.data.find("sentiment/vader_lexicon.zip")
-
+            nltk.download("vader_lexicon", quiet=True)
         return SentimentIntensityAnalyzer
-    except Exception as e2:  # pragma: no cover
-        log.warning("VADER not available: %s", str(e2).splitlines()[0])
+    except Exception as e:  # pragma: no cover
+        log.warning("VADER not available: %s", e)
         return None
-
 
 
 def _detect_lang(text: str) -> str:
