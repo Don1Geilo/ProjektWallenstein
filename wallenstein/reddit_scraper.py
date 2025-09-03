@@ -16,8 +16,8 @@ import praw
 
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
-from wallenstein.sentiment_analysis import analyze_sentiment
 from wallenstein.sentiment import analyze_sentiment_batch
+from wallenstein.sentiment_analysis import analyze_sentiment
 
 try:  # Optional dependency
     import yaml  # type: ignore
@@ -119,12 +119,12 @@ def fetch_reddit_posts(
     limit: int = 50,
     include_comments: bool = False,
 ) -> pd.DataFrame:
-    """Return hot **and new** posts from ``subreddit`` as a ``DataFrame``.
+    """Return hot and new posts from ``subreddit`` as a ``DataFrame``.
 
-    If ``include_comments`` is ``True`` the top comments for each post are
-    fetched and returned as separate rows. Only interacts with the Reddit API;
-    no database reads or writes occur here. Callers can persist the resulting
-    frame if needed.
+    Hot and new results are merged and deduplicated. If ``include_comments`` is
+    ``True`` the top comments for each post are fetched and returned as separate
+    rows. Only interacts with the Reddit API; no database reads or writes occur
+    here. Callers can persist the resulting frame if needed.
     """
 
     reddit = praw.Reddit(
@@ -167,6 +167,7 @@ def fetch_reddit_posts(
                 )
 
     df = pd.DataFrame(posts)
+    df.drop_duplicates(subset="id", inplace=True)
     if not df.empty:
         combined = df["title"].fillna("") + " " + df["text"].fillna("")
         df["sentiment"] = combined.apply(analyze_sentiment)
