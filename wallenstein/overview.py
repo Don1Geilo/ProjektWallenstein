@@ -103,6 +103,16 @@ def generate_overview(
             lines.append(f"Sentiment (7d, weighted): {w_sent:+.2f}")
 
             try:
+                sent_row_1d = con.execute(
+                    "SELECT sentiment_weighted FROM reddit_sentiment_daily WHERE ticker=? ORDER BY date DESC LIMIT 1",
+                    [t],
+                ).fetchone()
+            except duckdb.Error:
+                sent_row_1d = None
+            if sent_row_1d and sent_row_1d[0] is not None:
+                lines.append(f"Sentiment (1d, weighted): {sent_row_1d[0]:+.2f}")
+
+            try:
                 sent_row_24h = con.execute(
                     """
                     SELECT AVG(sentiment_weighted) AS w

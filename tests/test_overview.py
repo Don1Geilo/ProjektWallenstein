@@ -1,5 +1,7 @@
 import os
 
+import duckdb
+
 os.environ.setdefault('CLIENT_ID', 'x')
 os.environ.setdefault('CLIENT_SECRET', 'x')
 os.environ.setdefault('TELEGRAM_BOT_TOKEN', 'x')
@@ -27,3 +29,24 @@ def test_generate_overview_fetches_missing_price(monkeypatch):
 
     result = generate_overview(['MSFT'], reddit_posts={'MSFT': []})
     assert 'MSFT: 42.00 USD (21.00 EUR)' in result
+
+
+def test_generate_overview_includes_latest_sentiment(monkeypatch, tmp_path):
+    db_path = tmp_path / 'db.duckdb'
+    con = duckdb.connect(str(db_path))
+    con.execute(
+        "CREATE TABLE reddit_sentiment_daily (ticker VARCHAR, date DATE, sentiment_weighted DOUBLE)"
+    )
+    con.execute(
+        "INSERT INTO reddit_sentiment_daily VALUES ('NVDA', CURRENT_DATE, 0.5)"
+    )
+    con.close()
+
+    monkeypatch.setattr(
+        'wallenstein.overview.get_latest_prices',
+        lambda db_path, tickers, use_eur=False: {t: 1.0 for t in tickers},
+    )
+    monkeypatch.setattr('wallenstein.overview.DB_PATH', str(db_path))
+
+    result = generate_overview(['NVDA'], reddit_posts={'NVDA': []})
+    assert 'Sentiment (1d, weighted): +0.50' in result
