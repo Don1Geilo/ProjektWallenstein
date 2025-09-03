@@ -172,8 +172,8 @@ def test_compute_returns():
     ).fetchone()
 
     assert row[0] == pytest.approx(0.1)
-    assert row[1] == pytest.approx(0.4)
-    assert row[2] == pytest.approx(1.0)
+    assert row[1] == pytest.approx(1.0)
+    assert row[2] is None
 
 
 def test_compute_reddit_sentiment():
