@@ -64,7 +64,7 @@ def enrich_reddit_posts(
     """
     Enrich und persistiere Reddit-Posts in reddit_enriched.
     - sentiment_dict: Keyword-Heuristik
-    - sentiment_weighted: sentiment_dict * ln(upvotes+1)
+    - sentiment_weighted: sentiment_dict * (1 + log10(1 + upvotes))
     Gibt die Anzahl der eingefügten/ersetzten Zeilen zurück.
     """
     rows: list[dict] = []
@@ -80,7 +80,8 @@ def enrich_reddit_posts(
             upvotes = _to_upvotes(post.get("upvotes", post.get("score")))
             s_raw = analyze_sentiment(text)  # darf None sein
             sent = float(s_raw) if s_raw is not None else None
-            weighted = None if sent is None else sent * math.log1p(upvotes)
+            weight = 1 + math.log10(1 + upvotes)
+            weighted = None if sent is None else sent * weight
 
             rows.append(
                 {
@@ -290,7 +291,7 @@ def compute_reddit_sentiment(
             DATE_TRUNC('hour', created_utc) AS created_utc,
             ticker,
             AVG(sentiment_dict) AS sentiment_dict,
-            AVG(sentiment_weighted) AS sentiment_weighted,
+            SUM(sentiment_weighted) / NULLIF(SUM(1 + LOG10(1 + upvotes)), 0) AS sentiment_weighted,
             COUNT(*) AS posts
         FROM reddit_enriched
         WHERE sentiment_weighted IS NOT NULL {hour_filter}
@@ -305,7 +306,7 @@ def compute_reddit_sentiment(
             DATE_TRUNC('day', created_utc) AS date,
             ticker,
             AVG(sentiment_dict) AS sentiment_dict,
-            AVG(sentiment_weighted) AS sentiment_weighted,
+            SUM(sentiment_weighted) / NULLIF(SUM(1 + LOG10(1 + upvotes)), 0) AS sentiment_weighted,
             COUNT(*) AS posts
         FROM reddit_enriched
         WHERE sentiment_weighted IS NOT NULL {day_filter}

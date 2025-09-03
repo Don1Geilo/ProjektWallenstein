@@ -44,7 +44,7 @@ def test_enrich_reddit_posts(monkeypatch):
     assert row[0] == "abc"
     assert row[1] == "ABC"
     assert row[2] == 0.5
-    assert row[3] == pytest.approx(0.5 * math.log(10))
+    assert row[3] == pytest.approx(0.5 * (1 + math.log10(10)))
     count = con.execute("SELECT COUNT(*) FROM reddit_enriched").fetchone()[0]
     assert count == 1
 
@@ -224,3 +224,12 @@ def test_compute_reddit_sentiment():
     assert daily_row[2] == pytest.approx(0.3)
     assert daily_row[3] == pytest.approx(0.3)
     assert daily_row[4] == 2
+
+    seven_day = con.execute(
+        """
+        SELECT AVG(sentiment_weighted)
+        FROM reddit_sentiment_daily
+        WHERE ticker = 'ABC' AND date >= CURRENT_DATE - INTERVAL 7 DAY
+        """,
+    ).fetchone()[0]
+    assert seven_day == pytest.approx(0.3)
