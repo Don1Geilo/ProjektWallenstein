@@ -45,7 +45,10 @@ TICKER_NAME_MAP: dict[str, list[str]] = {}
 
 
 def _load_aliases_from_file(
-    path: str | Path | None = None, aliases: dict[str, list[str]] | None = None
+    path: str | Path | None = None,
+    aliases: dict[str, list[str]] | None = None,
+    *,
+    reset: bool = False,
 ) -> None:
     """Merge additional ticker aliases from a dict or JSON/YAML file.
 
@@ -57,7 +60,14 @@ def _load_aliases_from_file(
     aliases:
         Optional in-memory mapping ``{"TICKER": ["alias1", ...]}`` that is
         merged directly into :data:`TICKER_NAME_MAP`.
+    reset:
+        When ``True`` the existing contents of :data:`TICKER_NAME_MAP` are
+        cleared before new aliases from ``aliases`` or ``path`` are merged in.
+        This allows callers to perform a full reload of alias definitions.
     """
+
+    if reset:
+        TICKER_NAME_MAP.clear()
 
     # 1) Merge explicit alias mapping first
     if aliases:
