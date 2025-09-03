@@ -367,11 +367,24 @@ def update_reddit_data(
         for t in tickers
     }
     if compiled_patterns:
-        match_df = pd.DataFrame(
-            {t: df["combined"].str.contains(pat, na=False) for t, pat in compiled_patterns.items()}
+        # Erst eine kombinierte Regex auf alle Posts anwenden, um irrelevante
+        # Zeilen früh zu verwerfen. Danach werden die einzelnen Ticker-Muster
+        # nur noch auf diese Teilmenge angewendet.
+        union_pattern = re.compile(
+            "|".join(p.pattern for p in compiled_patterns.values()), re.IGNORECASE
         )
-        mask = match_df.any(axis=1)
-        df = pd.concat([df[mask], match_df.loc[mask]], axis=1)
+        mask = df["combined"].str.contains(union_pattern, na=False)
+        if mask.any():
+            subset = df.loc[mask]
+            match_df = pd.DataFrame(
+                {
+                    t: subset["combined"].str.contains(pat, na=False)
+                    for t, pat in compiled_patterns.items()
+                }
+            )
+            df = pd.concat([subset, match_df], axis=1)
+        else:
+            df = df.head(0)
 
     # 3) Je Ticker Texte sammeln
     out: dict[str, list[dict]] = {}
