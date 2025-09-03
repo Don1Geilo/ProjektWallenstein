@@ -1,14 +1,15 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Set, List, Dict, Iterable, Tuple
+
 import math
 import re
-import time
+from dataclasses import dataclass
+from typing import Dict, List, Set
 
 import duckdb
 import pandas as pd
 
 from .aliases import alias_map  # liefert Dict[str, Set[str]]
+
 
 # ---------- Datenklassen ----------
 @dataclass
@@ -90,10 +91,12 @@ def _count_mentions(df: pd.DataFrame, patmap: Dict[str, list[re.Pattern]]) -> Di
 # Optional: gewichtete Zählung (Upvotes/Kommentare)
 def _count_weighted_mentions(df: pd.DataFrame, patmap: Dict[str, list[re.Pattern]]) -> Dict[str, float]:
     counts: Dict[str, float] = {}
-    ups = pd.to_numeric(df.get("ups", 0), errors="coerce").fillna(0).astype(float)
-    com = pd.to_numeric(df.get("num_comments", 0), errors="coerce").fillna(0).astype(float)
+    ups_series = df.get("ups", df.get("upvotes", 0))
+    ups = pd.to_numeric(ups_series, errors="coerce").fillna(0).astype(float)
+    com_series = df.get("num_comments", 0)
+    com = pd.to_numeric(com_series, errors="coerce").fillna(0).astype(float)
     weights = 1.0 + ups.add(1).apply(math.log10) + 0.2 * com.add(1).apply(math.log10)
-    for txt, w in zip(df["text"].astype(str), weights):
+    for txt, w in zip(df["text"].astype(str), weights, strict=False):
         for s in _match_with_patterns(txt, patmap):
             counts[s] = counts.get(s, 0.0) + float(w)
     return counts
@@ -121,16 +124,10 @@ def scan_reddit_for_candidates(
     patmap = _compile_alias_patterns(amap)
 
     # Fenster laden (UTC im DB; hier neutral belassen)
-    # Robuste Aliases:
-    # - Ups: upvotes/score/ups → ups
-    # - Comments: num_comments/comments → num_comments
-    # - Text: text/title/selftext/body → text
+    # Kommentarzahlen sind derzeit nicht verfügbar
+    # TODO: Falls num_comments verfügbar ist, Abfrage erweitern
     df_win = con.execute(f"""
-        SELECT
-            created_utc,
-            COALESCE(text, title || ' ' || selftext, title, selftext, body, '') AS text,
-            COALESCE(upvotes, score, ups, 0) AS ups,
-            COALESCE(num_comments, comments, 0) AS num_comments
+        SELECT created_utc, text, upvotes AS ups, 0 AS num_comments
         FROM reddit_posts
         WHERE created_utc >= NOW() - INTERVAL {int(window_hours)} HOUR
     """).fetchdf()
@@ -139,11 +136,7 @@ def scan_reddit_for_candidates(
         return []
 
     df_base = con.execute(f"""
-        SELECT
-            created_utc,
-            COALESCE(text, title || ' ' || selftext, title, selftext, body, '') AS text,
-            COALESCE(upvotes, score, ups, 0) AS ups,
-            COALESCE(num_comments, comments, 0) AS num_comments
+        SELECT created_utc, text, upvotes AS ups, 0 AS num_comments
         FROM reddit_posts
         WHERE created_utc >= NOW() - INTERVAL {int(lookback_days*24)} HOUR
           AND created_utc <  NOW() - INTERVAL {int(window_hours)} HOUR
@@ -238,7 +231,7 @@ def auto_add_candidates_to_watchlist(
 
     wl = set(s for (s,) in con.execute("SELECT DISTINCT symbol FROM watchlist").fetchall())
     added: List[str] = []
-    for sym, mentions, base_rate, lift, trend in rows:
+    for sym, mentions, _base_rate, lift, trend in rows:
         if len(added) >= max_new:
             break
         if sym in wl:
