@@ -121,8 +121,16 @@ def scan_reddit_for_candidates(
     patmap = _compile_alias_patterns(amap)
 
     # Fenster laden (UTC im DB; hier neutral belassen)
+    # Robuste Aliases:
+    # - Ups: upvotes/score/ups → ups
+    # - Comments: num_comments/comments → num_comments
+    # - Text: text/title/selftext/body → text
     df_win = con.execute(f"""
-        SELECT created_utc, text, ups, num_comments
+        SELECT
+            created_utc,
+            COALESCE(text, title || ' ' || selftext, title, selftext, body, '') AS text,
+            COALESCE(upvotes, score, ups, 0) AS ups,
+            COALESCE(num_comments, comments, 0) AS num_comments
         FROM reddit_posts
         WHERE created_utc >= NOW() - INTERVAL {int(window_hours)} HOUR
     """).fetchdf()
@@ -131,7 +139,11 @@ def scan_reddit_for_candidates(
         return []
 
     df_base = con.execute(f"""
-        SELECT created_utc, text, ups, num_comments
+        SELECT
+            created_utc,
+            COALESCE(text, title || ' ' || selftext, title, selftext, body, '') AS text,
+            COALESCE(upvotes, score, ups, 0) AS ups,
+            COALESCE(num_comments, comments, 0) AS num_comments
         FROM reddit_posts
         WHERE created_utc >= NOW() - INTERVAL {int(lookback_days*24)} HOUR
           AND created_utc <  NOW() - INTERVAL {int(window_hours)} HOUR
