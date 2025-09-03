@@ -13,6 +13,7 @@ from importlib import resources
 from pathlib import Path
 
 import duckdb
+import sqlparse
 
 from .config import settings
 from .db_schema import ensure_tables
@@ -31,7 +32,7 @@ def get_connection(db_path: str | None = None) -> duckdb.DuckDBPyConnection:
 
 def _execute_script(con: duckdb.DuckDBPyConnection, script: str) -> None:
     """Execute a multi-statement SQL script."""
-    for statement in script.split(";"):
+    for statement in sqlparse.split(script):
         stmt = statement.strip()
         if stmt:
             con.execute(stmt)
