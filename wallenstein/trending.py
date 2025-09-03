@@ -96,7 +96,10 @@ def _count_weighted_mentions(df: pd.DataFrame, patmap: Dict[str, list[re.Pattern
     com_series = df.get("num_comments", 0)
     com = pd.to_numeric(com_series, errors="coerce").fillna(0).astype(float)
     weights = 1.0 + ups.add(1).apply(math.log10) + 0.2 * com.add(1).apply(math.log10)
-    for txt, w in zip(df["text"].astype(str), weights, strict=False):
+    texts = df["text"].astype(str)
+    if len(texts) != len(weights):
+        raise ValueError("Length mismatch between texts and weights")
+    for txt, w in zip(texts, weights):  # noqa: B905
         for s in _match_with_patterns(txt, patmap):
             counts[s] = counts.get(s, 0.0) + float(w)
     return counts
