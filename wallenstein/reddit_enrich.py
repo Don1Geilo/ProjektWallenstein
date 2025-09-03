@@ -212,8 +212,8 @@ def compute_returns(
 
             ret_vals: list[float | None] = []
             for h in horizon_days:
-                target = r.created_utc + pd.Timedelta(days=h)
-                idxN = grp["date"].searchsorted(target, side="left")
+                # Index-basiert: h Handelstage nach dem Basisdatum
+                idxN = idx0 + h
                 if idxN >= len(grp):
                     ret_vals.append(None)
                 else:
@@ -324,6 +324,7 @@ def compute_reddit_sentiment(
     ).fetchone()[0]
 
     return int(rows_hourly or 0), int(rows_daily or 0)
+
 
 __all__ = [
     "enrich_reddit_posts",
