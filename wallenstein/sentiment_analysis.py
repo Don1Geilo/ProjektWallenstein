@@ -123,9 +123,9 @@ class SentimentEngine:
     XLMR_ID = "cardiffnlp/twitter-xlm-roberta-base-sentiment"
 
     def __init__(self) -> None:
-        if login and settings.HUGGING_FACE_HUB_TOKEN:
+        if login and settings.HUGGINGFACE_HUB_TOKEN:
             try:
-                login(token=settings.HUGGING_FACE_HUB_TOKEN)
+                login(token=settings.HUGGINGFACE_HUB_TOKEN)
             except Exception as exc:  # pragma: no cover - best effort
                 log.warning("HuggingFace login failed: %s", exc)
 

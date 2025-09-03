@@ -1,7 +1,12 @@
-"""Utility functions for simplistic sentiment analysis.
+# wallenstein/sentiment.py
+"""
+Pragmatische Sentiment-Utilities (FinBERT → VADER → Keywords).
 
-The keyword map supports both common English and German trading slang
-allowing rudimentary multilingual sentiment detection."""
+- Bevorzugt ProsusAI/finbert (lokal in models/finbert, sonst HF-Cache)
+- Robuster Fallback: VADER (mit kleinem Finanz/WSB-Boost)
+- Letzter Fallback: einfache Keyword-Heuristik (EN/DE + Negation/Intensifier)
+- Batch-API und tägliche Aggregation (Upvotes/Kommentare-gewichtung)
+"""
 
 from __future__ import annotations
 
@@ -11,97 +16,92 @@ import logging
 import math
 import os
 import re
-from collections.abc import Iterable
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
-try:  # Optional dependency for data handling
+# --- Optional dependencies (defensiv) ---
+try:
     import pandas as pd  # type: ignore
-except Exception:  # pragma: no cover - optional
-    pd = None
+except Exception:  # pragma: no cover
+    pd = None  # type: ignore
 
-try:  # Optional dependency
+try:
     import yaml  # type: ignore
-except Exception:  # pragma: no cover - not critical if missing
-    yaml = None
+except Exception:  # pragma: no cover
+    yaml = None  # type: ignore
 
-try:  # Optional dependency for token normalisation
+try:
     import spacy  # type: ignore
-except Exception:  # pragma: no cover - optional
-    spacy = None
+except Exception:  # pragma: no cover
+    spacy = None  # type: ignore
 
-try:  # Optional dependency for token normalisation
+try:
     from nltk.stem import SnowballStemmer  # type: ignore
-except Exception:  # pragma: no cover - optional
-    SnowballStemmer = None
+except Exception:  # pragma: no cover
+    SnowballStemmer = None  # type: ignore
 
-from wallenstein.config import settings
-
-try:  # Optional dependency for Hugging Face login
-    from huggingface_hub import login  # type: ignore
-except Exception:  # pragma: no cover - optional
-    login = None
+from .config import settings, ensure_hf_env
 
 logger = logging.getLogger(__name__)
-_keyword_hint_logged = False
 
-if login and settings.HUGGING_FACE_HUB_TOKEN:
-    try:
-        login(token=settings.HUGGING_FACE_HUB_TOKEN)
-    except Exception as exc:  # pragma: no cover - best effort
-        logger.warning("HuggingFace login failed: %s", exc)
-
+# --- regex & globals ---
 _url_re = re.compile(r"https?://\S+")
-
 _spacy_nlp = None
 _stemmer_de = None
-_stemmer_en = None
+_keyword_hint_logged = False
 
+# HF-ENV setzen (Token/Cache), kein lautes Login nötig
+ensure_hf_env()
 
+# ---------------------------------------------------------------------------
+# Normalisierung / Heuristiken
+# ---------------------------------------------------------------------------
 @lru_cache(maxsize=2048)
 def normalize_token(token: str) -> str:
-    """Return a normalised/lemmatised version of ``token``."""
     if not token:
         return token
-    global _spacy_nlp, _stemmer_de, _stemmer_en
     try:
         if token in KEYWORD_SCORES or token in NEGATION_MARKERS:
             return token
     except Exception:
         pass
-    if spacy is not None:
-        if _spacy_nlp is None:
+
+    # spaCy Lemmatizer (optional)
+    global _spacy_nlp
+    if spacy is not None and _spacy_nlp is None:
+        for model in ("de_core_news_sm", "en_core_web_sm"):
             try:
-                for model in ("de_core_news_sm", "en_core_web_sm"):
-                    try:
-                        _spacy_nlp = spacy.load(model, disable=["parser", "ner", "textcat"])  # type: ignore[arg-type]
-                        break
-                    except Exception:
-                        continue
+                _spacy_nlp = spacy.load(model, disable=["parser", "ner", "textcat"])  # type: ignore[arg-type]
+                break
             except Exception:
-                _spacy_nlp = None
-        if _spacy_nlp is not None:
-            try:
-                doc = _spacy_nlp(token)
-                if doc and doc[0].lemma_:
-                    lemma = doc[0].lemma_.lower()
-                    if lemma:
-                        return lemma
-            except Exception:
-                pass
-    if SnowballStemmer is not None:
-        if _stemmer_de is None:
-            try:
-                _stemmer_de = SnowballStemmer("german")  # type: ignore[call-arg]
-            except Exception:
-                _stemmer_de = False
-        if _stemmer_de not in (None, False):
-            try:
-                token = _stemmer_de.stem(token)  # type: ignore[union-attr]
-            except Exception:
-                pass
-        # English stemming skipped to avoid overly aggressive reductions
+                continue
+    if _spacy_nlp is not None:
+        try:
+            doc = _spacy_nlp(token)
+            if doc and doc[0].lemma_:
+                lemma = doc[0].lemma_.lower()
+                if lemma:
+                    return lemma
+        except Exception:
+            pass
+
+    # Deutscher Stemmer als leichter Fallback
+    global _stemmer_de
+    if SnowballStemmer is not None and _stemmer_de is None:
+        try:
+            _stemmer_de = SnowballStemmer("german")  # type: ignore[call-arg]
+        except Exception:
+            _stemmer_de = False
+    if _stemmer_de not in (None, False):
+        try:
+            token = _stemmer_de.stem(token)  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+    # einfache deutsch-lastige Nachkorrektur
     if len(token) > 4:
         if token.endswith("st"):
             return token[:-2] + "en"
@@ -114,149 +114,75 @@ def normalize_token(token: str) -> str:
 
 @lru_cache(maxsize=1024)
 def _preprocess(text: str) -> str:
-    """Return a normalised version of ``text`` suitable for analysis."""
+    """
+    Lowercase, URLs raus, Interpunktion -> Space.
+    Erhält Cashtags/Hashtags ($, #) und 🚀.
+    """
+    text = (text or "").lower()
     text = _url_re.sub(" ", text)
-    text = text.lower().strip()
-    if not text:
-        return text
-    tokens = text.split()
-    tokens = [normalize_token(tok) for tok in tokens]
+    # alles außer Wortzeichen, $ # und 🚀 zu Space machen
+    text = re.sub(r"[^\w$#🚀]+", " ", text, flags=re.U)
+    tokens = [normalize_token(tok) for tok in text.split()]
     return " ".join(tokens)
 
 
 def _transformers_available() -> bool:
-    """Return ``True`` if the ``transformers`` package can be imported."""
     return importlib.util.find_spec("transformers") is not None
 
 
-def _should_use_bert() -> bool:
-    """Decide whether to use a BERT model (env overrides settings)."""
-    env = os.getenv("USE_BERT_SENTIMENT")
-    if env is not None:
-        return env.lower() in {"1", "true", "yes"}
-    return settings.USE_BERT_SENTIMENT
-
-
-def _log_keyword_hint(message: str = "Using keyword-based sentiment analysis") -> None:
-    """Log ``message`` once to inform about fallback behaviour."""
+def _log_keyword_hint(msg: str) -> None:
     global _keyword_hint_logged
     if not _keyword_hint_logged:
-        logger.info(message)
+        logger.info(msg)
         _keyword_hint_logged = True
 
 
-# Intensifiers and negation markers used to enrich the keyword map
+# Intensifier & Negationen (EN/DE)
 INTENSITY_WEIGHTS: dict[str, int] = {
-    "strong": 2,
-    "massiv": 2,
-    "extrem": 2,
-    "mega": 2,
-    "super": 2,
-    "über": 2,
+    "strong": 2, "massiv": 2, "extrem": 2, "mega": 2, "super": 2, "über": 2,
 }
-
 NEGATION_MARKERS = {"nicht", "kein", "no", "not", "nie", "ohne"}
 
-
 def _load_sentiment_config(path: str | Path | None = None) -> None:
-    """Load optional sentiment configuration for markers.
-
-    The configuration may define ``intensity_weights`` (mapping of word to
-    multiplier) and ``negation_markers`` (list of words).  Missing entries are
-    ignored gracefully.  If no file is found or PyYAML is unavailable, the
-    defaults remain untouched.
-    """
-
-    if not yaml:  # pragma: no cover - optional dependency
+    if not yaml:
         return
-
     root = Path(__file__).resolve().parents[1]
-    config_path = Path(path) if path else root / "data" / "sentiment_config.yaml"
-    if not config_path.exists():
+    cfg = Path(path) if path else root / "data" / "sentiment_config.yaml"
+    if not cfg.exists():
         return
     try:
-        with config_path.open("r", encoding="utf-8") as fh:
+        with cfg.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Could not load sentiment config from %s: %s", config_path, exc)
+    except Exception as exc:
+        logger.warning("Could not load sentiment config from %s: %s", cfg, exc)
         return
-
-    for word, weight in (data.get("intensity_weights") or {}).items():
+    for w, k in (data.get("intensity_weights") or {}).items():
         try:
-            INTENSITY_WEIGHTS[str(word).lower()] = int(weight)
+            INTENSITY_WEIGHTS[str(w).lower()] = int(k)
+        except Exception:
+            continue
+    for m in data.get("negation_markers") or []:
+        try:
+            NEGATION_MARKERS.add(str(m).lower())
         except Exception:
             continue
 
-    for marker in data.get("negation_markers") or []:
-        try:
-            NEGATION_MARKERS.add(str(marker).lower())
-        except Exception:
-            continue
-
-
-# keyword -> sentiment score mapping used by :func:`analyze_sentiment`
+# keyword -> sentiment score (rudimentär EN/DE trading slang)
 KEYWORD_SCORES: dict[str, int] = {
     # positive
-    "long": 1,
-    "call": 1,
-    "bull": 1,
-    "bullish": 1,
-    "buy": 1,
-    "kaufen": 1,
-    "kauf": 1,
-    "bullisch": 1,
-    "moon": 1,
-    "pump": 1,
-    "yolo": 1,
-    "fomo": 1,
-    "hodl": 1,
-    "btfd": 1,
-    "rocket": 1,
-    "squeeze": 1,
-    "lfg": 1,
-    "hoch": 1,
-    "lambo": 1,
-    "🚀": 1,
-    "green": 1,
-    "grün": 1,
-    "profit": 1,
-    "gewinn": 1,
-    "rally": 1,
-    "boom": 1,
+    "long": 1, "call": 1, "bull": 1, "bullish": 1, "buy": 1, "kaufen": 1, "kauf": 1,
+    "bullisch": 1, "moon": 1, "pump": 1, "yolo": 1, "fomo": 1, "hodl": 1, "btfd": 1,
+    "rocket": 1, "squeeze": 1, "lfg": 1, "hoch": 1, "lambo": 1, "🚀": 1, "green": 1,
+    "grün": 1, "profit": 1, "gewinn": 1, "rally": 1, "boom": 1,
     # negative
-    "short": -1,
-    "put": -1,
-    "bear": -1,
-    "bearish": -1,
-    "sell": -1,
-    "verkaufen": -1,
-    "bärisch": -1,
-    "dip": -1,
-    "dump": -1,
-    "dumping": -1,
-    "fud": -1,
-    "crash": -1,
-    "bagholder": -1,
-    "rekt": -1,
-    "down": -1,
-    "fall": -1,
-    "sink": -1,
-    "stupid": -1,
-    "schlecht": -1,
-    "red": -1,
-    "rot": -1,
-    "loss": -1,
-    "verlust": -1,
-    "collapse": -1,
+    "short": -1, "put": -1, "bear": -1, "bearish": -1, "sell": -1, "verkaufen": -1,
+    "bärisch": -1, "dip": -1, "dump": -1, "dumping": -1, "fud": -1, "crash": -1,
+    "bagholder": -1, "rekt": -1, "down": -1, "fall": -1, "sink": -1, "stupid": -1,
+    "schlecht": -1, "red": -1, "rot": -1, "loss": -1, "verlust": -1, "collapse": -1,
     "baisse": -1,
 }
 
-
-def _load_keywords_from_file(
-    path: str | Path | None = None, keywords: dict[str, int] | None = None
-) -> None:
-    """Merge additional sentiment keywords from a dict or JSON/YAML file."""
-
+def _load_keywords_from_file(path: str | Path | None = None, keywords: dict[str, int] | None = None) -> None:
     if keywords:
         for word, score in keywords.items():
             try:
@@ -264,237 +190,264 @@ def _load_keywords_from_file(
                 KEYWORD_SCORES.setdefault(norm, int(score))
             except Exception:
                 continue
-
     root = Path(__file__).resolve().parents[1]
     candidates = (
-        [Path(path)]
-        if path
-        else [
+        [Path(path)] if path else [
             root / "data" / "sentiment_keywords.json",
             root / "data" / "sentiment_keywords.yaml",
             root / "data" / "sentiment_keywords.yml",
         ]
     )
-
-    for candidate in candidates:
-        if not candidate.exists():
+    for cand in candidates:
+        if not cand.exists():
             continue
         try:
-            with candidate.open("r", encoding="utf-8") as fh:
-                if candidate.suffix == ".json":
+            with cand.open("r", encoding="utf-8") as fh:
+                if cand.suffix == ".json":
                     data = json.load(fh)
-                elif candidate.suffix in {".yaml", ".yml"} and yaml:
+                elif cand.suffix in {".yaml", ".yml"} and yaml:
                     data = yaml.safe_load(fh)
                 else:
-                    logger.warning("Unsupported sentiment keyword file format: %s", candidate)
+                    logger.warning("Unsupported sentiment keyword file format: %s", cand)
                     data = {}
-
             for word, score in (data or {}).items():
                 try:
                     norm = normalize_token(str(word).lower())
                     KEYWORD_SCORES.setdefault(norm, int(score))
                 except Exception:
                     continue
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Could not load sentiment keywords from %s: %s", candidate, exc)
-        break  # only use first existing file
+        except Exception as exc:
+            logger.warning("Could not load sentiment keywords from %s: %s", cand, exc)
+        break  # nur die erste existierende Datei nutzen
 
-
-# Load optional configuration before deriving keyword variants
+# Konfig & Keywords laden, dann Varianten ableiten
 _load_sentiment_config()
-
-# Load user-provided keywords before expanding intensity/negation variants
 _load_keywords_from_file()
-
-# extend keyword scores with simple intensity phrases and negated forms
-for _word, _score in list(KEYWORD_SCORES.items()):
-    for _intens, _mult in INTENSITY_WEIGHTS.items():
-        KEYWORD_SCORES[f"{_intens} {_word}"] = _score * _mult
-    KEYWORD_SCORES[f"not_{_word}"] = -_score
-
+for _w, _s in list(KEYWORD_SCORES.items()):
+    for _i, _m in INTENSITY_WEIGHTS.items():
+        KEYWORD_SCORES[f"{_i} {_w}"] = _s * _m
+    KEYWORD_SCORES[f"not_{_w}"] = -_s
 
 def apply_negation(text: str) -> str:
-    """Collapse negations so that they can be scored correctly.
-
-    Searches for negations like "nicht"/"kein"/"not"/"no" and prefixes
-    a sentiment keyword within the next two tokens with "not_".
-    """
+    """Negations-Faltung: markiert Keyword im Fenster von 2 Tokens mit 'not_'."""
     words = text.split()
-    result = []
+    result: list[str] = []
     i = 0
     while i < len(words):
-        word = words[i]
-        if word in NEGATION_MARKERS:
+        w = words[i]
+        if w in NEGATION_MARKERS:
             target = None
-            for offset in (1, 2):
-                j = i + offset
+            for off in (1, 2):
+                j = i + off
                 if j < len(words):
-                    candidate = words[j]
-                    if candidate in KEYWORD_SCORES or candidate in INTENSITY_WEIGHTS:
+                    cand = words[j]
+                    if cand in KEYWORD_SCORES or cand in INTENSITY_WEIGHTS:
                         target = j
                         break
             if target is not None:
-                result.extend(words[i + 1 : target])
+                result.extend(words[i + 1:target])
                 result.append(f"not_{words[target]}")
                 i = target + 1
                 continue
             i += 1
             continue
-        result.append(word)
+        result.append(w)
         i += 1
     return " ".join(result)
 
+# ---------------------------------------------------------------------------
+# FinBERT (bevorzugt) + VADER Fallback
+# ---------------------------------------------------------------------------
+@dataclass
+class _Scores:
+    compound: float
+    pos: float
+    neg: float
+    neu: float
+    label: str
 
 class FinBertAdapter:
-    """Light-weight wrapper around the FinBERT model.
-
-    The class lazily loads ``ProsusAI/finbert`` on first use.  It mirrors the
-    behaviour of :func:`transformers.pipeline` by returning a list of
-    ``{"label": str, "score": float}`` dictionaries.  The implementation is
-    intentionally minimal so that tests can easily mock it without pulling the
-    heavy model into memory.
-    """
-
-    def __init__(self, model_name: str = "ProsusAI/finbert") -> None:
+    """Leichter Wrapper für ProsusAI/finbert (lokal > Cache)."""
+    def __init__(self, model_name: str = "ProsusAI/finbert", local_dir: Optional[str] = "models/finbert") -> None:
         self.model_name = model_name
+        self.local_dir = local_dir
         self._model = None
         self._tokenizer = None
 
+    def _resolve_ref(self) -> str:
+        if self.local_dir and os.path.isdir(self.local_dir):
+            return self.local_dir
+        return self.model_name
+
     @property
-    def model(self):  # pragma: no cover - heavy model
+    def model(self):  # pragma: no cover - heavy
         if self._model is None:
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+            ref = self._resolve_ref()
+            local_only = os.path.isdir(ref)
+            self._tokenizer = AutoTokenizer.from_pretrained(ref, local_files_only=local_only)
+            self._model = AutoModelForSequenceClassification.from_pretrained(ref, local_files_only=local_only)
         return self._model
 
     @property
-    def tokenizer(self):  # pragma: no cover - heavy model
+    def tokenizer(self):  # pragma: no cover - heavy
         if self._tokenizer is None:
-            _ = self.model  # trigger loading
+            _ = self.model
         return self._tokenizer
 
-    def __call__(
-        self, text: str | list[str], truncation: bool = True, max_length: int = 512
-    ):  # pragma: no cover - heavy model
-        import torch
+    def __call__(self, text: str | list[str], truncation: bool = True, max_length: int = 512):
+        import torch  # pragma: no cover - heavy
+        tok = self.tokenizer
+        mdl = self.model
 
         if isinstance(text, str):
-            inputs = self.tokenizer(
-                text, return_tensors="pt", truncation=truncation, max_length=max_length
-            )
+            inputs = tok(text, return_tensors="pt", truncation=truncation, max_length=max_length)
             with torch.no_grad():
-                outputs = self.model(**inputs)
+                outputs = mdl(**inputs)
             probs = outputs.logits.softmax(dim=-1)[0]
             idx = int(torch.argmax(probs).item())
-            label = self.model.config.id2label[idx]
+            label = mdl.config.id2label[idx]
             score = float(probs[idx].item())
             return [{"label": label, "score": score}]
 
-        inputs = self.tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=truncation,
-            max_length=max_length,
-            padding=True,
-        )
+        inputs = tok(text, return_tensors="pt", truncation=truncation, max_length=max_length, padding=True)
         with torch.no_grad():
-            outputs = self.model(**inputs)
+            outputs = mdl(**inputs)
         probs = outputs.logits.softmax(dim=-1)
         results = []
         for i in range(probs.shape[0]):
             idx = int(torch.argmax(probs[i]).item())
-            label = self.model.config.id2label[idx]
+            label = mdl.config.id2label[idx]
             score = float(probs[i, idx].item())
             results.append({"label": label, "score": score})
         return results
 
-
-class BertSentiment:
-    """Sentiment analyzer backed by HuggingFace models."""
-
+class _Engine:
+    """Singleton-Engine: FinBERT wenn möglich, sonst VADER."""
     _pipe = None
+    _vader = None
+    _init_done = False
 
-    def __init__(self) -> None:
-        backend = settings.SENTIMENT_BACKEND
-        if backend == "finbert":
-            self.model = "ProsusAI/finbert"
-        elif backend == "de-bert":
-            self.model = "oliverguhr/german-sentiment-bert"
-        elif backend == "finetuned-finbert":
-            from pathlib import Path
+    @classmethod
+    def init(cls) -> None:
+        if cls._init_done:
+            return
+        cls._init_done = True
 
-            self.model = str(
-                Path(__file__).resolve().parent.parent / "models" / "finetuned-finbert"
-            )
-        else:
-            raise ValueError(f"Unsupported backend: {backend}")
-        self.backend = backend
+        backend = (settings.SENTIMENT_BACKEND or "finbert").lower()
+        want_finbert = backend in ("finbert", "auto", "true", "1")
 
-    @property
-    def pipe(self):  # pragma: no cover - heavy model
-        if self._pipe is None:
-            if self.backend == "finbert":
-                self._pipe = FinBertAdapter(self.model)
-            else:
-                from transformers import pipeline
+        if want_finbert and _transformers_available():
+            try:
+                cls._pipe = FinBertAdapter("ProsusAI/finbert", local_dir=os.getenv("FINBERT_LOCAL_DIR", "models/finbert"))
+                logger.info("Sentiment: FinBERT adapter ready")
+            except Exception as e:
+                logger.warning(f"FinBERT adapter init failed: {e}")
+                cls._pipe = None
 
-                self._pipe = pipeline("sentiment-analysis", model=self.model)
-        return self._pipe
+        if cls._pipe is None:
+            try:
+                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+                v = SentimentIntensityAnalyzer()
+                v.lexicon.update({
+                    "🚀": 2.5, "💎🙌": 2.5, "yolo": 2.0, "bagholder": -2.0, "paper hands": -2.0,
+                    "long": 1.2, "short": -1.4, "calls": 1.2, "puts": -1.4,
+                    "bullish": 1.5, "bearish": -1.5,
+                })
+                cls._vader = v
+                logger.info("Sentiment: VADER ready (fallback)")
+            except Exception as e:
+                logger.error(f"VADER init failed: {e}")
+                cls._vader = None
 
-    def __call__(self, text: str | list[str]):  # pragma: no cover - heavy model
-        # Critical: avoid "sequence length > 512" errors.
-        # Works for both str and list[str].
-        return self.pipe(text, truncation=True, max_length=512)
+    @classmethod
+    def backend_name(cls) -> str:
+        cls.init()
+        if cls._pipe is not None:
+            return "finbert"
+        if cls._vader is not None:
+            return "vader"
+        return "keyword"
 
-
-_bert_analyzer: BertSentiment | None = None
-
+# ---------------------------------------------------------------------------
+# Öffentliche API (beibehaltener Funktionssatz)
+# ---------------------------------------------------------------------------
+def get_backend_name() -> str:
+    """'finbert' | 'vader' | 'keyword'"""
+    return _Engine.backend_name()
 
 def analyze_sentiment_bert(text: str) -> float:
-    """Analyse sentiment using a BERT based model."""
-    global _bert_analyzer
-    if _bert_analyzer is None:
-        _bert_analyzer = BertSentiment()
-    result = _bert_analyzer(text)
-    if not result:
+    """Einzelwert via FinBERT ([-1..+1]); wirft nicht."""
+    _Engine.init()
+    if _Engine._pipe is None:
         return 0.0
-    data = result[0]
-    label = str(data.get("label", "")).lower()
-    score = float(data.get("score", 0.0))
-    if "positive" in label:
-        return score
-    if "negative" in label:
-        return -score
-    return 0.0
-
+    try:
+        out = _Engine._pipe(text)
+        if not out:
+            return 0.0
+        lab = (out[0].get("label") or "").lower()
+        sc = float(out[0].get("score") or 0.0)
+        if "pos" in lab:
+            return +sc
+        if "neg" in lab:
+            return -sc
+        return 0.0
+    except Exception as e:
+        logger.warning(f"FinBERT inference failed: {e}")
+        return 0.0
 
 def analyze_sentiment(text: str) -> float:
-    """Return a sentiment score in [-1.0, +1.0]; never returns None."""
-    # Try BERT if requested
-    if _should_use_bert():
-        try:
-            val = analyze_sentiment_bert(text)
-            return float(val if val is not None else 0.0)
-        except Exception:
-            _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
-    else:
-        # Opportunistisch BERT, wenn installiert
-        if _transformers_available():
-            try:
-                val = analyze_sentiment_bert(text)
-                return float(val if val is not None else 0.0)
-            except Exception:
-                _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
-        else:
-            _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
+    """Skalarer Score in [-1, +1]; Reihenfolge: FinBERT → VADER → Keywords."""
+    t = (text or "").strip()
+    if not t:
+        return 0.0
 
-    # Keyword fallback
-    val = _keyword_score_cached(_preprocess(text))
+    # 1) FinBERT
+    if _Engine.backend_name() == "finbert":
+        val = analyze_sentiment_bert(t)
+        if val != 0.0:
+            return float(val)
+
+    # 2) VADER
+    if _Engine._vader is not None:
+        try:
+            s = _Engine._vader.polarity_scores(t)
+            return float(s["compound"])
+        except Exception:
+            pass
+
+    # 3) Keyword-Heuristik
+    _log_keyword_hint("Using keyword-based sentiment analysis (fallback)")
+    val = _keyword_score_cached(_preprocess(t))
     return float(val if val is not None else 0.0)
 
+def analyze_sentiment_batch(texts: list[str]) -> list[float]:
+    """Batch-Score; nutzt FinBERT Batch, sonst VADER/Keywords zeilenweise."""
+    _Engine.init()
+    if not texts:
+        return []
+    if _Engine._pipe is not None:
+        try:
+            out = _Engine._pipe(texts)
+            scores = []
+            for data in out:
+                lab = str(data.get("label", "")).lower()
+                sc = float(data.get("score", 0.0))
+                if "pos" in lab:
+                    scores.append(sc)
+                elif "neg" in lab:
+                    scores.append(-sc)
+                else:
+                    scores.append(0.0)
+            return scores
+        except Exception as e:
+            logger.warning(f"FinBERT batch inference failed: {e}")
+    # VADER / Keywords
+    return [analyze_sentiment(t) for t in texts]
 
+# ---------------------------------------------------------------------------
+# Keyword-Scorer (Fallback)
+# ---------------------------------------------------------------------------
 def _keyword_score(text: str) -> float | None:
     text = apply_negation(text)
     tokens = text.split()
@@ -502,191 +455,113 @@ def _keyword_score(text: str) -> float | None:
     matched = False
     i = 0
     while i < len(tokens):
-        token = tokens[i]
-        multiplier = 1
-        if token in INTENSITY_WEIGHTS and i + 1 < len(tokens):
-            multiplier = INTENSITY_WEIGHTS[token]
+        tok = tokens[i]
+        mult = 1
+        if tok in INTENSITY_WEIGHTS and i + 1 < len(tokens):
+            mult = INTENSITY_WEIGHTS[tok]
             i += 1
-            token = tokens[i]
-        val = KEYWORD_SCORES.get(token)
+            tok = tokens[i]
+        val = KEYWORD_SCORES.get(tok)
         if val:
             matched = True
-            score += val * multiplier
+            score += val * mult
         i += 1
     return score if matched else None
 
-
 _keyword_score_cached = lru_cache(maxsize=2048)(_keyword_score)
 
+# ---------------------------------------------------------------------------
+# Aggregation / Utilities
+# ---------------------------------------------------------------------------
+def _post_weight(upvotes: int | float = 0, num_comments: int | float = 0) -> float:
+    """Log-gewichtung (robust gegen 0): 1 + log10(ups+1) + 0.2*log10(com+1)"""
+    try:
+        u = max(0.0, float(upvotes))
+        c = max(0.0, float(num_comments))
+    except Exception:
+        u, c = 0.0, 0.0
+    return 1.0 + math.log10(1.0 + u) + 0.2 * math.log10(1.0 + c)
 
-def analyze_sentiment_batch(texts: list[str]) -> list[float | None]:
-    """Return sentiment scores for multiple texts.
+def _ensure_datetime_series(s: "pd.Series", tz: str = "Europe/Berlin") -> "pd.Series":
+    s = pd.to_datetime(s, errors="coerce", utc=True)  # type: ignore
+    return s.dt.tz_convert(ZoneInfo(tz))  # type: ignore
 
-    If BERT is active/available we process the whole list in one pipeline call.
-    Otherwise we map the keyword analyzer over inputs.
-    """
-    global _bert_analyzer
-
-    if _should_use_bert():
-        try:
-            if _bert_analyzer is None:
-                _bert_analyzer = BertSentiment()
-            results = _bert_analyzer(texts)  # truncation handled in __call__
-            return _convert_bert_outputs_to_scores(results)
-        except Exception:  # pragma: no cover - defensive
-            _log_keyword_hint("BERT sentiment requested but unavailable; using keyword approach")
-            return [_keyword_score_cached(_preprocess(t)) for t in texts]
-
-    if _transformers_available():
-        try:
-            if _bert_analyzer is None:
-                _bert_analyzer = BertSentiment()
-            results = _bert_analyzer(texts)  # truncation handled in __call__
-            return _convert_bert_outputs_to_scores(results)
-        except Exception:  # pragma: no cover - defensive
-            _log_keyword_hint("BERT sentiment failed to load; using keyword approach")
-            return [_keyword_score_cached(_preprocess(t)) for t in texts]
-
-    _log_keyword_hint("transformers not installed; using keyword sentiment analysis")
-    return [_keyword_score_cached(_preprocess(t)) for t in texts]
-
-
-def _convert_bert_outputs_to_scores(results) -> list[float]:
-    scores: list[float] = []
-    for data in results:
-        label = str(data.get("label", "")).lower()
-        score = float(data.get("score", 0.0))
-        if "positive" in label:
-            scores.append(score)
-        elif "negative" in label:
-            scores.append(-score)
-        else:
-            scores.append(0.0)
-    return scores
-
-
-def aggregate_sentiment_by_ticker(ticker_texts: dict[str, Iterable[dict]]) -> dict[str, float]:
-    """Aggregate sentiment scores for each ticker.
-
-    Parameters
-    ----------
-    ticker_texts:
-        Mapping of ticker symbols to iterables of post dictionaries. Each
-        dictionary should contain a ``"text"`` key whose value is analysed.
-
-    Returns
-    -------
-    Dict[str, float]
-        Average sentiment score for each ticker. If no texts are available for
-        a ticker, ``0.0`` is returned.
-    """
-    result: dict[str, float] = {}
-    for ticker, entries in ticker_texts.items():
-        entries = list(entries)
-        if entries:
-            total = 0.0
-            count = 0
-            for entry in entries:
-                text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
-                score = analyze_sentiment(text)
-                if score is None:
-                    continue
-                total += score
-                count += 1
-            result[ticker] = total / count if count else 0.0
-        else:
-            result[ticker] = 0.0
-    return result
-
-
-def derive_recommendation(score: float) -> str:
-    """Derive a basic trading recommendation from ``score``."""
-    if score > 0:
-        return "Buy"
-    if score < 0:
-        return "Sell"
-    return "Hold"
-
-
-__all__ = [
-    "analyze_sentiment",
-    "analyze_sentiment_batch",
-    "analyze_sentiment_bert",
-    "aggregate_sentiment_by_ticker",
-    "derive_recommendation",
-    "BertSentiment",
-    "FinBertAdapter",
-]
-
-
-def _post_weight(upvotes: int = 0, num_comments: int = 0) -> float:
-    return 1.0 + math.log10(1 + max(0, upvotes)) + 0.2 * math.log10(1 + max(0, num_comments))
-
-
-def _ensure_datetime_series(s: pd.Series, tz: str = "Europe/Berlin") -> pd.Series:
-    s = pd.to_datetime(s, errors="coerce", utc=True)
-    return s.dt.tz_convert(ZoneInfo(tz))
-
-
-def _safe_float(s: pd.Series) -> pd.Series:
-    return pd.to_numeric(s, errors="coerce").astype(float)
-
+def _safe_float_series(s: "pd.Series") -> "pd.Series":
+    return pd.to_numeric(s, errors="coerce").astype(float)  # type: ignore
 
 def compute_daily_sentiment(
-    df: pd.DataFrame,
+    df: "pd.DataFrame",
     *,
     text_col: str = "text",
     ts_col: str = "created_at",
     ticker_col: str = "ticker",
     upvotes_col: str = "upvotes",
     comments_col: str = "num_comments",
-) -> pd.DataFrame:
+) -> "pd.DataFrame":
     """
-    Liefert pro Tag (lokal EU/Berlin) und Ticker den gewichteten Sentiment-Mittelwert.
+    Liefert pro Tag (Europe/Berlin) & Ticker den gewichteten Sentiment-Mittelwert.
     Rückgabe: DataFrame[date, ticker, posts, wgt_sum, wgt_mean]
     """
-    if df.empty:
+    if pd is None:  # pragma: no cover
+        raise RuntimeError("pandas not available")
+    if df is None or len(df) == 0:
         return pd.DataFrame(columns=["date", "ticker", "posts", "wgt_sum", "wgt_mean"])
 
-    # Zeitstempel → Europe/Berlin; Tagesbucket
     ts = _ensure_datetime_series(df[ts_col], tz="Europe/Berlin")
-    date = ts.dt.normalize()  # 00:00 lokale Zeit
+    date = ts.dt.normalize()
     tmp = df.copy()
 
-    # Scores berechnen (immer float, nie None)
-    scores = tmp[text_col].astype(str).map(analyze_sentiment).astype(float)
-
-    # Gewichte (robust gegen fehlende Spalten)
-    ups = _safe_float(tmp.get(upvotes_col, 0))
-    com = _safe_float(tmp.get(comments_col, 0))
-    weights = (
-        _post_weight(ups.fillna(0).astype(int), com.fillna(0).astype(int))
-        if hasattr(ups, "astype") and hasattr(com, "astype")
-        else pd.Series(1.0, index=tmp.index)
-    )
-
-    # Numerik
-    weights = pd.to_numeric(weights, errors="coerce").fillna(1.0)
-    scores = pd.to_numeric(scores, errors="coerce").fillna(0.0)
+    scores = tmp[text_col].astype(str).map(analyze_sentiment)
+    ups = _safe_float_series(tmp.get(upvotes_col, 0))
+    com = _safe_float_series(tmp.get(comments_col, 0))
+    weights = [ _post_weight(u, c) for u, c in zip(ups.fillna(0.0), com.fillna(0.0)) ]
 
     tmp["_date"] = date
-    tmp["_score"] = scores
-    tmp["_w"] = weights
+    tmp["_score"] = pd.to_numeric(scores, errors="coerce").fillna(0.0)
+    tmp["_w"] = pd.to_numeric(pd.Series(weights, index=tmp.index), errors="coerce").fillna(1.0)
 
-    # Gruppieren
     g = tmp.groupby([ticker_col, "_date"], as_index=False).agg(
-        posts=("text", "count"),
+        posts=(text_col, "count"),
         wgt_sum=("_score", lambda s: float((s * tmp.loc[s.index, "_w"]).sum())),
         w_sum=("_w", "sum"),
     )
-    g["wgt_mean"] = (
-        (g["wgt_sum"] / g["w_sum"]).replace([float("inf"), -float("inf")], 0.0).fillna(0.0)
-    )
+    g["wgt_mean"] = (g["wgt_sum"] / g["w_sum"]).replace([float("inf"), -float("inf")], 0.0).fillna(0.0)
 
-    # Ausgabe-Form
-    out = g.rename(columns={ticker_col: "ticker", "_date": "date"})[
-        ["date", "ticker", "posts", "wgt_sum", "wgt_mean"]
-    ]
-    # Typen defensiv halten (keine harte int-Casts -> vermeidet "cannot convert float NaN to integer")
+    out = g.rename(columns={ticker_col: "ticker", "_date": "date"})[["date", "ticker", "posts", "wgt_sum", "wgt_mean"]]
     out["posts"] = pd.to_numeric(out["posts"], errors="coerce").fillna(0).astype("Int64")
     return out.sort_values(["date", "ticker"]).reset_index(drop=True)
+
+def aggregate_sentiment_by_ticker(ticker_texts: dict[str, Iterable[dict]]) -> dict[str, float]:
+    """Mittelwert je Ticker; nutzt analyze_sentiment() inkl. Fallback-Reihenfolge."""
+    result: dict[str, float] = {}
+    for ticker, entries in ticker_texts.items():
+        entries = list(entries)
+        if not entries:
+            result[ticker] = 0.0
+            continue
+        tot = 0.0
+        n = 0
+        for entry in entries:
+            text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
+            tot += float(analyze_sentiment(text) or 0.0)
+            n += 1
+        result[ticker] = (tot / n) if n else 0.0
+    return result
+
+def derive_recommendation(score: float) -> str:
+    """Sehr grobe Einordnung: >0 → Buy, <0 → Sell, sonst Hold."""
+    if score > 0:
+        return "Buy"
+    if score < 0:
+        return "Sell"
+    return "Hold"
+
+__all__ = [
+    "get_backend_name",
+    "analyze_sentiment",
+    "analyze_sentiment_batch",
+    "analyze_sentiment_bert",
+    "aggregate_sentiment_by_ticker",
+    "compute_daily_sentiment",
+    "derive_recommendation",
+]

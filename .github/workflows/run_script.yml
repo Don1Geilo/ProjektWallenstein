@@ -31,7 +31,7 @@ jobs:
       REDDIT_USER_AGENT:    ${{ secrets.REDDIT_USER_AGENT }}
 
       # HuggingFace
-      HUGGING_FACE_HUB_TOKEN: ${{ secrets.HUGGING_FACE_HUB_TOKEN }}
+      HUGGINGFACE_HUB_TOKEN: ${{ secrets.HUGGINGFACE_HUB_TOKEN }}
 
     steps:
       - name: Checkout
