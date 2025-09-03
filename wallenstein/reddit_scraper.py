@@ -370,22 +370,18 @@ def update_reddit_data(
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     # Nur Posts weiterverarbeiten, die überhaupt einen der Ticker erwähnen
-    pattern_map = {
-        t: "|".join(p.pattern for p in _compile_patterns(t)) for t in tickers
-    }
-    if pattern_map:
-        combined_pattern = "|".join(pattern_map.values())
-        df = df[
-            df["combined"].str.contains(
-                combined_pattern, regex=True, case=False, na=False
-            )
-        ]
-        df = df.assign(
-            **{
-                t: df["combined"].str.contains(pat, regex=True, case=False, na=False)
-                for t, pat in pattern_map.items()
-            }
+    compiled_patterns = {
+        t: re.compile(
+            "|".join(p.pattern for p in _compile_patterns(t)), re.IGNORECASE
         )
+        for t in tickers
+    }
+    if compiled_patterns:
+        match_df = pd.DataFrame(
+            {t: df["combined"].str.contains(pat, na=False) for t, pat in compiled_patterns.items()}
+        )
+        mask = match_df.any(axis=1)
+        df = pd.concat([df[mask], match_df.loc[mask]], axis=1)
 
     # 3) Je Ticker Texte sammeln
     out: dict[str, list[dict]] = {}
