@@ -127,7 +127,10 @@ def scan_reddit_for_candidates(
     # Kommentarzahlen sind derzeit nicht verfügbar
     # TODO: Falls num_comments verfügbar ist, Abfrage erweitern
     df_win = con.execute(f"""
-        SELECT created_utc, text, upvotes AS ups, 0 AS num_comments
+        SELECT created_utc,
+               COALESCE(text, title || ' ' || selftext, title, selftext, '') AS text,
+               upvotes AS ups,
+               0 AS num_comments
         FROM reddit_posts
         WHERE created_utc >= NOW() - INTERVAL {int(window_hours)} HOUR
     """).fetchdf()
@@ -136,7 +139,10 @@ def scan_reddit_for_candidates(
         return []
 
     df_base = con.execute(f"""
-        SELECT created_utc, text, upvotes AS ups, 0 AS num_comments
+        SELECT created_utc,
+               COALESCE(text, title || ' ' || selftext, title, selftext, '') AS text,
+               upvotes AS ups,
+               0 AS num_comments
         FROM reddit_posts
         WHERE created_utc >= NOW() - INTERVAL {int(lookback_days*24)} HOUR
           AND created_utc <  NOW() - INTERVAL {int(window_hours)} HOUR
