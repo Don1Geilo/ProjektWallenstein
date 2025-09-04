@@ -89,21 +89,28 @@ from wallenstein.trending import (
 def resolve_tickers(override: str | None = None) -> list[str]:
     """Return the list of ticker symbols to process.
 
-    The function looks for a comma separated list of tickers provided via
-    ``override`` first.  If no override is given, the symbols are read from the
-    persisted watchlist stored in the DuckDB database.  All symbols are
-    upper–cased and duplicates are removed by the underlying SQL query.
+    Priority:
+    1. --tickers CLI override
+    2. ENV var WALLENSTEIN_TICKERS (e.g. "NVDA,AMZN,SMCI,TSLA")
+    3. DuckDB watchlist (distinct across chats)
     """
+    # A) explizites CLI-Override
     if override:
         tickers = [t.strip().upper() for t in override.split(",") if t.strip()]
         if not tickers:
             log.warning("Keine Ticker im --tickers Override gefunden")
         return tickers
 
-    # Aus DuckDB lesen (chat-übergreifend, DISTINCT)
+    # B) ENV-Variable (z. B. in GitHub Actions gesetzt)
+    env_tickers = os.getenv("WALLENSTEIN_TICKERS", "").strip()
+    if env_tickers:
+        tickers = [t.strip().upper() for t in env_tickers.split(",") if t.strip()]
+        if tickers:
+            return tickers
+
+    # C) Aus DuckDB lesen (chat-übergreifend, DISTINCT)
     try:
         from wallenstein.watchlist import all_unique_symbols as wl_all
-
         with duckdb.connect(DB_PATH) as con:
             tickers = [s.strip().upper() for s in wl_all(con)]
     except Exception as exc:  # pragma: no cover
@@ -111,7 +118,7 @@ def resolve_tickers(override: str | None = None) -> list[str]:
         tickers = []
 
     if not tickers:
-        log.warning("Keine Ticker gefunden")
+        log.warning("Keine Ticker gefunden (ENV leer, Watchlist leer)")
     return tickers
 
 
