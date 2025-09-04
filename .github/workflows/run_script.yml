@@ -117,7 +117,18 @@ jobs:
           except Exception as e:
               print("PRAW not installed or unknown version:", e)
           PY
-
+        name: Seed watchlist (DuckDB)
+        run: |
+          python - <<'PY'
+          import duckdb, os, pathlib
+          pathlib.Path("data").mkdir(exist_ok=True)
+          con = duckdb.connect(os.getenv("WALLENSTEIN_DB_PATH","data/wallenstein.duckdb"))
+          con.execute("CREATE TABLE IF NOT EXISTS watchlist(ticker VARCHAR, enabled BOOLEAN)")
+          con.execute("DELETE FROM watchlist")
+          con.execute("INSERT INTO watchlist VALUES " +
+                      "('NVDA', TRUE), ('AMZN', TRUE), ('SMCI', TRUE), ('TSLA', TRUE)")
+          print("✅ watchlist seeded")
+          PY
       - name: Run Wallenstein with retries
         id: run_wallenstein
         shell: bash
