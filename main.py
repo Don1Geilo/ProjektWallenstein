@@ -90,9 +90,8 @@ def resolve_tickers(override: str | None = None) -> list[str]:
     """Return the list of ticker symbols to process.
 
     Priority:
-    1. --tickers CLI override
-    2. ENV var WALLENSTEIN_TICKERS (e.g. "NVDA,AMZN,SMCI,TSLA")
-    3. DuckDB watchlist (distinct across chats)
+    1. ``--tickers`` CLI override
+    2. Union of ``WALLENSTEIN_TICKERS`` env var and DuckDB watchlist
     """
     # A) explizites CLI-Override
     if override:
@@ -103,20 +102,18 @@ def resolve_tickers(override: str | None = None) -> list[str]:
 
     # B) ENV-Variable (z. B. in GitHub Actions gesetzt)
     env_tickers = os.getenv("WALLENSTEIN_TICKERS", "").strip()
-    if env_tickers:
-        tickers = [t.strip().upper() for t in env_tickers.split(",") if t.strip()]
-        if tickers:
-            return tickers
+    env_list = [t.strip().upper() for t in env_tickers.split(",") if t.strip()]
 
     # C) Aus DuckDB lesen (chat-übergreifend, DISTINCT)
+    wl_list: list[str] = []
     try:
         from wallenstein.watchlist import all_unique_symbols as wl_all
         with duckdb.connect(DB_PATH) as con:
-            tickers = [s.strip().upper() for s in wl_all(con)]
+            wl_list = [s.strip().upper() for s in wl_all(con)]
     except Exception as exc:  # pragma: no cover
         log.warning(f"Watchlist-Abfrage fehlgeschlagen: {exc}")
-        tickers = []
 
+    tickers = sorted(set(env_list + wl_list))
     if not tickers:
         log.warning("Keine Ticker gefunden (ENV leer, Watchlist leer)")
     return tickers
