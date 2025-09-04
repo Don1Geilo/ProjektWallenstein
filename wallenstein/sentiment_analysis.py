@@ -163,6 +163,7 @@ class SentimentEngine:
         return self._hf_finbert
 
 
+
     @staticmethod
     def _scores_to_scalar(scores: list[dict[str, Any]]) -> tuple[float, dict[str, float]]:
         # erwartet Liste von {"label": "...", "score": float}
