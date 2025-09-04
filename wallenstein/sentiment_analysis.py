@@ -162,22 +162,6 @@ class SentimentEngine:
             self._hf_finbert = None
         return self._hf_finbert
 
-    def _get_xlmr(self):
-        if self._hf_xlmr or not self._pipeline:
-            return self._hf_xlmr
-        try:
-            self._hf_xlmr = self._pipeline(
-                "sentiment-analysis",
-                model=self.XLMR_ID,
-                top_k=None,
-                truncation=True,
-                function_to_apply="softmax",
-            )
-            log.info("Sentiment: using HF pipeline %s", self.XLMR_ID)
-        except Exception as e:
-            log.warning(f"HF XLM-R pipeline unavailable: {e}")
-            self._hf_xlmr = None
-        return self._hf_xlmr
 
     @staticmethod
     def _scores_to_scalar(scores: list[dict[str, Any]]) -> tuple[float, dict[str, float]]:
