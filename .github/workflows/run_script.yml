@@ -32,7 +32,6 @@ jobs:
 
       # HuggingFace
       HUGGINGFACE_HUB_TOKEN: ${{ secrets.HUGGINGFACE_HUB_TOKEN }}
-      WALLENSTEIN_TICKERS: NVDA,AMZN,SMCI,TSLA
 
     steps:
       - name: Checkout
@@ -54,6 +53,15 @@ jobs:
 
       - name: Prepare folders
         run: mkdir -p data stockOverview
+
+      - name: Restore DuckDB cache
+        id: restore-duckdb
+        uses: actions/cache/restore@v4
+        with:
+          path: data/wallenstein.duckdb
+          key: duckdb-${{ github.run_number }}
+          restore-keys: |
+            duckdb-
 
       # Falls versehentlich eine .env im Repo liegt: nicht die Secrets überschreiben lassen
       - name: Neutralize local .env on CI
@@ -142,11 +150,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Persist DuckDB optional
+      - name: Persist DuckDB artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: duckdb-${{ github.run_id }}
+          name: duckdb
           path: data/*.duckdb
           if-no-files-found: warn
           retention-days: 3
+
+      - name: Save DuckDB cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/wallenstein.duckdb
+          key: duckdb-${{ github.run_number }}
