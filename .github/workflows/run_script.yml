@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: wallenstein-pipeline
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -15,6 +15,7 @@ env:
   TZ: "Europe/Berlin"
   WALLENSTEIN_DB_PATH: data/wallenstein.duckdb
   WALLENSTEIN_YF_SLEEP: "0.6"  # Backoff for yfinance rate limits
+  DEBUG: "0"
 
 jobs:
   run:
@@ -49,10 +50,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --no-cache-dir --upgrade -r requirements.txt
 
       - name: Prepare folders
         run: mkdir -p data stockOverview
+
+      - name: Cache NLTK data
+        uses: actions/cache@v4
+        with:
+          path: nltk_data
+          key: ${{ runner.os }}-nltk-${{ hashFiles('**/requirements.txt') }}
+        continue-on-error: true
 
       - name: Restore previous DuckDB (optional)
         uses: actions/download-artifact@v4
@@ -73,7 +81,9 @@ jobs:
 
       # --- DEBUG 1: Branch, Commit, Tree
       - name: Show branch & tree
+        if: env.DEBUG == '1'
         run: |
+          echo "::group::Branch & tree"
           echo "Branch: $(git rev-parse --abbrev-ref HEAD)"
           echo "Commit: $(git rev-parse HEAD)"
           echo "Repo root:"
@@ -82,24 +92,31 @@ jobs:
           ls -la wallenstein || true
           echo "wallenstein files:"
           find wallenstein -maxdepth 2 -type f -name "*.py" -print | sort || true
+          echo "::endgroup::"
 
       # --- DEBUG 2: ENV Sanity (ohne Werte zu leaken)
       - name: Sanity check env (masked)
+        if: env.DEBUG == '1'
         run: |
+          echo "::group::Env sanity"
           for v in REDDIT_CLIENT_ID REDDIT_CLIENT_SECRET REDDIT_USER_AGENT TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
             printf "%-20s %s\n" "$v:" "$([ -n "${!v}" ] && echo set || echo MISSING)"
           done
+          echo "::endgroup::"
 
       # --- DEBUG 3: Zeig die tatsächliche config.py auf dem Runner
       - name: Show wallenstein/config.py (first 160 lines)
+        if: env.DEBUG == '1'
         run: |
-          echo "----- wallenstein/config.py (head) -----"
+          echo "::group::wallenstein/config.py (head)"
           sed -n '1,160p' wallenstein/config.py || true
-          echo "----------------------------------------"
+          echo "::endgroup::"
 
       # --- DEBUG 4: Welche Datei importiert Python wirklich?
       - name: Python import probe (wallenstein.config)
+        if: env.DEBUG == '1'
         run: |
+          echo "::group::Import probe"
           python - <<'PY'
           import importlib, os
           m = importlib.import_module("wallenstein.config")
@@ -113,10 +130,13 @@ jobs:
           print("has_reddit()   :", getattr(m, "has_reddit", lambda: None)())
           print("has_telegram() :", getattr(m, "has_telegram", lambda: None)())
           PY
+          echo "::endgroup::"
 
       # --- DEBUG 5 (optional): PRAW-Version
       - name: Show PRAW version
+        if: env.DEBUG == '1'
         run: |
+          echo "::group::PRAW version"
           python - <<'PY'
           try:
               import pkg_resources
@@ -124,6 +144,7 @@ jobs:
           except Exception as e:
               print("PRAW not installed or unknown version:", e)
           PY
+          echo "::endgroup::"
     
       - name: Run Wallenstein with retries
         id: run_wallenstein
@@ -156,3 +177,12 @@ jobs:
           path: data/*.duckdb
           if-no-files-found: warn
           retention-days: 3
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7
