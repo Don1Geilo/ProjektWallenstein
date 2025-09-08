@@ -91,7 +91,7 @@ def resolve_tickers(override: str | None = None) -> list[str]:
 
     Priority:
     1. ``--tickers`` CLI override
-    2. Union of ``WALLENSTEIN_TICKERS`` env var and DuckDB watchlist
+    2. Union of ``WALLENSTEIN_TICKERS`` (env var or default) and DuckDB watchlist
     """
     # A) explizites CLI-Override
     if override:
@@ -100,14 +100,15 @@ def resolve_tickers(override: str | None = None) -> list[str]:
             log.warning("Keine Ticker im --tickers Override gefunden")
         return tickers
 
-    # B) ENV-Variable (z. B. in GitHub Actions gesetzt)
-    env_tickers = os.getenv("WALLENSTEIN_TICKERS", "").strip()
+    # B) ENV-Variable (z. B. in GitHub Actions gesetzt) oder Default-Konfig
+    env_tickers = (settings.WALLENSTEIN_TICKERS or "").strip()
     env_list = [t.strip().upper() for t in env_tickers.split(",") if t.strip()]
 
     # C) Aus DuckDB lesen (chat-übergreifend, DISTINCT)
     wl_list: list[str] = []
     try:
         from wallenstein.watchlist import all_unique_symbols as wl_all
+
         with duckdb.connect(DB_PATH) as con:
             wl_list = [s.strip().upper() for s in wl_all(con)]
     except Exception as exc:  # pragma: no cover
