@@ -1,5 +1,6 @@
 # wallenstein/config.py
 from __future__ import annotations
+
 import os
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from pathlib import Path
 if not os.getenv("GITHUB_ACTIONS") or os.getenv("ALLOW_DOTENV") == "1":
     try:
         from dotenv import find_dotenv, load_dotenv  # optional dependency
+
         env_path = find_dotenv(usecwd=True)
         if env_path:
             load_dotenv(env_path, override=False)  # CI-Secrets nicht überschreiben
@@ -17,6 +19,7 @@ if not os.getenv("GITHUB_ACTIONS") or os.getenv("ALLOW_DOTENV") == "1":
     except Exception:
         pass
 
+
 def _get(*keys: str) -> str | None:
     for k in keys:
         v = os.getenv(k)
@@ -24,12 +27,15 @@ def _get(*keys: str) -> str | None:
             return v.strip()
     return None
 
+
 def _as_bool(v: str | None, default: bool = False) -> bool:
     if v is None:
         return default
     return v.strip().lower() in ("1", "true", "yes", "y")
 
+
 # wallenstein/config.py  (nur der relevante Ausschnitt in Settings)
+
 
 class Settings:
     WALLENSTEIN_DB_PATH = _get("WALLENSTEIN_DB_PATH") or "data/wallenstein.duckdb"
@@ -65,7 +71,7 @@ class Settings:
     MAX_RETRIES = int(_get("MAX_RETRIES") or "5")
     PIPELINE_MAX_WORKERS = int(_get("PIPELINE_MAX_WORKERS") or "4")
 
-    WALLENSTEIN_TICKERS = _get("WALLENSTEIN_TICKERS") or "NVDA,AMZN,SMCI,TSLA"
+    WALLENSTEIN_TICKERS = _get("WALLENSTEIN_TICKERS") or "NVDA,AMZN,SMCI,TSLA,RHM.DE,NVO,UNH"
     WALLENSTEIN_DATA_SOURCE = (_get("WALLENSTEIN_DATA_SOURCE") or "stooq").lower()
 
     DATA_RETENTION_DAYS = int(_get("DATA_RETENTION_DAYS") or "30")
@@ -73,6 +79,7 @@ class Settings:
 
 
 settings = Settings()
+
 
 # --- Exporte: setze ENV so, wie HF/Transformers es erwartet ---
 def ensure_hf_env() -> None:
@@ -88,6 +95,7 @@ def ensure_hf_env() -> None:
     if settings.HF_HUB_DISABLE_TELEMETRY and not os.getenv("HF_HUB_DISABLE_TELEMETRY"):
         os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
+
 # Direkt beim Import sicherstellen (kannst du auch im main() aufrufen)
 ensure_hf_env()
 
@@ -100,11 +108,16 @@ GOOGLE_SHEETS_ID = _get("GOOGLE_SHEETS_ID")
 TELEGRAM_BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID = settings.TELEGRAM_CHAT_ID
 
+
 def has_reddit() -> bool:
-    return bool(settings.REDDIT_CLIENT_ID and settings.REDDIT_CLIENT_SECRET and settings.REDDIT_USER_AGENT)
+    return bool(
+        settings.REDDIT_CLIENT_ID and settings.REDDIT_CLIENT_SECRET and settings.REDDIT_USER_AGENT
+    )
+
 
 def has_telegram() -> bool:
     return bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID)
+
 
 def validate_config(require_reddit: bool = True, require_telegram: bool = False) -> None:
     missing = []
