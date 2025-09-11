@@ -89,6 +89,9 @@ list of additional names that should be recognised in Reddit posts:
 `reddit_scraper` loads this file on startup and merges it with its built-in
 defaults. If the file is missing, the internal map is used unchanged.
 
+Aliases are automatically expanded with simple [WordNet](https://wordnet.princeton.edu/) synonyms
+when available, so "car" would also match posts mentioning "auto" or "automobile".
+
 Aliases can also be supplied dynamically when calling
 ``update_reddit_data``. Pass either a path to a JSON/YAML file via
 ``aliases_path`` or an in-memory mapping via ``aliases``:

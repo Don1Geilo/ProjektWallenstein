@@ -132,7 +132,8 @@ def scan_reddit_for_candidates(
     trend = lift * log1p(mentions24)
     """
     ensure_trending_tables(con)
-    amap = alias_map(con, include_ticker_itself=True)
+    # include basic aliases plus WordNet synonyms for broader matching
+    amap = alias_map(con, include_ticker_itself=True, use_synonyms=True)
     if not amap:
         return []
 

@@ -320,6 +320,7 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                     [f"{c.symbol} (m24h={c.mentions_24h}, x{c.lift:.1f})" for c in cands[:5]]
                 )
                 log.info(f"Trending-Kandidaten (Top 5): {top_preview}")
+                notify_telegram("🔥 Reddit-Trends: " + top_preview)
             else:
                 log.info("Trending-Kandidaten: keine")
             added_syms = auto_add_candidates_to_watchlist(
