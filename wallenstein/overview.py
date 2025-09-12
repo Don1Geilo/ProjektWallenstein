@@ -79,6 +79,16 @@ def generate_overview(
             usd = prices_usd.get(t)
             eur = prices_eur.get(t)
             lines.append(f"📈 {t}")
+            try:
+                alias_rows = con.execute(
+                    "SELECT alias FROM ticker_aliases WHERE ticker = ? ORDER BY alias",
+                    [t],
+                ).fetchall()
+            except duckdb.Error:
+                alias_rows = []
+            aliases = ", ".join(a for a, in alias_rows if a)
+            if aliases:
+                lines.append(f"Alias: {aliases}")
             if usd is not None and eur is not None:
                 lines.append(f"{t}: {usd:.2f} USD ({eur:.2f} EUR)")
             elif usd is not None:
