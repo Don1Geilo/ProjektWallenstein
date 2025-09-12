@@ -47,6 +47,9 @@ from .config import settings, ensure_hf_env
 
 logger = logging.getLogger(__name__)
 
+# Cached BERT analyzer instance (lazily created)
+_bert_analyzer = None
+
 # --- regex & globals ---
 _url_re = re.compile(r"https?://\S+")
 _spacy_nlp = None
@@ -322,6 +325,20 @@ class FinBertAdapter:
             results.append({"label": label, "score": score})
         return results
 
+
+class BertSentiment:
+    """Thin wrapper for backward compatibility in tests."""
+
+    def __init__(
+        self,
+        model_name: str = "ProsusAI/finbert",
+        local_dir: Optional[str] = "models/finbert",
+    ) -> None:
+        self._adapter = FinBertAdapter(model_name, local_dir)
+
+    def __call__(self, text, truncation: bool = True, max_length: int = 512):
+        return self._adapter(text, truncation=truncation, max_length=max_length)
+
 class _Engine:
     """Singleton-Engine: FinBERT wenn möglich, sonst VADER."""
     _pipe = None
@@ -339,7 +356,9 @@ class _Engine:
 
         if want_finbert and _transformers_available():
             try:
-                cls._pipe = FinBertAdapter("ProsusAI/finbert", local_dir=os.getenv("FINBERT_LOCAL_DIR", "models/finbert"))
+                cls._pipe = BertSentiment(
+                    "ProsusAI/finbert", local_dir=os.getenv("FINBERT_LOCAL_DIR", "models/finbert")
+                )
                 logger.info("Sentiment: FinBERT adapter ready")
             except Exception as e:
                 logger.warning(f"FinBERT adapter init failed: {e}")
@@ -378,11 +397,15 @@ def get_backend_name() -> str:
 
 def analyze_sentiment_bert(text: str) -> float:
     """Einzelwert via FinBERT ([-1..+1]); wirft nicht."""
-    _Engine.init()
-    if _Engine._pipe is None:
+    global _bert_analyzer
+    if _bert_analyzer is None:
+        _Engine._init_done = False
+        _Engine.init()
+        _bert_analyzer = _Engine._pipe
+    if _bert_analyzer is None:
         return 0.0
     try:
-        out = _Engine._pipe(text)
+        out = _bert_analyzer(text)
         if not out:
             return 0.0
         lab = (out[0].get("label") or "").lower()
@@ -401,7 +424,10 @@ def analyze_sentiment(text: str) -> float:
     t = (text or "").strip()
     if not t:
         return 0.0
-
+    if getattr(settings, "USE_BERT_SENTIMENT", False):
+        val = analyze_sentiment_bert(t)
+        if val != 0.0:
+            return float(val)
     # 1) FinBERT
     if _Engine.backend_name() == "finbert":
         val = analyze_sentiment_bert(t)
