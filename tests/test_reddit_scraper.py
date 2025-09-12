@@ -25,6 +25,8 @@ def test_company_name_bucketed(monkeypatch):
         {"id": "3", "title": "", "created_utc": now, "text": "Rheiner secures big contract"},
         {"id": "4", "title": "", "created_utc": now, "text": "Game stop hype again"},
         {"id": "5", "title": "", "created_utc": now, "text": "Ali babA expands"},
+        {"id": "6", "title": "", "created_utc": now, "text": "Rheinmetal reports record order"},
+        {"id": "7", "title": "", "created_utc": now, "text": "Opendoor Technologies enters new market"},
     ])
 
     def fake_fetch(*args, **kwargs):
@@ -35,18 +37,22 @@ def test_company_name_bucketed(monkeypatch):
     monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
 
     out = reddit_scraper.update_reddit_data(
-        ["NVDA", "AMZN", "RHM", "GME", "BABA"], subreddits=None
+        ["NVDA", "AMZN", "RHM", "GME", "BABA", "OPEN"], subreddits=None
     )
     assert len(out["NVDA"]) == 1
     assert len(out["AMZN"]) == 1
-    assert len(out["RHM"]) == 1
+    assert len(out["RHM"]) == 2
     assert len(out["GME"]) == 1
     assert len(out["BABA"]) == 1
+    assert len(out["OPEN"]) == 1
+    texts_rhm = " ".join(p["text"].lower() for p in out["RHM"])
+    assert "rheiner" in texts_rhm
+    assert "rheinmetal" in texts_rhm
     assert "nividia" in out["NVDA"][0]["text"].lower()
     assert "amzon" in out["AMZN"][0]["text"].lower()
-    assert "rheiner" in out["RHM"][0]["text"].lower()
     assert "game stop" in out["GME"][0]["text"].lower()
     assert "ali baba" in out["BABA"][0]["text"].lower()
+    assert "opendoor" in out["OPEN"][0]["text"].lower()
 
 
 def test_aliases_loaded_from_file():
