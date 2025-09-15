@@ -125,7 +125,7 @@ _load_aliases_from_file()
 # Bestehende Funktion von dir
 # ----------------------------
 def fetch_reddit_posts(
-    subreddit: str = "wallstreetbets",
+    subreddit: str = "wallstreetbets",     
     limit: int = 50,
     include_comments: bool = False,
 ) -> pd.DataFrame:

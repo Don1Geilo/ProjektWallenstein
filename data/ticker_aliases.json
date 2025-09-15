@@ -6,8 +6,9 @@
     "GOOG": ["google", "alphabet", "googel", "gogle"],
     "META": ["facebook", "meta", "metta", "facebok"],
     "TSLA": ["tesla", "tesler", "tesal"],
-    "RHM": ["rheinmetall", "rheiner", "rheinmetal", "rhm.de"],
+    "RHM.DE": ["rheinmetall", "rheiner", "rheinmetal", "rhm.de"],
     "GME": ["gamestop", "game stop", "gme"],
     "BABA": ["alibaba", "ali baba", "alibba"],
-    "OPEN": ["opendoor", "opendoor technologies", "opendoor tech"]
+    "OPEN": ["opendoor", "opendoor technologies", "opendoor tech"],
+    "NVO": ["novo nordisk", "novonordisk", "novo-nordisk", "novo"]
 }
