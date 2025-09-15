@@ -40,8 +40,45 @@ DB_PATH = settings.WALLENSTEIN_DB_PATH
 DATA_RETENTION_DAYS = settings.DATA_RETENTION_DAYS
 
 # Zu Tickersymbolen gehörende Firmennamen/Aliasse.  Die Zuordnung wird beim
-# Import aus ``data/ticker_aliases.*`` geladen und ist hier zunächst leer.
+# Import aus ``data/ticker_aliases.*`` geladen und ist hier zunächst leer.  Die
+# zusätzlichen Strukturen dienen als Cache, um beim Pattern-Matching nicht in
+# O(n*m) über alle bekannten Aliasse zu iterieren.
 TICKER_NAME_MAP: dict[str, list[str]] = {}
+_ALIAS_INDEX: dict[str, set[str]] = {}
+_ALIAS_VERSION = 0
+_COMPILED_PATTERN_CACHE: dict[tuple[str, int], re.Pattern] = {}
+
+
+def _normalise_ticker_variants(symbol: str) -> set[str]:
+    """Return canonical variants for ``symbol`` (e.g. ``BRK.B`` -> ``{"BRK.B", "BRK"}``)."""
+
+    base = symbol.upper()
+    variants = {base}
+    for sep in (".", "-", ":"):
+        if sep in base:
+            variants.add(base.split(sep, 1)[0])
+    return variants
+
+
+def _rebuild_alias_index() -> None:
+    """Recompute :data:`_ALIAS_INDEX` and invalidate cached regex patterns."""
+
+    global _ALIAS_INDEX, _ALIAS_VERSION
+
+    index: dict[str, set[str]] = {}
+    for key, names in TICKER_NAME_MAP.items():
+        if not names:
+            continue
+        lower_names = {str(name).lower() for name in names if str(name)}
+        if not lower_names:
+            continue
+        for variant in _normalise_ticker_variants(key):
+            bucket = index.setdefault(variant, set())
+            bucket.update(lower_names)
+
+    _ALIAS_INDEX = index
+    _ALIAS_VERSION += 1
+    _COMPILED_PATTERN_CACHE.clear()
 
 
 def _load_aliases_from_file(
@@ -66,7 +103,10 @@ def _load_aliases_from_file(
         This allows callers to perform a full reload of alias definitions.
     """
 
+    changed = False
     if reset:
+        if TICKER_NAME_MAP:
+            changed = True
         TICKER_NAME_MAP.clear()
 
     # 1) Merge explicit alias mapping first
@@ -79,6 +119,7 @@ def _load_aliases_from_file(
                 name = str(name).lower()
                 if name not in bucket:
                     bucket.append(name)
+                    changed = True
 
     # 2) Determine candidate file paths
     root = Path(__file__).resolve().parents[1]
@@ -113,9 +154,13 @@ def _load_aliases_from_file(
                     name = str(name).lower()
                     if name not in bucket:
                         bucket.append(name)
+                        changed = True
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("Could not load ticker aliases from %s: %s", candidate, exc)
         break  # use first existing file only
+
+    if changed:
+        _rebuild_alias_index()
 
 
 _load_aliases_from_file()
@@ -238,38 +283,37 @@ def _load_posts_from_db() -> pd.DataFrame:
 def _alias_names_for(ticker: str) -> set[str]:
     """Return alias names for ``ticker`` including exchange suffix variants."""
 
-    base = ticker.upper()
-    alias_names: set[str] = set()
-    for key, names in TICKER_NAME_MAP.items():
-        key_upper = key.upper()
-        candidates = {key_upper}
-        for sep in (".", "-", ":"):
-            if sep in key_upper:
-                candidates.add(key_upper.split(sep, 1)[0])
-        if base in candidates:
-            alias_names.update(names)
-    return alias_names
+    if not _ALIAS_INDEX and TICKER_NAME_MAP:
+        # Alias-Daten wurden geladen, aber der Index ist noch nicht aufgebaut –
+        # z. B. wenn ``reset`` ohne neue Einträge genutzt wurde.  In diesem
+        # Fall erzeugen wir den Index einmalig.
+        _rebuild_alias_index()
+
+    return set(_ALIAS_INDEX.get(ticker.upper(), set()))
 
 
-def _compile_patterns(ticker: str) -> list[re.Pattern]:
-    """
-    Erfasst Varianten wie NVDA, $NVDA, #NVDA, (NVDA).
-    Vermeidet Treffer in Wörtern (z. B. 'ENVDA' soll nicht matchen).
-    """
-    # word boundary oder Sonderzeichen davor/danach
+def _compile_patterns(ticker: str) -> re.Pattern:
+    """Return a cached regex covering symbol and alias variants for ``ticker``."""
+
+    cache_key = (ticker.upper(), _ALIAS_VERSION)
+    cached = _COMPILED_PATTERN_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     safe = re.escape(ticker.upper())
-    patterns = [
-        re.compile(rf"(?<![A-Za-z0-9]){safe}(?![A-Za-z0-9])", re.IGNORECASE),  # NVDA
-        re.compile(rf"[\$\#]\s*{safe}\b", re.IGNORECASE),  # $NVDA, #NVDA
-        re.compile(rf"\(\s*{safe}\s*\)", re.IGNORECASE),  # (NVDA)
+    parts = [
+        rf"(?<![A-Za-z0-9]){safe}(?![A-Za-z0-9])",  # NVDA
+        rf"[\$\#]\s*{safe}\b",  # $NVDA, #NVDA
+        rf"\(\s*{safe}\s*\)",  # (NVDA)
     ]
 
     for name in _alias_names_for(ticker):
-        # Sicherstellen, dass Namen als eigene Wörter erkannt werden
         safe_name = re.escape(name)
-        patterns.append(re.compile(rf"(?<![A-Za-z0-9]){safe_name}(?![A-Za-z0-9])", re.IGNORECASE))
+        parts.append(rf"(?<![A-Za-z0-9]){safe_name}(?![A-Za-z0-9])")
 
-    return patterns
+    pattern = re.compile("|".join(parts), re.IGNORECASE)
+    _COMPILED_PATTERN_CACHE[cache_key] = pattern
+    return pattern
 
 
 def purge_old_posts() -> None:
@@ -386,12 +430,7 @@ def update_reddit_data(
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     # Nur Posts weiterverarbeiten, die überhaupt einen der Ticker erwähnen
-    compiled_patterns = {
-        t: re.compile(
-            "|".join(p.pattern for p in _compile_patterns(t)), re.IGNORECASE
-        )
-        for t in tickers
-    }
+    compiled_patterns = {t: _compile_patterns(t) for t in tickers}
     if compiled_patterns:
         match_df = pd.DataFrame(
             {t: df["combined"].str.contains(pat, na=False) for t, pat in compiled_patterns.items()}
