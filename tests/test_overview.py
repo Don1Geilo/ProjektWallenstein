@@ -71,3 +71,42 @@ def test_generate_overview_lists_aliases(monkeypatch, tmp_path):
 
     result = generate_overview(['NVDA'], reddit_posts={'NVDA': []})
     assert 'Alias: nvidia' in result
+
+
+def test_generate_overview_includes_trending_section(monkeypatch, tmp_path):
+    db_path = tmp_path / 'db.duckdb'
+    con = duckdb.connect(str(db_path))
+    con.execute(
+        "CREATE TABLE reddit_trends (date DATE, ticker VARCHAR, mentions INTEGER, avg_upvotes DOUBLE, hotness DOUBLE)"
+    )
+    con.execute(
+        "INSERT INTO reddit_trends VALUES (CURRENT_DATE, 'TSLA', 5, 10.0, 100.0)"
+    )
+    con.close()
+
+    monkeypatch.setattr(
+        'wallenstein.overview.get_latest_prices',
+        lambda db_path, tickers, use_eur=False: {t: 1.0 for t in tickers},
+    )
+    monkeypatch.setattr('wallenstein.overview.DB_PATH', str(db_path))
+
+    result = generate_overview(['TSLA'], reddit_posts={'TSLA': []})
+    assert '🔥 Trends heute' in result
+    assert '- TSLA: 5 Mentions' in result
+
+
+def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
+    db_path = tmp_path / 'db.duckdb'
+    duckdb.connect(str(db_path)).close()
+
+    monkeypatch.setattr(
+        'wallenstein.overview.get_latest_prices',
+        lambda db_path, tickers, use_eur=False: {t: 1.0 for t in tickers},
+    )
+    monkeypatch.setattr('wallenstein.overview.DB_PATH', str(db_path))
+
+    result = generate_overview(
+        ['NVDA'], reddit_posts={'NVDA': [{}, {}]}
+    )
+    assert '🔁 Mehrfach erwähnt' in result
+    assert '- NVDA: 2 Posts' in result

@@ -74,7 +74,52 @@ def generate_overview(
         return "🔥" * count
 
     lines = ["📊 Wallenstein Übersicht"]
+
+    multi_hits: list[tuple[str, int]] = []
+    if reddit_posts:
+        for sym, posts in reddit_posts.items():
+            if not posts:
+                continue
+            count = len(posts)
+            if count >= 2:
+                multi_hits.append((sym, count))
+        multi_hits.sort(key=lambda x: x[1], reverse=True)
+
     with duckdb.connect(DB_PATH) as con:
+        trending_rows: list[tuple[str, int, float | None, float | None]] = []
+        try:
+            trending_rows = con.execute(
+                """
+                SELECT ticker, mentions, avg_upvotes, hotness
+                FROM reddit_trends
+                WHERE date = CURRENT_DATE AND mentions >= 2
+                ORDER BY hotness DESC, mentions DESC
+                LIMIT 5
+                """
+            ).fetchall()
+        except duckdb.Error:
+            trending_rows = []
+
+        if trending_rows:
+            lines.append("")
+            lines.append("🔥 Trends heute (≥2 Erwähnungen):")
+            for ticker, mentions, avg_up, hotness in trending_rows:
+                avg_val = float(avg_up) if avg_up is not None else 0.0
+                emoji = _hotness_to_emoji(hotness)
+                suffix = f" {emoji}" if emoji else ""
+                lines.append(
+                    f"- {ticker}: {int(mentions)} Mentions, AvgUp {avg_val:.1f}{suffix}"
+                )
+
+        if multi_hits:
+            lines.append("")
+            lines.append("🔁 Mehrfach erwähnt (neu geladen):")
+            for ticker, count in multi_hits:
+                lines.append(f"- {ticker}: {count} Posts")
+
+        if trending_rows or multi_hits:
+            lines.append("")
+
         for t in tickers:
             usd = prices_usd.get(t)
             eur = prices_eur.get(t)
