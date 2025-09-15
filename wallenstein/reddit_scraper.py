@@ -235,6 +235,22 @@ def _load_posts_from_db() -> pd.DataFrame:
     return df
 
 
+def _alias_names_for(ticker: str) -> set[str]:
+    """Return alias names for ``ticker`` including exchange suffix variants."""
+
+    base = ticker.upper()
+    alias_names: set[str] = set()
+    for key, names in TICKER_NAME_MAP.items():
+        key_upper = key.upper()
+        candidates = {key_upper}
+        for sep in (".", "-", ":"):
+            if sep in key_upper:
+                candidates.add(key_upper.split(sep, 1)[0])
+        if base in candidates:
+            alias_names.update(names)
+    return alias_names
+
+
 def _compile_patterns(ticker: str) -> list[re.Pattern]:
     """
     Erfasst Varianten wie NVDA, $NVDA, #NVDA, (NVDA).
@@ -248,7 +264,7 @@ def _compile_patterns(ticker: str) -> list[re.Pattern]:
         re.compile(rf"\(\s*{safe}\s*\)", re.IGNORECASE),  # (NVDA)
     ]
 
-    for name in TICKER_NAME_MAP.get(ticker.upper(), []):
+    for name in _alias_names_for(ticker):
         # Sicherstellen, dass Namen als eigene Wörter erkannt werden
         safe_name = re.escape(name)
         patterns.append(re.compile(rf"(?<![A-Za-z0-9]){safe_name}(?![A-Za-z0-9])", re.IGNORECASE))
