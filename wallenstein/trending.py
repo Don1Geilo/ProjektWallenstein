@@ -8,11 +8,14 @@ import duckdb
 import pandas as pd
 
 from .aliases import alias_map  # liefert Dict[str, Set[str]]
+from .ticker_detection import SYMBOL_STOPWORDS
 
 
 CASHTAG_PATTERN = re.compile(
     r"(?<!\w)[\$#]([A-Z][A-Z0-9]{0,4}(?:[.\-][A-Z0-9]{1,4})?)(?![A-Za-z0-9])"
 )
+
+TRENDING_SYMBOL_STOPWORDS: set[str] = set(SYMBOL_STOPWORDS) | {"TO", "SO", "TR", "U"}
 
 
 # ---------- Datenklassen ----------
@@ -101,7 +104,12 @@ def _match_with_patterns(text: str, patmap: dict[str, list[re.Pattern]]) -> set[
 def _extract_cashtags(text: str | None) -> set[str]:
     if not text:
         return set()
-    return {match.group(1).upper() for match in CASHTAG_PATTERN.finditer(str(text))}
+    tags: set[str] = set()
+    for match in CASHTAG_PATTERN.finditer(str(text)):
+        symbol = _normalise_symbol(match.group(1))
+        if symbol:
+            tags.add(symbol)
+    return tags
 
 
 # ---------- Zählen ----------
@@ -358,6 +366,8 @@ CASHTAG_PATTERN = re.compile(
 def _normalise_symbol(sym: str) -> str | None:
     symbol = sym.strip().upper()
     if not symbol:
+        return None
+    if symbol in TRENDING_SYMBOL_STOPWORDS:
         return None
     if len(symbol) > 5:
         return None
