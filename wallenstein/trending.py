@@ -83,6 +83,11 @@ def _match_with_patterns(text: str, patmap: dict[str, list[re.Pattern]]) -> set[
             if p.search(text):
                 hits.add(sym)
                 break
+    # Ergänze um frei erkannte Cashtags
+    for raw in CASHTAG_PATTERN.findall(text):
+        symbol = _normalise_symbol(raw)
+        if symbol:
+            hits.add(symbol)
     # Konflikte bei Überschneidungen (optional: längster Alias gewinnt)
     return hits
 
@@ -134,10 +139,7 @@ def scan_reddit_for_candidates(
     ensure_trending_tables(con)
     # include basic aliases plus WordNet synonyms for broader matching
     amap = alias_map(con, include_ticker_itself=True, use_synonyms=True)
-    if not amap:
-        return []
-
-    patmap = _compile_alias_patterns(amap)
+    patmap = _compile_alias_patterns(amap) if amap else {}
 
     # Fenster laden (UTC im DB; hier neutral belassen)
     cols = {row[1] for row in con.execute("PRAGMA table_info('reddit_posts')").fetchall()}
@@ -303,3 +305,20 @@ def auto_add_candidates_to_watchlist(
         except Exception:
             pass
     return added
+CASHTAG_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])[#$]([A-Za-z][A-Za-z0-9]{0,4})(?![A-Za-z0-9])", re.IGNORECASE
+)
+
+
+def _normalise_symbol(sym: str) -> str | None:
+    symbol = sym.strip().upper()
+    if not symbol:
+        return None
+    if len(symbol) > 5:
+        return None
+    if not symbol.isalnum():
+        return None
+    if not any(ch.isalpha() for ch in symbol):
+        return None
+    return symbol
+
