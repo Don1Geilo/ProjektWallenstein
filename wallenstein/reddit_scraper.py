@@ -14,10 +14,12 @@ import duckdb
 import pandas as pd
 import praw
 
+from wallenstein.aliases import add_alias
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
 from wallenstein.sentiment import analyze_sentiment_batch
 from wallenstein.sentiment_analysis import analyze_sentiment
+from wallenstein.ticker_detection import TickerMetadata, discover_new_tickers
 
 try:  # Optional dependency
     import yaml  # type: ignore
@@ -365,6 +367,9 @@ def update_reddit_data(
         Mapping such as ``{"NVDA": [{"created_utc": <timestamp>, "text": "..."},
         ...]}`` where each entry contains the post timestamp and text.
     """
+    # Normalise tickers eagerly (upper-case, trimmed)
+    tickers = [str(t).strip().upper() for t in (tickers or []) if str(t).strip()]
+
     # Refresh alias data if provided
     _load_aliases_from_file(aliases_path, aliases)
     if not subreddits:
@@ -429,8 +434,39 @@ def update_reddit_data(
         df["upvotes"] = 0
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
+    discovered: dict[str, TickerMetadata] = {}
+    if not df.empty:
+        texts = df["combined"].astype(str).tolist()
+        try:
+            discovered = discover_new_tickers(texts, known=tickers)
+        except RuntimeError as exc:  # pragma: no cover - missing yfinance
+            log.debug("Skipping ticker discovery: %s", exc)
+            discovered = {}
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("Automatic ticker discovery failed: %s", exc)
+            discovered = {}
+
+    if discovered:
+        alias_payload = {
+            sym: sorted(meta.aliases)
+            for sym, meta in discovered.items()
+            if meta.aliases
+        }
+        if alias_payload:
+            _load_aliases_from_file(aliases=alias_payload)
+        try:
+            with duckdb.connect(DB_PATH) as con:
+                for sym, meta in discovered.items():
+                    for alias in sorted(meta.aliases):
+                        add_alias(con, sym, alias, source="auto")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            log.debug("Persisting auto-discovered aliases failed: %s", exc)
+        log.info("Auto-discovered new tickers: %s", ", ".join(sorted(discovered)))
+
+    tracked_tickers = list(dict.fromkeys(tickers + list(discovered.keys())))
+
     # Nur Posts weiterverarbeiten, die überhaupt einen der Ticker erwähnen
-    compiled_patterns = {t: _compile_patterns(t) for t in tickers}
+    compiled_patterns = {t: _compile_patterns(t) for t in tracked_tickers}
     if compiled_patterns:
         match_df = pd.DataFrame(
             {t: df["combined"].str.contains(pat, na=False) for t, pat in compiled_patterns.items()}
@@ -440,7 +476,7 @@ def update_reddit_data(
 
     # 3) Je Ticker Texte sammeln
     out: dict[str, list[dict]] = {}
-    for tkr in tickers:
+    for tkr in tracked_tickers:
         if tkr not in df.columns:
             continue
         bucket_df = (

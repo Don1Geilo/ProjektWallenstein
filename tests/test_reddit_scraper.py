@@ -184,6 +184,55 @@ def test_aliases_passed_as_dict(monkeypatch):
     assert "some corp" in out["ABC"][0]["text"].lower()
 
 
+def test_auto_discovery_adds_new_ticker(monkeypatch, tmp_path):
+    now = datetime.now(timezone.utc)
+    df = pd.DataFrame(
+        [
+            {
+                "id": "x1",
+                "title": "$AAPL on watch",
+                "created_utc": now,
+                "text": "",
+                "upvotes": 5,
+            }
+        ]
+    )
+
+    captured: list[tuple[str, str, str]] = []
+
+    def fake_add_alias(_con, ticker, alias, source="manual"):
+        captured.append((ticker, alias, source))
+        return True
+
+    def fake_discover(texts, known, **kwargs):
+        assert "AAPL" not in known
+        return {
+            "AAPL": reddit_scraper.TickerMetadata(
+                symbol="AAPL", aliases={"apple", "apple inc"}
+            )
+        }
+
+    tmp_db = tmp_path / "auto.db"
+
+    monkeypatch.setattr(reddit_scraper, "DB_PATH", str(tmp_db))
+    monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df)
+    monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
+    monkeypatch.setattr(reddit_scraper, "add_alias", fake_add_alias)
+    monkeypatch.setattr(reddit_scraper, "discover_new_tickers", fake_discover)
+    monkeypatch.setattr(
+        reddit_scraper,
+        "analyze_sentiment_batch",
+        lambda texts: [0.0 for _ in texts],
+    )
+
+    out = reddit_scraper.update_reddit_data([], subreddits=None)
+
+    assert "AAPL" in out and len(out["AAPL"]) == 1
+    assert any(alias == "apple" for _ticker, alias, _src in captured)
+    assert "apple" in reddit_scraper.TICKER_NAME_MAP.get("AAPL", [])
+
+
 def test_alias_file_reloaded_each_call(monkeypatch, tmp_path):
     """Alias file is read for every update."""
     import json
