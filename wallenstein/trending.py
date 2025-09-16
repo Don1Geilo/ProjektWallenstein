@@ -10,6 +10,11 @@ import pandas as pd
 from .aliases import alias_map  # liefert Dict[str, Set[str]]
 
 
+CASHTAG_PATTERN = re.compile(
+    r"(?<!\w)[\$#]([A-Z][A-Z0-9]{0,4}(?:[.\-][A-Z0-9]{1,4})?)(?![A-Za-z0-9])"
+)
+
+
 # ---------- Datenklassen ----------
 @dataclass
 class TrendCandidate:
@@ -92,6 +97,13 @@ def _match_with_patterns(text: str, patmap: dict[str, list[re.Pattern]]) -> set[
     return hits
 
 
+# ---------- Cashtag-Extraktion ----------
+def _extract_cashtags(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    return {match.group(1).upper() for match in CASHTAG_PATTERN.finditer(str(text))}
+
+
 # ---------- Zählen ----------
 def _count_mentions(df: pd.DataFrame, patmap: dict[str, list[re.Pattern]]) -> dict[str, int]:
     counts: dict[str, int] = {}
@@ -138,17 +150,37 @@ def scan_reddit_for_candidates(
     """
     ensure_trending_tables(con)
     # include basic aliases plus WordNet synonyms for broader matching
+
+    base_aliases = alias_map(con, include_ticker_itself=True, use_synonyms=True)
+    amap: dict[str, set[str]] = {sym: set(names) for sym, names in base_aliases.items()}
+
+    # Watchlist-Ticker ohne Aliase ergänzen
+    try:
+        watchlist_rows = con.execute(
+            "SELECT DISTINCT symbol FROM watchlist WHERE symbol IS NOT NULL"
+        ).fetchall()
+    except duckdb.Error:
+        watchlist_rows = []
+    for sym_raw, in watchlist_rows:
+        sym = str(sym_raw or "").strip().upper()
+        if sym:
+            amap.setdefault(sym, set()).add(sym)
+
     amap = alias_map(con, include_ticker_itself=True, use_synonyms=True)
     patmap = _compile_alias_patterns(amap) if amap else {}
+
 
     # Fenster laden (UTC im DB; hier neutral belassen)
     cols = {row[1] for row in con.execute("PRAGMA table_info('reddit_posts')").fetchall()}
     num_comments_expr = "num_comments" if "num_comments" in cols else "0 AS num_comments"
+    text_expr = "COALESCE(title, '') || ' ' || COALESCE(text, '') AS text"
+    window_hours_int = int(window_hours)
+    lookback_hours = int(lookback_days * 24)
     df_win = con.execute(
         f"""
-        SELECT created_utc, text, upvotes AS ups, {num_comments_expr}
+        SELECT created_utc, {text_expr}, upvotes AS ups, {num_comments_expr}
         FROM reddit_posts
-        WHERE created_utc >= NOW() - INTERVAL {int(window_hours)} HOUR
+        WHERE created_utc >= NOW() - INTERVAL {window_hours_int} HOUR
     """
     ).fetchdf()
 
@@ -157,12 +189,25 @@ def scan_reddit_for_candidates(
 
     df_base = con.execute(
         f"""
-        SELECT created_utc, text, upvotes AS ups, {num_comments_expr}
+        SELECT created_utc, {text_expr}, upvotes AS ups, {num_comments_expr}
         FROM reddit_posts
-        WHERE created_utc >= NOW() - INTERVAL {int(lookback_days*24)} HOUR
-          AND created_utc <  NOW() - INTERVAL {int(window_hours)} HOUR
+        WHERE created_utc >= NOW() - INTERVAL {lookback_hours} HOUR
+          AND created_utc <  NOW() - INTERVAL {window_hours_int} HOUR
     """
     ).fetchdf()
+
+    # Neue Cashtags aus den Texten extrahieren, um das Alias-Mapping zu erweitern
+    for df in (df_win, df_base):
+        if df.empty or "text" not in df:
+            continue
+        for text in df["text"].astype(str):
+            for tag in _extract_cashtags(text):
+                amap.setdefault(tag, set()).add(tag)
+
+    if not amap:
+        return []
+
+    patmap = _compile_alias_patterns(amap)
 
     # Zählen
     win_counts_raw = (
