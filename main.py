@@ -83,8 +83,7 @@ from wallenstein.reddit_enrich import (
     compute_returns,
     enrich_reddit_posts,
 )
-from wallenstein.sentiment import analyze_sentiment_batch
-from wallenstein.sentiment_analysis import analyze_sentiment
+from wallenstein.sentiment_analysis import analyze_sentiment_many
 from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
 from wallenstein.trending import (
     auto_add_candidates_to_watchlist,
@@ -176,8 +175,24 @@ def aggregate_daily_sentiment(posts: pd.DataFrame) -> pd.DataFrame:
             ]
         )
     posts = posts.copy()
-    posts["text"] = posts["title"].fillna("") + " " + posts["selftext"].fillna("")
-    posts["sentiment"] = posts["text"].map(analyze_sentiment)
+    if "text" not in posts:
+        posts["text"] = posts["title"].fillna("") + " " + posts["selftext"].fillna("")
+
+    sentiments = None
+    if "sentiment" in posts:
+        sentiments = pd.to_numeric(posts["sentiment"], errors="coerce")
+        missing_mask = sentiments.isna()
+        if missing_mask.any():
+            new_scores = analyze_sentiment_many(
+                posts.loc[missing_mask, "text"].astype(str).tolist()
+            )
+            sentiments.loc[missing_mask] = new_scores
+        sentiments = sentiments.fillna(0.0)
+    else:
+        sentiments = pd.Series(
+            analyze_sentiment_many(posts["text"].astype(str).tolist()), index=posts.index
+        )
+    posts["sentiment"] = sentiments
     posts["ups"] = pd.to_numeric(posts["ups"], errors="coerce").fillna(0).astype(int)
     posts["num_comments"] = (
         pd.to_numeric(posts["num_comments"], errors="coerce").fillna(0).astype(int)
@@ -269,8 +284,10 @@ def persist_sentiment(reddit_posts: dict[str, list]) -> None:
     """Aggregate sentiment from Reddit posts and persist to DuckDB."""
     try:
         rows_list: list[dict] = []
+        post_refs: list[dict] = []
         for tkr, posts in reddit_posts.items():
             for p in posts:
+                post_refs.append(p)
                 created = p.get("created_utc")
                 if hasattr(created, "timestamp"):
                     created_val = int(created.timestamp())
@@ -288,6 +305,15 @@ def persist_sentiment(reddit_posts: dict[str, list]) -> None:
                     }
                 )
         posts_df = pd.DataFrame(rows_list)
+        if not posts_df.empty:
+            posts_df["text"] = posts_df["title"].fillna("") + " " + posts_df["selftext"].fillna("")
+            sentiments = analyze_sentiment_many(posts_df["text"].astype(str).tolist())
+            posts_df["sentiment"] = sentiments
+            for post, score in zip(post_refs, sentiments):
+                try:
+                    post["sentiment"] = float(score)
+                except Exception:
+                    post["sentiment"] = None
         with duckdb.connect(DB_PATH) as con:
             agg = aggregate_daily_sentiment(posts_df)
             rows = upsert_reddit_daily_sentiment(con, agg)
@@ -395,13 +421,21 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
         texts = list(texts) if texts is not None else []
         if texts:
             df_posts = pd.DataFrame(texts)
-            if "text" in df_posts:
-                df_posts["sentiment"] = analyze_sentiment_batch(
-                    df_posts["text"].astype(str).tolist()
+            if "sentiment" in df_posts:
+                df_posts["sentiment"] = pd.to_numeric(
+                    df_posts["sentiment"], errors="coerce"
                 )
-                df_posts["sentiment"] = pd.to_numeric(df_posts["sentiment"], errors="coerce")
             else:
-                df_posts["sentiment"] = 0.0
+                df_posts["sentiment"] = np.nan
+
+            missing_mask = df_posts["sentiment"].isna()
+            if missing_mask.any() and "text" in df_posts:
+                new_scores = analyze_sentiment_many(
+                    df_posts.loc[missing_mask, "text"].astype(str).tolist()
+                )
+                df_posts.loc[missing_mask, "sentiment"] = new_scores
+
+            df_posts["sentiment"] = df_posts["sentiment"].fillna(0.0)
             if "created_utc" in df_posts:
                 df_posts["date"] = (
                     pd.to_datetime(df_posts["created_utc"], errors="coerce", utc=True)

@@ -16,12 +16,18 @@ if str(ROOT) not in sys.path:
 import importlib
 
 import wallenstein.sentiment as sentiment
+import wallenstein.sentiment_analysis as sentiment_analysis
 
 
 @pytest.fixture(autouse=True)
 def _disable_bert(monkeypatch):
     """Ensure keyword-based sentiment to keep tests light."""
     monkeypatch.setattr(sentiment.settings, "USE_BERT_SENTIMENT", False)
+    monkeypatch.setattr(
+        sentiment_analysis,
+        "analyze_sentiment_many",
+        lambda texts, batch_size=32: [0.0 for _ in texts],
+    )
 
 
 def test_aggregate_handles_nan_values():
