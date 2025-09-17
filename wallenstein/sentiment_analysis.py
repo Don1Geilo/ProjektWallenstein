@@ -4,7 +4,7 @@ import logging
 import math
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -163,6 +163,24 @@ class SentimentEngine:
         return self._hf_finbert
 
 
+    def _get_xlmr(self):
+        if self._hf_xlmr or not self._pipeline:
+            return self._hf_xlmr
+        try:
+            self._hf_xlmr = self._pipeline(
+                "sentiment-analysis",
+                model=self.XLMR_ID,
+                top_k=None,
+                truncation=True,
+                function_to_apply="softmax",
+            )
+            log.info("Sentiment: using HF pipeline %s", self.XLMR_ID)
+        except Exception as e:
+            log.warning(f"HF XLM-R unavailable: {e}")
+            self._hf_xlmr = None
+        return self._hf_xlmr
+
+
 
     @staticmethod
     def _scores_to_scalar(scores: list[dict[str, Any]]) -> tuple[float, dict[str, float]]:
@@ -227,6 +245,101 @@ class SentimentEngine:
         return SentimentResult(0.0 + kw, "rule-only", {"lang": lang, "kw": kw})
 
 
+    def analyze_many(self, raw_texts: Sequence[str], *, batch_size: int = 32) -> list[SentimentResult]:
+        if not raw_texts:
+            return []
+
+        results: list[SentimentResult] = [SentimentResult(0.0, "empty", {}) for _ in raw_texts]
+        queue: list[tuple[int, str, str, float]] = []  # (idx, preprocessed, lang, kw)
+
+        for idx, raw_text in enumerate(raw_texts):
+            txt = preprocess(raw_text)
+            if not txt:
+                results[idx] = SentimentResult(0.0, "empty", {})
+                continue
+            lang = _detect_lang(txt)
+            kw = _keyword_boost(txt)
+            queue.append((idx, txt, lang, kw))
+
+        if not queue:
+            return results
+
+        fallback: list[tuple[int, str, str, float]] = []
+
+        if self._pipeline:
+            groups: dict[Callable, list[tuple[int, str, str, float, str]]] = {}
+            for idx, txt, lang, kw in queue:
+                pipe = None
+                model_id = self.FINBERT_ID
+                if lang == "en":
+                    pipe = self._get_finbert() or self._get_xlmr()
+                    model_id = self.FINBERT_ID if self._hf_finbert else self.XLMR_ID
+                else:
+                    pipe = self._get_xlmr() or self._get_finbert()
+                    model_id = self.XLMR_ID if self._hf_xlmr else self.FINBERT_ID
+
+                if pipe:
+                    groups.setdefault(pipe, []).append((idx, txt, lang, kw, model_id))
+                else:
+                    fallback.append((idx, txt, lang, kw))
+
+            for pipe, items in groups.items():
+                outputs: list[Any] = []
+                failed = False
+                for start in range(0, len(items), max(1, batch_size)):
+                    chunk = items[start : start + max(1, batch_size)]
+                    texts = [txt for _, txt, _, _, _ in chunk]
+                    try:
+                        chunk_out = pipe(texts)
+                    except Exception as exc:  # pragma: no cover - fallback
+                        log.debug("HF batch inference failed, fallback to VADER: %s", exc)
+                        fallback.extend([(idx, txt, lang, kw) for idx, txt, lang, kw, _ in chunk])
+                        failed = True
+                        break
+
+                    if isinstance(chunk_out, list):
+                        outputs.extend(chunk_out)
+                    else:
+                        outputs.append(chunk_out)
+
+                if failed:
+                    continue
+
+                for (idx, _txt, lang, kw, model_id), out in zip(items, outputs):
+                    if isinstance(out, list) and out:
+                        first = out[0]
+                        if isinstance(first, dict):
+                            scores = out
+                        elif isinstance(first, (list, tuple)):
+                            scores = first
+                        else:
+                            scores = out
+                    else:
+                        scores = out
+
+                    scalar, by = self._scores_to_scalar(scores)  # type: ignore[arg-type]
+                    score = max(-1.0, min(1.0, scalar + kw))
+                    results[idx] = SentimentResult(
+                        score, f"hf:{model_id}", {"lang": lang, "scores": by, "kw": kw}
+                    )
+
+        else:
+            fallback = queue
+
+        for idx, txt, lang, kw in fallback:
+            if self._vader:
+                pol = self._vader.polarity_scores(txt)
+                score = pol.get("compound", 0.0)
+                score = max(-1.0, min(1.0, score + kw))
+                results[idx] = SentimentResult(
+                    score, "vader", {"lang": lang, "polarity": pol, "kw": kw}
+                )
+            else:
+                results[idx] = SentimentResult(0.0 + kw, "rule-only", {"lang": lang, "kw": kw})
+
+        return results
+
+
 engine_singleton: SentimentEngine | None = None
 
 
@@ -237,8 +350,21 @@ def analyze_sentiment(text: str) -> float:
     return engine_singleton.analyze(text).score
 
 
+def analyze_sentiment_many(texts: Sequence[str], *, batch_size: int = 32) -> list[float]:
+    global engine_singleton
+    if engine_singleton is None:
+        engine_singleton = SentimentEngine()
+    return [res.score for res in engine_singleton.analyze_many(texts, batch_size=batch_size)]
+
+
 def post_weight(upvotes: int = 0, num_comments: int = 0) -> float:
     return 1.0 + math.log10(1 + max(0, upvotes)) + 0.2 * math.log10(1 + max(0, num_comments))
 
 
-__all__ = ["analyze_sentiment", "post_weight", "SentimentEngine", "SentimentResult"]
+__all__ = [
+    "analyze_sentiment",
+    "analyze_sentiment_many",
+    "post_weight",
+    "SentimentEngine",
+    "SentimentResult",
+]
