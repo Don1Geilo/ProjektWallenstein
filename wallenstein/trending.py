@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -8,10 +9,14 @@ import duckdb
 import pandas as pd
 
 from .aliases import alias_map  # liefert Dict[str, Set[str]]
+from .ticker_detection import SYMBOL_STOPWORDS
 
+
+log = logging.getLogger(__name__)
 
 CASHTAG_PATTERN = re.compile(
-    r"(?<!\w)[\$#]([A-Z][A-Z0-9]{0,4}(?:[.\-][A-Z0-9]{1,4})?)(?![A-Za-z0-9])"
+    r"(?<![A-Za-z0-9])[#$]\s*([A-Za-z][A-Za-z0-9.\-]{0,9})(?![A-Za-z0-9])",
+    re.IGNORECASE,
 )
 
 
@@ -23,6 +28,7 @@ class TrendCandidate:
     baseline_rate_per_h: float
     lift: float
     trend: float  # lift * log1p(mentions)
+    is_known: bool = False
 
 
 # ---------- Tabellen ----------
@@ -97,11 +103,37 @@ def _match_with_patterns(text: str, patmap: dict[str, list[re.Pattern]]) -> set[
     return hits
 
 
+# ---------- Hilfsfunktionen ----------
+def _fetch_distinct_symbols(
+    con: duckdb.DuckDBPyConnection, table: str, column: str
+) -> set[str]:
+    """Return distinct, normalised symbols from ``table.column``."""
+
+    try:
+        rows = con.execute(
+            f"SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
+        ).fetchall()
+    except duckdb.Error:
+        return set()
+
+    symbols: set[str] = set()
+    for (value,) in rows:
+        symbol = _normalise_symbol(value)
+        if symbol:
+            symbols.add(symbol)
+    return symbols
+
+
 # ---------- Cashtag-Extraktion ----------
 def _extract_cashtags(text: str | None) -> set[str]:
     if not text:
         return set()
-    return {match.group(1).upper() for match in CASHTAG_PATTERN.finditer(str(text))}
+    results: set[str] = set()
+    for match in CASHTAG_PATTERN.finditer(str(text)):
+        symbol = _normalise_symbol(match.group(1))
+        if symbol:
+            results.add(symbol)
+    return results
 
 
 # ---------- Zählen ----------
@@ -153,20 +185,19 @@ def scan_reddit_for_candidates(
 
     base_aliases = alias_map(con, include_ticker_itself=True, use_synonyms=True)
     amap: dict[str, set[str]] = {sym: set(names) for sym, names in base_aliases.items()}
+    known_symbols: set[str] = set(amap.keys())
 
-    # Watchlist-Ticker ohne Aliase ergänzen
-    try:
-        watchlist_rows = con.execute(
-            "SELECT DISTINCT symbol FROM watchlist WHERE symbol IS NOT NULL"
-        ).fetchall()
-    except duckdb.Error:
-        watchlist_rows = []
-    for sym_raw, in watchlist_rows:
-        sym = str(sym_raw or "").strip().upper()
-        if sym:
+    # Weitere Quellen: Watchlist, Preise, historische Trends
+    for source_table, column in (
+        ("watchlist", "symbol"),
+        ("prices", "ticker"),
+        ("reddit_enriched", "ticker"),
+        ("reddit_trends", "ticker"),
+    ):
+        for sym in _fetch_distinct_symbols(con, source_table, column):
+            known_symbols.add(sym)
             amap.setdefault(sym, set()).add(sym)
 
-    amap = alias_map(con, include_ticker_itself=True, use_synonyms=True)
     patmap = _compile_alias_patterns(amap) if amap else {}
 
 
@@ -232,6 +263,7 @@ def scan_reddit_for_candidates(
 
     # Kandidaten bauen
     candidates: list[TrendCandidate] = []
+    unknown_symbols: set[str] = set()
     for s, cnt in win_counts_raw.items():
         mentions = int(round(cnt)) if use_weighted else int(cnt)
         if mentions < min_mentions:
@@ -242,14 +274,21 @@ def scan_reddit_for_candidates(
         lift = float(mentions) / expected_24h
         trend = lift * math.log1p(max(0, mentions))
         if lift >= min_lift:
-            candidates.append(TrendCandidate(s, mentions, rate, lift, trend))
+            is_known = s in known_symbols
+            if not is_known:
+                unknown_symbols.add(s)
+            candidates.append(TrendCandidate(s, mentions, rate, lift, trend, is_known=is_known))
 
     # Persistenz
-    now = con.execute("SELECT NOW()").fetchone()[0]
-    if candidates:
+    known_candidates = [c for c in candidates if c.is_known]
+    if unknown_symbols:
+        log.debug("Ungeprüfte Trend-Symbole ignoriert: %s", sorted(unknown_symbols))
+
+    if known_candidates:
+        now = con.execute("SELECT NOW()").fetchone()[0]
         data = [
             (now, c.symbol, c.mentions_24h, c.baseline_rate_per_h, c.lift, c.trend)
-            for c in candidates
+            for c in known_candidates
         ]
         con.executemany(
             """
@@ -266,7 +305,7 @@ def scan_reddit_for_candidates(
                 pd.DataFrame(
                     [
                         (c.symbol, c.mentions_24h, c.baseline_rate_per_h, c.lift, c.trend)
-                        for c in candidates
+                        for c in known_candidates
                     ],
                     columns=["symbol", "mentions_24h", "baseline_rate_per_h", "lift", "trend"],
                 ),
@@ -289,7 +328,7 @@ def scan_reddit_for_candidates(
             )
         except Exception:
             # Fallback: DELETE+INSERT (kompatibel mit älteren DuckDBs)
-            symbols = [c.symbol for c in candidates]
+            symbols = [c.symbol for c in known_candidates]
             con.executemany(
                 "DELETE FROM trending_candidates WHERE symbol = ?", [(s,) for s in symbols]
             )
@@ -300,12 +339,16 @@ def scan_reddit_for_candidates(
             """,
                 [
                     (c.symbol, c.mentions_24h, c.baseline_rate_per_h, c.lift, c.trend)
-                    for c in candidates
+                    for c in known_candidates
                 ],
             )
 
-    # Sortierung: erst trend, dann lift, dann mentions
-    return sorted(candidates, key=lambda x: (x.trend, x.lift, x.mentions_24h), reverse=True)
+    # Sortierung: bekannte Symbole zuerst, dann trend, lift, mentions
+    return sorted(
+        candidates,
+        key=lambda x: (int(x.is_known), x.trend, x.lift, x.mentions_24h),
+        reverse=True,
+    )
 
 
 # ---------- Watchlist ----------
@@ -317,6 +360,13 @@ def auto_add_candidates_to_watchlist(
     min_lift: float = 4.0,
 ) -> list[str]:
     ensure_trending_tables(con)
+    known_symbols: set[str] = set(
+        alias_map(con, include_ticker_itself=True, use_synonyms=False).keys()
+    )
+    for sym in _fetch_distinct_symbols(con, "watchlist", "symbol"):
+        known_symbols.add(sym)
+    for sym in _fetch_distinct_symbols(con, "prices", "ticker"):
+        known_symbols.add(sym)
     rows = con.execute(
         """
         SELECT symbol, mentions_24h, baseline_rate_per_h, lift, trend
@@ -337,6 +387,8 @@ def auto_add_candidates_to_watchlist(
             continue
         if mentions is None or lift is None:
             continue
+        if sym not in known_symbols:
+            continue
         if mentions >= min_mentions and lift >= min_lift:
             con.execute(
                 "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES ('GLOBAL', ?, ?)",
@@ -350,20 +402,23 @@ def auto_add_candidates_to_watchlist(
         except Exception:
             pass
     return added
-CASHTAG_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9])[#$]([A-Za-z][A-Za-z0-9]{0,4})(?![A-Za-z0-9])", re.IGNORECASE
-)
 
 
-def _normalise_symbol(sym: str) -> str | None:
-    symbol = sym.strip().upper()
+def _normalise_symbol(sym: str | None) -> str | None:
+    symbol = str(sym or "").strip().upper()
     if not symbol:
         return None
-    if len(symbol) > 5:
+    symbol = symbol.strip("$# \t\r\n.,:;!?")
+    if not symbol:
         return None
-    if not symbol.isalnum():
+    symbol = re.sub(r"\s+", "", symbol)
+    if len(symbol) > 12:
         return None
     if not any(ch.isalpha() for ch in symbol):
+        return None
+    if symbol in SYMBOL_STOPWORDS:
+        return None
+    if not re.fullmatch(r"[A-Z0-9]+(?:[.\-][A-Z0-9]+)*", symbol):
         return None
     return symbol
 

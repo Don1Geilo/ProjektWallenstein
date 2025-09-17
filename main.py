@@ -348,11 +348,30 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                 min_lift=3.0,
             )
             if cands:
-                top_preview = ", ".join(
-                    [f"{c.symbol} (m24h={c.mentions_24h}, x{c.lift:.1f})" for c in cands[:5]]
-                )
-                log.info(f"Trending-Kandidaten (Top 5): {top_preview}")
-                notify_telegram("🔥 Reddit-Trends: " + top_preview)
+                known = [c for c in cands if getattr(c, "is_known", True)]
+                unknown = [c for c in cands if not getattr(c, "is_known", True)]
+                if known:
+                    top_preview = ", ".join(
+                        [
+                            f"{c.symbol} (m24h={c.mentions_24h}, x{c.lift:.1f})"
+                            for c in known[:5]
+                        ]
+                    )
+                    log.info(f"Trending-Kandidaten (Top 5, verifiziert): {top_preview}")
+                    notify_telegram("🔥 Reddit-Trends: " + top_preview)
+                else:
+                    log.info("Trending-Kandidaten: keine verifizierten Treffer")
+                if unknown:
+                    unknown_preview = ", ".join(
+                        [
+                            f"{c.symbol} (m24h={c.mentions_24h}, x{c.lift:.1f})"
+                            for c in unknown[:5]
+                        ]
+                    )
+                    log.info(
+                        "Trending-Kandidaten (unverifiziert, ignoriert): %s",
+                        unknown_preview,
+                    )
             else:
                 log.info("Trending-Kandidaten: keine")
             added_syms = auto_add_candidates_to_watchlist(
