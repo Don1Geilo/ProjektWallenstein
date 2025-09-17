@@ -79,6 +79,20 @@ SCHEMAS = {
         "price": "DOUBLE",
         "active": "BOOLEAN",
     },
+    "model_training_state": {
+        "ticker": "TEXT",
+        "latest_price_date": "DATE",
+        "price_row_count": "INTEGER",
+        "latest_sentiment_date": "DATE",
+        "sentiment_row_count": "INTEGER",
+        "latest_post_utc": "TIMESTAMP",
+        "trained_at": "TIMESTAMP",
+        "accuracy": "DOUBLE",
+        "f1": "DOUBLE",
+        "roc_auc": "DOUBLE",
+        "precision_score": "DOUBLE",
+        "recall_score": "DOUBLE",
+    },
 }
 
 
@@ -91,6 +105,8 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             coldefs += ", PRIMARY KEY (date, ticker)"
         if table == "alerts":
             coldefs += ", PRIMARY KEY (id)"
+        if table == "model_training_state":
+            coldefs += ", PRIMARY KEY (ticker)"
         if table == "reddit_sentiment_hourly":
             coldefs += ", PRIMARY KEY (ticker, created_utc)"
         if table == "reddit_sentiment_daily":

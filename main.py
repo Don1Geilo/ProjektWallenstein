@@ -69,6 +69,12 @@ TELEGRAM_CHAT_ID = (settings.TELEGRAM_CHAT_ID or "").strip()
 
 # --- Projekt-Module ---
 from wallenstein.db_utils import ensure_prices_view, get_latest_prices
+from wallenstein.model_state import (
+    TrainingSnapshot,
+    load_training_state,
+    should_skip_training,
+    upsert_training_state,
+)
 from wallenstein.models import train_per_stock
 from wallenstein.overview import generate_overview
 from wallenstein.reddit_enrich import (
@@ -336,8 +342,54 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
         log.warning(f"Trending-Scan fehlgeschlagen: {e}")
 
 
+def _build_training_snapshot(
+    ticker: str,
+    price_frames: dict[str, pd.DataFrame],
+    sentiment_frames: dict[str, pd.DataFrame],
+    reddit_posts: dict[str, list],
+) -> TrainingSnapshot:
+    df_price = price_frames.get(ticker)
+    if df_price is None:
+        df_price = pd.DataFrame(columns=["date"])
+    price_dates = pd.to_datetime(df_price.get("date"), errors="coerce")
+    price_dates = price_dates.dropna() if hasattr(price_dates, "dropna") else pd.Series([], dtype="datetime64[ns]")
+    latest_price_date = price_dates.max().date() if not price_dates.empty else None
+    price_rows = int(price_dates.size)
+
+    df_sent = sentiment_frames.get(ticker)
+    if df_sent is None:
+        df_sent = pd.DataFrame(columns=["date"])
+    sent_dates = pd.to_datetime(df_sent.get("date"), errors="coerce")
+    sent_dates = sent_dates.dropna() if hasattr(sent_dates, "dropna") else pd.Series([], dtype="datetime64[ns]")
+    latest_sentiment_date = sent_dates.max().date() if not sent_dates.empty else None
+    sentiment_rows = int(sent_dates.size)
+
+    posts = reddit_posts.get(ticker) or []
+    post_timestamps = []
+    for post in posts:
+        created = post.get("created_utc")
+        ts = pd.to_datetime(created, errors="coerce", utc=True)
+        if pd.notna(ts):
+            post_timestamps.append(ts)
+    latest_post_utc = None
+    if post_timestamps:
+        latest_post = max(post_timestamps)
+        if getattr(latest_post, "tzinfo", None) is not None:
+            latest_post = latest_post.tz_localize(None)
+        latest_post_utc = latest_post.to_pydatetime()
+
+    return TrainingSnapshot(
+        latest_price_date=latest_price_date,
+        price_row_count=price_rows,
+        latest_sentiment_date=latest_sentiment_date,
+        sentiment_row_count=sentiment_rows,
+        latest_post_utc=latest_post_utc,
+    )
+
+
 def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
     """Train per-stock models using parallel execution."""
+
     sentiment_frames: dict[str, pd.DataFrame] = {}
     for ticker, texts in reddit_posts.items():
         texts = list(texts) if texts is not None else []
@@ -367,7 +419,8 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
                 sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
         else:
             sentiment_frames[ticker] = pd.DataFrame(columns=["date", "sentiment"])
-    with duckdb.connect(DB_PATH, read_only=True) as con:
+
+    with duckdb.connect(DB_PATH) as con:
         placeholder = ",".join("?" * len(tickers)) or "''"
         df_prices = con.execute(
             f"SELECT ticker, date, close FROM prices WHERE ticker IN ({placeholder}) ORDER BY ticker, date",
@@ -376,20 +429,59 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
         price_frames = {
             t: g.drop(columns="ticker") for t, g in df_prices.groupby("ticker", sort=False)
         }
+        state_map = load_training_state(con)
+
+        snapshots: dict[str, TrainingSnapshot] = {}
+        trainable: list[str] = []
+        skipped_same: list[str] = []
+        for ticker in tickers:
+            snapshot = _build_training_snapshot(ticker, price_frames, sentiment_frames, reddit_posts)
+            snapshots[ticker] = snapshot
+            if should_skip_training(state_map.get(ticker), snapshot):
+                skipped_same.append(ticker)
+                continue
+            trainable.append(ticker)
+
+        if skipped_same:
+            preview = ", ".join(skipped_same[:5])
+            if len(skipped_same) > 5:
+                preview += ", …"
+            log.info(
+                "Training übersprungen für %d Ticker ohne neue Daten: %s",
+                len(skipped_same),
+                preview,
+            )
+
+        if not trainable:
+            log.info("Keine Ticker mit neuen Daten für Modelltraining.")
+            return
+
         train = partial(
             train_model_for_ticker,
             _con=con,
             price_frames=price_frames,
             sentiment_frames=sentiment_frames,
         )
+
         with ThreadPoolExecutor() as ex:
-            for t, acc, f1, roc_auc, precision, recall in ex.map(train, tickers):
+            for t, acc, f1, roc_auc, precision, recall in ex.map(train, trainable):
+                snapshot = snapshots.get(t)
                 if acc is not None:
                     roc_disp = roc_auc if roc_auc is not None else float("nan")
                     log.info(
                         f"{t}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f} | ROC-AUC {roc_disp:.2f}"
                         f" | Precision {precision:.2f} | Recall {recall:.2f}"
                     )
+                upsert_training_state(
+                    con,
+                    t,
+                    snapshot,
+                    accuracy=acc,
+                    f1=f1,
+                    roc_auc=roc_auc,
+                    precision=precision,
+                    recall=recall,
+                )
 
 
 # ---------- Main ----------
