@@ -1,25 +1,4 @@
-pandas
-yfinance
-duckdb
-sqlparse
-requests
-python-dotenv
-pyyaml
-
-praw
-langdetect
-nltk
-
-scikit-learn
-imbalanced-learn
-
-transformers
-huggingface_hub
-tokenizers
-vaderSentiment
-torch
-
-optuna
-optuna-integration[sklearn]
-
-python-telegram-bot
+# Default install includes both the lightweight core and optional ML extras.
+# ``pip install -r requirements-base.txt`` installs the fast core only.
+-r requirements-base.txt
+-r requirements-ml.txt

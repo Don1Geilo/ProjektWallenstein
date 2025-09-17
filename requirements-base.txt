@@ -1,0 +1,14 @@
+pandas
+yfinance
+duckdb
+sqlparse
+requests
+python-dotenv
+pyyaml
+praw
+langdetect
+nltk
+scikit-learn
+imbalanced-learn
+vaderSentiment
+python-telegram-bot

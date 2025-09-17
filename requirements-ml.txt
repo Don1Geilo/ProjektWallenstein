@@ -1,0 +1,6 @@
+transformers
+huggingface_hub
+tokenizers
+torch
+optuna
+optuna-integration[sklearn]

@@ -9,7 +9,9 @@ Broker-target support is temporarily disabled pending a new data provider.
 
 ## Quickstart
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-base.txt
+# Optional FinBERT/Optuna extras:
+# pip install -r requirements-ml.txt
 # The VADER lexicon downloads automatically on first run; pre-download it for
 # offline use with the following command (optional):
 python -m nltk.downloader vader_lexicon
@@ -22,20 +24,23 @@ The main pipeline reads symbols from the watchlist and exits with a warning if n
 
 ## Install (reproducible)
 
-Pinned dependencies live in `requirements.txt`.
+Core dependencies live in `requirements-base.txt`. Heavy ML extras (FinBERT,
+HuggingFace, Optuna) are separated into `requirements-ml.txt` so that the CI
+pipeline can skip them. For a minimal install run:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-base.txt
 ```
 
-An optional `requirements.in` is provided for use with
-[`pip-tools`](https://github.com/jazzband/pip-tools). Regenerate the pinned
-file via:
+To enable the transformer-based sentiment analysis or Optuna-based hyperparameter
+search also install:
 
 ```bash
-pip install pip-tools
-pip-compile requirements.in
+pip install -r requirements-ml.txt
 ```
+
+`requirements.txt` includes both sets for convenience when the full environment
+is desired.
 
 ## Dev setup
 
