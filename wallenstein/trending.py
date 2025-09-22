@@ -169,6 +169,7 @@ def _count_weighted_mentions(
     return counts
 
 
+
 def _promote_unknown_candidates(
     con: duckdb.DuckDBPyConnection,
     candidates: list[TrendCandidate],
@@ -316,6 +317,7 @@ def _weekly_return_from_yfinance(symbol: str) -> float | None:
     return _compute_weekly_return(df)
 
 
+
 def fetch_weekly_returns(
     con: duckdb.DuckDBPyConnection,
     symbols: Iterable[str],
@@ -456,12 +458,19 @@ def scan_reddit_for_candidates(
                 unknown_symbols.add(s)
             candidates.append(TrendCandidate(s, mentions, rate, lift, trend, is_known=is_known))
 
+
     if not candidates:
         return []
 
     promoted = _promote_unknown_candidates(con, candidates, known_symbols, df_win)
     if promoted:
         unknown_symbols.difference_update(promoted)
+
+
+
+    if not candidates:
+        return []
+
 
     sorted_candidates = sorted(
         candidates,
@@ -477,6 +486,26 @@ def scan_reddit_for_candidates(
         for cand in sorted_candidates:
             if cand.symbol in weekly_returns:
                 cand.weekly_return = weekly_returns[cand.symbol]
+
+    if candidates:
+        symbols_for_returns = {c.symbol for c in candidates if c.is_known}
+        if not symbols_for_returns:
+            symbols_for_returns = {c.symbol for c in candidates}
+        weekly_returns: dict[str, float] = {}
+        for sym in sorted(symbols_for_returns):
+            if len(weekly_returns) >= 10:
+                break
+            val = _weekly_return_from_db(con, sym)
+            if val is None:
+                val = _weekly_return_from_yfinance(sym)
+            if val is not None:
+                weekly_returns[sym] = val
+        if weekly_returns:
+            for cand in candidates:
+                if cand.symbol in weekly_returns:
+                    cand.weekly_return = weekly_returns[cand.symbol]
+
+
 
     # Persistenz
     known_candidates = [c for c in sorted_candidates if c.is_known]

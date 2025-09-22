@@ -230,6 +230,7 @@ def test_scan_candidates_prefers_display_order_for_weekly(monkeypatch):
         "NVDA",
         "PLTR",
         "TSLA",
+
     ]
 
     now = datetime.now(timezone.utc)
@@ -272,3 +273,4 @@ def test_scan_candidates_prefers_display_order_for_weekly(monkeypatch):
     for sym in ("TSLA", "PLTR"):
         cand = next(c for c in candidates if c.symbol == sym)
         assert cand.weekly_return == pytest.approx(weekly_values[sym])
+

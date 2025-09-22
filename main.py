@@ -376,6 +376,15 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                             base += f", 7d {weekly * 100:+.1f}%"
                         return base
 
+                    def _format_candidate(cand):
+                        weekly = getattr(cand, "weekly_return", None)
+                        if weekly is None:
+                            return f"{cand.symbol} (m24h={cand.mentions_24h}, x{cand.lift:.1f})"
+                        return (
+                            f"{cand.symbol} (m24h={cand.mentions_24h}, x{cand.lift:.1f}, "
+                            f"7d {weekly * 100:+.1f}%)"
+                        )
+
                     top_preview = ", ".join(
                         [_format_candidate(c) for c in known[:5]]
                     )
