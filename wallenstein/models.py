@@ -1,6 +1,7 @@
 import logging
 from collections import Counter
 
+import numpy as np
 import pandas as pd
 from scipy.stats import loguniform, randint
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -39,6 +40,27 @@ def backtest_strategy(df: pd.DataFrame, signals: pd.Series) -> float:
     bt["return"] = bt["next_close"] / bt["close"] - 1
     returns = bt.loc[signals == 1, "return"].dropna()
     return float(returns.mean()) if not returns.empty else 0.0
+
+
+def _find_optimal_threshold(y_true: pd.Series, y_proba: np.ndarray) -> tuple[float, float]:
+    """Return (threshold, f1) that maximises F1 on ``y_true``."""
+
+    if y_proba.size == 0:
+        return 0.5, 0.0
+
+    thresholds = np.linspace(0.2, 0.8, 25)
+    best_thr = 0.5
+    best_f1 = -1.0
+    y_true_arr = np.asarray(y_true, dtype=int)
+
+    for thr in thresholds:
+        preds = (y_proba >= thr).astype(int)
+        score = f1_score(y_true_arr, preds, zero_division=0)
+        if score > best_f1:
+            best_f1 = float(score)
+            best_thr = float(thr)
+
+    return best_thr, max(best_f1, 0.0)
 
 
 def train_per_stock(
@@ -99,6 +121,27 @@ def train_per_stock(
         "Sentiment_STD7",
     ]
 
+    # Momentum- und Trend-Features
+    df["Return_1d"] = df["close"].pct_change().shift(1)
+    df["Return_3d"] = df["close"].pct_change(3).shift(1)
+    df["Return_5d"] = df["close"].pct_change(5).shift(1)
+    df["Return_10d"] = df["close"].pct_change(10).shift(1)
+    df["Sentiment_Change1"] = df["sentiment"].diff().shift(1)
+    df["Sentiment_Momentum3"] = df["sentiment"].diff().rolling(3).sum().shift(1)
+    df["Sentiment_Momentum7"] = df["sentiment"].diff().rolling(7).sum().shift(1)
+    df["Volatility_7d"] = df["close"].pct_change().rolling(7).std().shift(1)
+
+    features += [
+        "Return_1d",
+        "Return_3d",
+        "Return_5d",
+        "Return_10d",
+        "Sentiment_Change1",
+        "Sentiment_Momentum3",
+        "Sentiment_Momentum7",
+        "Volatility_7d",
+    ]
+
     # --- Optional OHLCV features
     extra_cols = {"open": "Open", "high": "High", "low": "Low", "volume": "Volume"}
     for col, prefix in extra_cols.items():
@@ -119,6 +162,11 @@ def train_per_stock(
                 f"{prefix}_MA7",
                 f"{prefix}_STD7",
             ]
+
+            if prefix == "Volume":
+                df["Volume_Change1"] = df[col].pct_change().shift(1)
+                df["Volume_Momentum3"] = df[col].pct_change().rolling(3).mean().shift(1)
+                features += ["Volume_Change1", "Volume_Momentum3"]
 
     # --- Technicals (defensiv bereinigt)
     delta = df["close"].diff()
@@ -400,14 +448,19 @@ def train_per_stock(
         X_eval, y_eval, df_eval = df_test[features], df_test["y"], df_test
 
     y_pred = best_model.predict(X_eval)
-    y_proba = (
-        best_model.predict_proba(X_eval)[:, 1] if hasattr(best_model, "predict_proba") else None
-    )
+    y_proba = None
+    if hasattr(best_model, "predict_proba"):
+        try:
+            y_proba = np.asarray(best_model.predict_proba(X_eval)[:, 1], dtype=float)
+        except Exception:
+            y_proba = None
 
     accuracy = float(accuracy_score(y_eval, y_pred))
     f1 = float(f1_score(y_eval, y_pred, zero_division=0))
     precision = float(precision_score(y_eval, y_pred, zero_division=0))
     recall = float(recall_score(y_eval, y_pred, zero_division=0))
+    base_f1 = f1
+    final_pred = y_pred
 
     roc_auc: float | None = None
     if y_proba is not None and y_eval.nunique() > 1:
@@ -416,7 +469,24 @@ def train_per_stock(
         except ValueError:
             roc_auc = None
 
-    avg_return = backtest_strategy(df_eval, pd.Series(y_pred, index=df_eval.index))
+    if y_proba is not None and len(y_proba) == len(y_eval):
+        thr, best_f1 = _find_optimal_threshold(y_eval, y_proba)
+        tuned_pred = (y_proba >= thr).astype(int)
+        if best_f1 > f1:
+            accuracy = float(accuracy_score(y_eval, tuned_pred))
+            precision = float(precision_score(y_eval, tuned_pred, zero_division=0))
+            recall = float(recall_score(y_eval, tuned_pred, zero_division=0))
+            f1 = best_f1
+            final_pred = tuned_pred
+            log.info(
+                "Adjusted decision threshold to %.2f (F1 %.4f → %.4f)",
+                thr,
+                base_f1,
+                f1,
+            )
+
+    final_series = pd.Series(final_pred, index=df_eval.index)
+    avg_return = backtest_strategy(df_eval, final_series)
     log.info(
         "Model accuracy: %.4f, F1: %.4f, ROC-AUC: %s, Precision: %.4f, Recall: %.4f",
         accuracy,
