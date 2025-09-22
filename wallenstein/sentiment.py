@@ -406,15 +406,11 @@ def analyze_sentiment_bert(text: str) -> float:
         return 0.0
     try:
         out = _bert_analyzer(text)
-        if not out:
+        entries = _normalize_hf_output(out)
+        if not entries:
             return 0.0
-        lab = (out[0].get("label") or "").lower()
-        sc = float(out[0].get("score") or 0.0)
-        if "pos" in lab:
-            return +sc
-        if "neg" in lab:
-            return -sc
-        return 0.0
+        scalar = _scores_to_scalar(entries)
+        return _blend_model_scores(text, scalar)
     except Exception as e:
         logger.warning(f"FinBERT inference failed: {e}")
         return 0.0
@@ -455,16 +451,13 @@ def analyze_sentiment_batch(texts: list[str]) -> list[float]:
     if _Engine._pipe is not None:
         try:
             out = _Engine._pipe(texts)
+            if not isinstance(out, (list, tuple)):
+                out = [out]
             scores = []
-            for data in out:
-                lab = str(data.get("label", "")).lower()
-                sc = float(data.get("score", 0.0))
-                if "pos" in lab:
-                    scores.append(sc)
-                elif "neg" in lab:
-                    scores.append(-sc)
-                else:
-                    scores.append(0.0)
+            for txt, data in zip(texts, out):  # noqa: B905
+                entries = _normalize_hf_output(data)
+                scalar = _scores_to_scalar(entries)
+                scores.append(_blend_model_scores(txt, scalar))
             return scores
         except Exception as e:
             logger.warning(f"FinBERT batch inference failed: {e}")
@@ -495,6 +488,79 @@ def _keyword_score(text: str) -> float | None:
     return score if matched else None
 
 _keyword_score_cached = lru_cache(maxsize=2048)(_keyword_score)
+
+
+def _normalize_hf_output(raw) -> list[dict[str, float]]:
+    """Flatten HuggingFace-style outputs to ``[{label, score}, ...]``."""
+
+    if isinstance(raw, dict):
+        if "label" in raw and "score" in raw:
+            try:
+                score = float(raw["score"])
+            except Exception:
+                score = 0.0
+            return [{"label": str(raw["label"]), "score": score}]
+        return []
+
+    if isinstance(raw, (list, tuple)):
+        entries: list[dict[str, float]] = []
+        for item in raw:
+            entries.extend(_normalize_hf_output(item))
+        return entries
+
+    return []
+
+
+def _scores_to_scalar(entries: list[dict[str, float]]) -> float:
+    """Convert classifier label scores into ``[-1, 1]`` sentiment scalar."""
+
+    if not entries:
+        return 0.0
+
+    scores: dict[str, float] = {}
+    for entry in entries:
+        label = str(entry.get("label", "")).strip().lower()
+        if not label:
+            continue
+        try:
+            score = float(entry.get("score", 0.0))
+        except Exception:
+            score = 0.0
+        current = scores.get(label)
+        if current is None or score > current:
+            scores[label] = score
+
+    pos = scores.get("positive") or scores.get("bullish") or 0.0
+    neg = scores.get("negative") or scores.get("bearish") or 0.0
+
+    scalar = pos - neg
+    return float(max(-1.0, min(1.0, scalar)))
+
+
+def _scaled_keyword_boost(text: str) -> float:
+    """Return a small boost based on keyword heuristics for model outputs."""
+
+    raw = _keyword_score_cached(_preprocess(text))
+    if raw is None or raw == 0:
+        return 0.0
+    boost = float(raw) / 4.0
+    return max(-0.6, min(0.6, boost))
+
+
+def _blend_model_scores(text: str, scalar: float) -> float:
+    """Combine model scalar with fallback heuristics/VADER and clamp to [-1, 1]."""
+
+    score = float(scalar)
+    if _Engine._vader is not None:
+        try:
+            vader = float(_Engine._vader.polarity_scores(text).get("compound", 0.0))
+        except Exception:
+            vader = 0.0
+        # Wenn FinBERT unsicher ist (<|0.2|), Gewichtung mit VADER.
+        if abs(score) < 0.2 and vader:
+            score = 0.6 * score + 0.4 * vader
+    score += _scaled_keyword_boost(text)
+    return float(max(-1.0, min(1.0, score)))
 
 # ---------------------------------------------------------------------------
 # Aggregation / Utilities

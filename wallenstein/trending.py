@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 
 import duckdb
 import pandas as pd
 
-from .aliases import alias_map  # liefert Dict[str, Set[str]]
-from .ticker_detection import SYMBOL_STOPWORDS
+from .aliases import add_alias, alias_map  # liefert Dict[str, Set[str]]
+from .ticker_detection import SYMBOL_STOPWORDS, discover_new_tickers
 
 
 log = logging.getLogger(__name__)
@@ -29,6 +32,7 @@ class TrendCandidate:
     lift: float
     trend: float  # lift * log1p(mentions)
     is_known: bool = False
+    weekly_return: float | None = None
 
 
 # ---------- Tabellen ----------
@@ -165,6 +169,179 @@ def _count_weighted_mentions(
     return counts
 
 
+def _promote_unknown_candidates(
+    con: duckdb.DuckDBPyConnection,
+    candidates: list[TrendCandidate],
+    known_symbols: set[str],
+    df_recent: pd.DataFrame,
+) -> set[str]:
+    """Attempt to validate unknown symbols via automatic discovery.
+
+    Returns the set of symbols that were promoted to *known* tickers.
+    """
+
+    unknown_map = {c.symbol: c for c in candidates if not c.is_known}
+    if not unknown_map or "text" not in df_recent:
+        return set()
+
+    texts = df_recent["text"].dropna().astype(str).tolist()
+    if not texts:
+        return set()
+
+    try:
+        discovered = discover_new_tickers(texts, known=known_symbols)
+    except RuntimeError as exc:  # pragma: no cover - optional dependency missing
+        log.debug("Skipping auto discovery for unknown trends: %s", exc)
+        return set()
+    except Exception as exc:  # pragma: no cover - robustness
+        log.warning("Automatic discovery of unknown trends failed: %s", exc)
+        return set()
+
+    if not discovered:
+        return set()
+
+    promoted: set[str] = set()
+    for sym, meta in discovered.items():
+        candidate = unknown_map.get(sym)
+        if not candidate:
+            continue
+        candidate.is_known = True
+        known_symbols.add(sym)
+        promoted.add(sym)
+        try:
+            add_alias(con, sym, sym, source="auto-trend")
+            for alias in sorted(meta.aliases):
+                add_alias(con, sym, alias, source="auto-trend")
+        except Exception as alias_exc:  # pragma: no cover - defensive
+            log.debug("Persisting aliases for %s failed: %s", sym, alias_exc)
+
+    if promoted:
+        log.debug("Promoted unknown trend symbols: %s", ", ".join(sorted(promoted)))
+
+    return promoted
+
+
+# ---------- Kursentwicklung (7d) ----------
+def _compute_weekly_return(df: pd.DataFrame) -> float | None:
+    if df.empty or "close" not in df:
+        return None
+
+    tmp = df.copy()
+    if "date" in tmp.columns:
+        tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
+    else:
+        tmp = tmp.reset_index()
+        tmp.rename(columns={tmp.columns[0]: "date"}, inplace=True)
+        tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
+
+    tmp = tmp.dropna(subset=["date", "close"]).sort_values("date")
+    if tmp.empty:
+        return None
+
+    latest_close = float(tmp["close"].iloc[-1])
+    latest_date = tmp["date"].iloc[-1]
+    if pd.isna(latest_date) or latest_close <= 0:
+        return None
+
+    cutoff = latest_date - pd.Timedelta(days=7)
+    past = tmp[tmp["date"] <= cutoff]
+    if past.empty:
+        if len(tmp) < 2:
+            return None
+        reference = float(tmp["close"].iloc[0])
+    else:
+        reference = float(past["close"].iloc[-1])
+    if reference <= 0:
+        return None
+
+    return float(latest_close / reference - 1.0)
+
+
+def _weekly_return_from_db(
+    con: duckdb.DuckDBPyConnection, symbol: str
+) -> float | None:
+    try:
+        df = con.execute(
+            """
+            SELECT date, close
+            FROM prices
+            WHERE ticker = ?
+            ORDER BY date DESC
+            LIMIT 15
+            """,
+            [symbol],
+        ).fetchdf()
+    except duckdb.Error:
+        return None
+
+    if df.empty:
+        return None
+
+    return _compute_weekly_return(df)
+
+
+@lru_cache(maxsize=64)
+def _weekly_prices_from_yfinance(symbol: str) -> pd.DataFrame:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return pd.DataFrame()
+    try:
+        import yfinance as yf  # type: ignore
+    except Exception:
+        return pd.DataFrame()
+
+    try:
+        hist = yf.Ticker(symbol).history(
+            period="2mo", interval="1d", auto_adjust=False, actions=False
+        )
+    except Exception as exc:  # pragma: no cover - network best effort
+        log.debug("yfinance history failed for %s: %s", symbol, exc)
+        return pd.DataFrame()
+
+    if hist is None or hist.empty or "Close" not in hist:
+        return pd.DataFrame()
+
+    hist = hist.dropna(subset=["Close"]).reset_index()
+    if "Date" in hist.columns:
+        hist = hist.rename(columns={"Date": "date", "Close": "close"})
+    else:  # pragma: no cover - alternative index name
+        hist = hist.rename(columns={hist.columns[0]: "date", "Close": "close"})
+
+    return hist[["date", "close"]]
+
+
+def _weekly_return_from_yfinance(symbol: str) -> float | None:
+    df = _weekly_prices_from_yfinance(symbol)
+    if df.empty:
+        return None
+    return _compute_weekly_return(df)
+
+
+def fetch_weekly_returns(
+    con: duckdb.DuckDBPyConnection,
+    symbols: Iterable[str],
+    max_symbols: int = 10,
+) -> dict[str, float]:
+    """Return up to ``max_symbols`` weekly returns for ``symbols``.
+
+    Symbols are normalised and deduplicated before querying local prices or
+    falling back to yfinance. Only successful lookups are returned.
+    """
+
+    results: dict[str, float] = {}
+    for sym in symbols:
+        if len(results) >= max_symbols:
+            break
+        symbol = _normalise_symbol(sym)
+        if not symbol or symbol in results:
+            continue
+        val = _weekly_return_from_db(con, symbol)
+        if val is None:
+            val = _weekly_return_from_yfinance(symbol)
+        if val is not None:
+            results[symbol] = val
+    return results
+
+
 # ---------- Hauptscan ----------
 def scan_reddit_for_candidates(
     con: duckdb.DuckDBPyConnection,
@@ -279,8 +456,30 @@ def scan_reddit_for_candidates(
                 unknown_symbols.add(s)
             candidates.append(TrendCandidate(s, mentions, rate, lift, trend, is_known=is_known))
 
+    if not candidates:
+        return []
+
+    promoted = _promote_unknown_candidates(con, candidates, known_symbols, df_win)
+    if promoted:
+        unknown_symbols.difference_update(promoted)
+
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda x: (int(x.is_known), x.trend, x.lift, x.mentions_24h),
+        reverse=True,
+    )
+
+    fetch_order = [c.symbol for c in sorted_candidates if c.is_known]
+    if not fetch_order:
+        fetch_order = [c.symbol for c in sorted_candidates]
+    weekly_returns = fetch_weekly_returns(con, fetch_order, max_symbols=10)
+    if weekly_returns:
+        for cand in sorted_candidates:
+            if cand.symbol in weekly_returns:
+                cand.weekly_return = weekly_returns[cand.symbol]
+
     # Persistenz
-    known_candidates = [c for c in candidates if c.is_known]
+    known_candidates = [c for c in sorted_candidates if c.is_known]
     if unknown_symbols:
         log.debug("Ungeprüfte Trend-Symbole ignoriert: %s", sorted(unknown_symbols))
 
@@ -343,12 +542,7 @@ def scan_reddit_for_candidates(
                 ],
             )
 
-    # Sortierung: bekannte Symbole zuerst, dann trend, lift, mentions
-    return sorted(
-        candidates,
-        key=lambda x: (int(x.is_known), x.trend, x.lift, x.mentions_24h),
-        reverse=True,
-    )
+    return sorted_candidates
 
 
 # ---------- Watchlist ----------
