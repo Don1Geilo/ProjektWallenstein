@@ -351,11 +351,17 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                 known = [c for c in cands if getattr(c, "is_known", True)]
                 unknown = [c for c in cands if not getattr(c, "is_known", True)]
                 if known:
+                    def _format_candidate(cand):
+                        weekly = getattr(cand, "weekly_return", None)
+                        if weekly is None:
+                            return f"{cand.symbol} (m24h={cand.mentions_24h}, x{cand.lift:.1f})"
+                        return (
+                            f"{cand.symbol} (m24h={cand.mentions_24h}, x{cand.lift:.1f}, "
+                            f"7d {weekly * 100:+.1f}%)"
+                        )
+
                     top_preview = ", ".join(
-                        [
-                            f"{c.symbol} (m24h={c.mentions_24h}, x{c.lift:.1f})"
-                            for c in known[:5]
-                        ]
+                        [_format_candidate(c) for c in known[:5]]
                     )
                     log.info(f"Trending-Kandidaten (Top 5, verifiziert): {top_preview}")
                     notify_telegram("🔥 Reddit-Trends: " + top_preview)
