@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import duckdb
+import pytest
 
 from wallenstein.aliases import add_alias
 from wallenstein.db_schema import ensure_tables
@@ -109,3 +110,59 @@ def test_scan_candidates_handles_dot_symbol():
 
     brkb_candidate = next(c for c in candidates if c.symbol == "BRK.B")
     assert brkb_candidate.is_known is True
+
+
+def test_scan_candidates_adds_weekly_return_from_prices():
+    con = duckdb.connect(database=":memory:")
+    ensure_tables(con)
+
+    add_alias(con, "TSLA", "tesla")
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("p1", now - timedelta(hours=1), "$TSLA rockets", "", 18),
+        ("p2", now - timedelta(hours=3), "Holding TSLA", "", 7),
+    ]
+    _insert_posts(con, rows)
+
+    price_rows = [
+        (
+            (now - timedelta(days=7)).date(),
+            "TSLA",
+            100.0,
+            105.0,
+            99.0,
+            102.0,
+            102.0,
+            1_000,
+        ),
+        (
+            now.date(),
+            "TSLA",
+            110.0,
+            115.0,
+            108.0,
+            112.0,
+            112.0,
+            1_200,
+        ),
+    ]
+    con.executemany(
+        """
+        INSERT INTO prices (date, ticker, open, high, low, close, adj_close, volume)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        price_rows,
+    )
+
+    candidates = scan_reddit_for_candidates(
+        con,
+        lookback_days=2,
+        window_hours=24,
+        min_mentions=1,
+        min_lift=1.0,
+    )
+
+    tsla_candidate = next(c for c in candidates if c.symbol == "TSLA")
+    assert tsla_candidate.weekly_return is not None
+    expected = 112.0 / 102.0 - 1
+    assert tsla_candidate.weekly_return == pytest.approx(expected, rel=1e-3)

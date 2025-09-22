@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 import duckdb
 import pandas as pd
@@ -29,6 +31,7 @@ class TrendCandidate:
     lift: float
     trend: float  # lift * log1p(mentions)
     is_known: bool = False
+    weekly_return: float | None = None
 
 
 # ---------- Tabellen ----------
@@ -165,6 +168,101 @@ def _count_weighted_mentions(
     return counts
 
 
+# ---------- Kursentwicklung (7d) ----------
+def _compute_weekly_return(df: pd.DataFrame) -> float | None:
+    if df.empty or "close" not in df:
+        return None
+
+    tmp = df.copy()
+    if "date" in tmp.columns:
+        tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
+    else:
+        tmp = tmp.reset_index()
+        tmp.rename(columns={tmp.columns[0]: "date"}, inplace=True)
+        tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
+
+    tmp = tmp.dropna(subset=["date", "close"]).sort_values("date")
+    if tmp.empty:
+        return None
+
+    latest_close = float(tmp["close"].iloc[-1])
+    latest_date = tmp["date"].iloc[-1]
+    if pd.isna(latest_date) or latest_close <= 0:
+        return None
+
+    cutoff = latest_date - pd.Timedelta(days=7)
+    past = tmp[tmp["date"] <= cutoff]
+    if past.empty:
+        if len(tmp) < 2:
+            return None
+        reference = float(tmp["close"].iloc[0])
+    else:
+        reference = float(past["close"].iloc[-1])
+    if reference <= 0:
+        return None
+
+    return float(latest_close / reference - 1.0)
+
+
+def _weekly_return_from_db(
+    con: duckdb.DuckDBPyConnection, symbol: str
+) -> float | None:
+    try:
+        df = con.execute(
+            """
+            SELECT date, close
+            FROM prices
+            WHERE ticker = ?
+            ORDER BY date DESC
+            LIMIT 15
+            """,
+            [symbol],
+        ).fetchdf()
+    except duckdb.Error:
+        return None
+
+    if df.empty:
+        return None
+
+    return _compute_weekly_return(df)
+
+
+@lru_cache(maxsize=64)
+def _weekly_prices_from_yfinance(symbol: str) -> pd.DataFrame:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return pd.DataFrame()
+    try:
+        import yfinance as yf  # type: ignore
+    except Exception:
+        return pd.DataFrame()
+
+    try:
+        hist = yf.Ticker(symbol).history(
+            period="2mo", interval="1d", auto_adjust=False, actions=False
+        )
+    except Exception as exc:  # pragma: no cover - network best effort
+        log.debug("yfinance history failed for %s: %s", symbol, exc)
+        return pd.DataFrame()
+
+    if hist is None or hist.empty or "Close" not in hist:
+        return pd.DataFrame()
+
+    hist = hist.dropna(subset=["Close"]).reset_index()
+    if "Date" in hist.columns:
+        hist = hist.rename(columns={"Date": "date", "Close": "close"})
+    else:  # pragma: no cover - alternative index name
+        hist = hist.rename(columns={hist.columns[0]: "date", "Close": "close"})
+
+    return hist[["date", "close"]]
+
+
+def _weekly_return_from_yfinance(symbol: str) -> float | None:
+    df = _weekly_prices_from_yfinance(symbol)
+    if df.empty:
+        return None
+    return _compute_weekly_return(df)
+
+
 # ---------- Hauptscan ----------
 def scan_reddit_for_candidates(
     con: duckdb.DuckDBPyConnection,
@@ -278,6 +376,24 @@ def scan_reddit_for_candidates(
             if not is_known:
                 unknown_symbols.add(s)
             candidates.append(TrendCandidate(s, mentions, rate, lift, trend, is_known=is_known))
+
+    if candidates:
+        symbols_for_returns = {c.symbol for c in candidates if c.is_known}
+        if not symbols_for_returns:
+            symbols_for_returns = {c.symbol for c in candidates}
+        weekly_returns: dict[str, float] = {}
+        for sym in sorted(symbols_for_returns):
+            if len(weekly_returns) >= 10:
+                break
+            val = _weekly_return_from_db(con, sym)
+            if val is None:
+                val = _weekly_return_from_yfinance(sym)
+            if val is not None:
+                weekly_returns[sym] = val
+        if weekly_returns:
+            for cand in candidates:
+                if cand.symbol in weekly_returns:
+                    cand.weekly_return = weekly_returns[cand.symbol]
 
     # Persistenz
     known_candidates = [c for c in candidates if c.is_known]
