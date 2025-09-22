@@ -87,6 +87,7 @@ from wallenstein.sentiment_analysis import analyze_sentiment_many
 from wallenstein.stock_data import purge_old_prices, update_fx_rates, update_prices
 from wallenstein.trending import (
     auto_add_candidates_to_watchlist,
+    fetch_weekly_returns,
     scan_reddit_for_candidates,
 )
 
@@ -351,6 +352,30 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                 known = [c for c in cands if getattr(c, "is_known", True)]
                 unknown = [c for c in cands if not getattr(c, "is_known", True)]
                 if known:
+
+                    missing_weekly = [
+                        c.symbol for c in known if getattr(c, "weekly_return", None) is None
+                    ]
+                    weekly_fallback: dict[str, float] = {}
+                    if missing_weekly:
+                        try:
+                            weekly_fallback = fetch_weekly_returns(
+                                con,
+                                missing_weekly,
+                                max_symbols=len(missing_weekly),
+                            )
+                        except Exception as exc:  # pragma: no cover - best effort
+                            log.debug("Weekly return lookup failed: %s", exc)
+                            weekly_fallback = {}
+
+                    def _format_candidate(cand):
+                        weekly = getattr(cand, "weekly_return", None)
+                        if weekly is None and weekly_fallback:
+                            weekly = weekly_fallback.get(cand.symbol.upper())
+                        base = f"{cand.symbol} (m24h={cand.mentions_24h}, x{cand.lift:.1f})"
+                        if weekly is not None:
+                            base += f", 7d {weekly * 100:+.1f}%"
+                        return base
                     def _format_candidate(cand):
                         weekly = getattr(cand, "weekly_return", None)
                         if weekly is None:

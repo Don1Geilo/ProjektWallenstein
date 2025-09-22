@@ -6,6 +6,7 @@ import pytest
 from wallenstein.aliases import add_alias
 from wallenstein.db_schema import ensure_tables
 from wallenstein.reddit_scraper import detect_trending_tickers
+import wallenstein.trending as trending
 from wallenstein.trending import scan_reddit_for_candidates
 
 
@@ -166,3 +167,68 @@ def test_scan_candidates_adds_weekly_return_from_prices():
     assert tsla_candidate.weekly_return is not None
     expected = 112.0 / 102.0 - 1
     assert tsla_candidate.weekly_return == pytest.approx(expected, rel=1e-3)
+
+
+def test_scan_candidates_prefers_display_order_for_weekly(monkeypatch):
+    """Top candidates should receive weekly returns even with many symbols."""
+
+    con = duckdb.connect(database=":memory:")
+    ensure_tables(con)
+
+    tickers = [
+        "AAPL",
+        "AMD",
+        "AMZN",
+        "BABA",
+        "GME",
+        "GOOG",
+        "META",
+        "MSFT",
+        "NIO",
+        "NVDA",
+        "PLTR",
+        "TSLA",
+
+    ]
+
+    now = datetime.now(timezone.utc)
+    for t in tickers:
+        add_alias(con, t, t.lower())
+
+    rows = []
+    for idx, ticker in enumerate(tickers):
+        for j in range(idx + 1):
+            rows.append(
+                (
+                    f"{ticker}{j}",
+                    now - timedelta(hours=j + 1),
+                    f"$ {ticker}",
+                    "",
+                    5,
+                )
+            )
+    _insert_posts(con, rows)
+
+    monkeypatch.setattr(trending, "_weekly_return_from_db", lambda *_: None)
+    weekly_values = {"TSLA": 0.42, "PLTR": 0.21}
+    monkeypatch.setattr(
+        trending,
+        "_weekly_return_from_yfinance",
+        lambda symbol: weekly_values.get(symbol, 0.0),
+    )
+
+    candidates = scan_reddit_for_candidates(
+        con,
+        lookback_days=7,
+        window_hours=24,
+        min_mentions=1,
+        min_lift=1.0,
+    )
+
+    top_symbols = [c.symbol for c in candidates[:2]]
+    assert "TSLA" in top_symbols and "PLTR" in top_symbols
+
+    for sym in ("TSLA", "PLTR"):
+        cand = next(c for c in candidates if c.symbol == sym)
+        assert cand.weekly_return == pytest.approx(weekly_values[sym])
+

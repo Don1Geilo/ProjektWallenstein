@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -263,6 +264,32 @@ def _weekly_return_from_yfinance(symbol: str) -> float | None:
     return _compute_weekly_return(df)
 
 
+
+def fetch_weekly_returns(
+    con: duckdb.DuckDBPyConnection,
+    symbols: Iterable[str],
+    max_symbols: int = 10,
+) -> dict[str, float]:
+    """Return up to ``max_symbols`` weekly returns for ``symbols``.
+
+    Symbols are normalised and deduplicated before querying local prices or
+    falling back to yfinance. Only successful lookups are returned.
+    """
+
+    results: dict[str, float] = {}
+    for sym in symbols:
+        if len(results) >= max_symbols:
+            break
+        symbol = _normalise_symbol(sym)
+        if not symbol or symbol in results:
+            continue
+        val = _weekly_return_from_db(con, symbol)
+        if val is None:
+            val = _weekly_return_from_yfinance(symbol)
+        if val is not None:
+            results[symbol] = val
+    return results
+
 # ---------- Hauptscan ----------
 def scan_reddit_for_candidates(
     con: duckdb.DuckDBPyConnection,
@@ -377,6 +404,24 @@ def scan_reddit_for_candidates(
                 unknown_symbols.add(s)
             candidates.append(TrendCandidate(s, mentions, rate, lift, trend, is_known=is_known))
 
+
+    if not candidates:
+        return []
+
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda x: (int(x.is_known), x.trend, x.lift, x.mentions_24h),
+        reverse=True,
+    )
+
+    fetch_order = [c.symbol for c in sorted_candidates if c.is_known]
+    if not fetch_order:
+        fetch_order = [c.symbol for c in sorted_candidates]
+    weekly_returns = fetch_weekly_returns(con, fetch_order, max_symbols=10)
+    if weekly_returns:
+        for cand in sorted_candidates:
+            if cand.symbol in weekly_returns:
+                cand.weekly_return = weekly_returns[cand.symbol]
     if candidates:
         symbols_for_returns = {c.symbol for c in candidates if c.is_known}
         if not symbols_for_returns:
@@ -395,8 +440,9 @@ def scan_reddit_for_candidates(
                 if cand.symbol in weekly_returns:
                     cand.weekly_return = weekly_returns[cand.symbol]
 
+
     # Persistenz
-    known_candidates = [c for c in candidates if c.is_known]
+    known_candidates = [c for c in sorted_candidates if c.is_known]
     if unknown_symbols:
         log.debug("Ungeprüfte Trend-Symbole ignoriert: %s", sorted(unknown_symbols))
 
@@ -459,12 +505,7 @@ def scan_reddit_for_candidates(
                 ],
             )
 
-    # Sortierung: bekannte Symbole zuerst, dann trend, lift, mentions
-    return sorted(
-        candidates,
-        key=lambda x: (int(x.is_known), x.trend, x.lift, x.mentions_24h),
-        reverse=True,
-    )
+    return sorted_candidates
 
 
 # ---------- Watchlist ----------
