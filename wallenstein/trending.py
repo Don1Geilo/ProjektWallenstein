@@ -487,26 +487,6 @@ def scan_reddit_for_candidates(
             if cand.symbol in weekly_returns:
                 cand.weekly_return = weekly_returns[cand.symbol]
 
-    if candidates:
-        symbols_for_returns = {c.symbol for c in candidates if c.is_known}
-        if not symbols_for_returns:
-            symbols_for_returns = {c.symbol for c in candidates}
-        weekly_returns: dict[str, float] = {}
-        for sym in sorted(symbols_for_returns):
-            if len(weekly_returns) >= 10:
-                break
-            val = _weekly_return_from_db(con, sym)
-            if val is None:
-                val = _weekly_return_from_yfinance(sym)
-            if val is not None:
-                weekly_returns[sym] = val
-        if weekly_returns:
-            for cand in candidates:
-                if cand.symbol in weekly_returns:
-                    cand.weekly_return = weekly_returns[cand.symbol]
-
-
-
     # Persistenz
     known_candidates = [c for c in sorted_candidates if c.is_known]
     if unknown_symbols:
