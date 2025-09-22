@@ -7,7 +7,13 @@ from wallenstein.aliases import add_alias
 from wallenstein.db_schema import ensure_tables
 from wallenstein.reddit_scraper import detect_trending_tickers
 import wallenstein.trending as trending
+from wallenstein.ticker_detection import TickerMetadata
 from wallenstein.trending import scan_reddit_for_candidates
+
+
+@pytest.fixture(autouse=True)
+def disable_discovery(monkeypatch):
+    monkeypatch.setattr(trending, "discover_new_tickers", lambda *args, **kwargs: {})
 
 
 def test_detect_trending_tickers():
@@ -63,6 +69,42 @@ def test_scan_candidates_detects_new_symbol_marked_unknown():
 
     new_candidate = next(c for c in candidates if c.symbol == "NEW")
     assert new_candidate.is_known is False
+
+
+def test_scan_candidates_promotes_discovered_symbol(monkeypatch):
+    con = duckdb.connect(database=":memory:")
+    ensure_tables(con)
+
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("p1", now - timedelta(hours=1), "🚀 $NEW to the moon", "", 42),
+        ("p2", now - timedelta(hours=2), "$NEW again", "", 30),
+    ]
+    _insert_posts(con, rows)
+
+    meta = TickerMetadata(symbol="NEW", aliases={"New Holdings"})
+
+    def fake_discover(texts, known=None, **kwargs):
+        return {"NEW": meta}
+
+    monkeypatch.setattr(trending, "discover_new_tickers", fake_discover)
+
+    candidates = scan_reddit_for_candidates(
+        con,
+        lookback_days=2,
+        window_hours=24,
+        min_mentions=1,
+        min_lift=1.0,
+    )
+
+    new_candidate = next(c for c in candidates if c.symbol == "NEW")
+    assert new_candidate.is_known is True
+
+    aliases = con.execute(
+        "SELECT alias FROM ticker_aliases WHERE ticker = 'NEW' ORDER BY alias"
+    ).fetchall()
+    stored = {row[0] for row in aliases}
+    assert {"NEW", "New Holdings"} <= stored
 
 
 def test_scan_candidates_marks_known_symbols():

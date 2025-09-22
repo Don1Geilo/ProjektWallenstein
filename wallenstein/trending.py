@@ -11,8 +11,8 @@ from functools import lru_cache
 import duckdb
 import pandas as pd
 
-from .aliases import alias_map  # liefert Dict[str, Set[str]]
-from .ticker_detection import SYMBOL_STOPWORDS
+from .aliases import add_alias, alias_map  # liefert Dict[str, Set[str]]
+from .ticker_detection import SYMBOL_STOPWORDS, discover_new_tickers
 
 
 log = logging.getLogger(__name__)
@@ -169,6 +169,59 @@ def _count_weighted_mentions(
     return counts
 
 
+
+def _promote_unknown_candidates(
+    con: duckdb.DuckDBPyConnection,
+    candidates: list[TrendCandidate],
+    known_symbols: set[str],
+    df_recent: pd.DataFrame,
+) -> set[str]:
+    """Attempt to validate unknown symbols via automatic discovery.
+
+    Returns the set of symbols that were promoted to *known* tickers.
+    """
+
+    unknown_map = {c.symbol: c for c in candidates if not c.is_known}
+    if not unknown_map or "text" not in df_recent:
+        return set()
+
+    texts = df_recent["text"].dropna().astype(str).tolist()
+    if not texts:
+        return set()
+
+    try:
+        discovered = discover_new_tickers(texts, known=known_symbols)
+    except RuntimeError as exc:  # pragma: no cover - optional dependency missing
+        log.debug("Skipping auto discovery for unknown trends: %s", exc)
+        return set()
+    except Exception as exc:  # pragma: no cover - robustness
+        log.warning("Automatic discovery of unknown trends failed: %s", exc)
+        return set()
+
+    if not discovered:
+        return set()
+
+    promoted: set[str] = set()
+    for sym, meta in discovered.items():
+        candidate = unknown_map.get(sym)
+        if not candidate:
+            continue
+        candidate.is_known = True
+        known_symbols.add(sym)
+        promoted.add(sym)
+        try:
+            add_alias(con, sym, sym, source="auto-trend")
+            for alias in sorted(meta.aliases):
+                add_alias(con, sym, alias, source="auto-trend")
+        except Exception as alias_exc:  # pragma: no cover - defensive
+            log.debug("Persisting aliases for %s failed: %s", sym, alias_exc)
+
+    if promoted:
+        log.debug("Promoted unknown trend symbols: %s", ", ".join(sorted(promoted)))
+
+    return promoted
+
+
 # ---------- Kursentwicklung (7d) ----------
 def _compute_weekly_return(df: pd.DataFrame) -> float | None:
     if df.empty or "close" not in df:
@@ -290,6 +343,7 @@ def fetch_weekly_returns(
             results[symbol] = val
     return results
 
+
 # ---------- Hauptscan ----------
 def scan_reddit_for_candidates(
     con: duckdb.DuckDBPyConnection,
@@ -408,6 +462,16 @@ def scan_reddit_for_candidates(
     if not candidates:
         return []
 
+    promoted = _promote_unknown_candidates(con, candidates, known_symbols, df_win)
+    if promoted:
+        unknown_symbols.difference_update(promoted)
+
+
+
+    if not candidates:
+        return []
+
+
     sorted_candidates = sorted(
         candidates,
         key=lambda x: (int(x.is_known), x.trend, x.lift, x.mentions_24h),
@@ -422,6 +486,7 @@ def scan_reddit_for_candidates(
         for cand in sorted_candidates:
             if cand.symbol in weekly_returns:
                 cand.weekly_return = weekly_returns[cand.symbol]
+
     if candidates:
         symbols_for_returns = {c.symbol for c in candidates if c.is_known}
         if not symbols_for_returns:
@@ -439,6 +504,7 @@ def scan_reddit_for_candidates(
             for cand in candidates:
                 if cand.symbol in weekly_returns:
                     cand.weekly_return = weekly_returns[cand.symbol]
+
 
 
     # Persistenz
