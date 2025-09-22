@@ -7,6 +7,7 @@ import duckdb
 from wallenstein.config import settings
 
 from .db_utils import get_latest_prices
+from .trending import fetch_weekly_returns
 
 DB_PATH = settings.WALLENSTEIN_DB_PATH
 
@@ -76,6 +77,7 @@ def generate_overview(
     lines = ["📊 Wallenstein Übersicht"]
 
     multi_hits: list[tuple[str, int]] = []
+    multi_hit_symbols: list[str] = []
     if reddit_posts:
         for sym, posts in reddit_posts.items():
             if not posts:
@@ -84,6 +86,7 @@ def generate_overview(
             if count >= 2:
                 multi_hits.append((sym, count))
         multi_hits.sort(key=lambda x: x[1], reverse=True)
+        multi_hit_symbols = [sym for sym, _ in multi_hits]
 
     with duckdb.connect(DB_PATH) as con:
         trending_rows: list[tuple[str, int, float | None, float | None]] = []
@@ -100,6 +103,25 @@ def generate_overview(
         except duckdb.Error:
             trending_rows = []
 
+        weekly_map: dict[str, float] = {}
+        weekly_targets: list[str] = []
+        for sym in tickers:
+            if sym not in weekly_targets:
+                weekly_targets.append(sym)
+        for ticker, *_ in trending_rows:
+            if ticker not in weekly_targets:
+                weekly_targets.append(ticker)
+        for sym in multi_hit_symbols:
+            if sym not in weekly_targets:
+                weekly_targets.append(sym)
+        if weekly_targets:
+            try:
+                weekly_map = fetch_weekly_returns(
+                    con, weekly_targets, max_symbols=len(weekly_targets)
+                )
+            except Exception:
+                weekly_map = {}
+
         if trending_rows:
             lines.append("")
             lines.append("🔥 Trends heute (≥2 Erwähnungen):")
@@ -107,15 +129,22 @@ def generate_overview(
                 avg_val = float(avg_up) if avg_up is not None else 0.0
                 emoji = _hotness_to_emoji(hotness)
                 suffix = f" {emoji}" if emoji else ""
-                lines.append(
-                    f"- {ticker}: {int(mentions)} Mentions, AvgUp {avg_val:.1f}{suffix}"
-                )
+                entry = f"- {ticker}: {int(mentions)} Mentions, AvgUp {avg_val:.1f}"
+                weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
+                if weekly is not None:
+                    entry += f", 7d {weekly * 100:+.1f}%"
+                entry += suffix
+                lines.append(entry)
 
         if multi_hits:
             lines.append("")
             lines.append("🔁 Mehrfach erwähnt (neu geladen):")
             for ticker, count in multi_hits:
-                lines.append(f"- {ticker}: {count} Posts")
+                entry = f"- {ticker}: {count} Posts"
+                weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
+                if weekly is not None:
+                    entry += f", 7d {weekly * 100:+.1f}%"
+                lines.append(entry)
 
         if trending_rows or multi_hits:
             lines.append("")
@@ -142,6 +171,10 @@ def generate_overview(
                 lines.append(f"{t}: {eur:.2f} EUR")
             else:
                 lines.append(f"{t}: n/a")
+
+            weekly = weekly_map.get(str(t).upper()) if weekly_map else None
+            if weekly is not None:
+                lines.append(f"Kurs (7d): {weekly * 100:+.1f}%")
 
             try:
                 sent_row = con.execute(
