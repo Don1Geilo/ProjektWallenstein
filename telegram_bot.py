@@ -16,6 +16,7 @@ from main import run_pipeline
 from wallenstein.config import settings, validate_config
 from wallenstein.db import init_schema
 from wallenstein.overview import generate_overview
+from wallenstein.trending import fetch_weekly_returns
 from wallenstein.watchlist import add_ticker, list_tickers, remove_ticker
 
 # Alerts optional (falls Modul/Funktion noch nicht vorhanden)
@@ -165,13 +166,20 @@ async def cmd_trends(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             LIMIT 5
             """
         ).fetchall()
+        weekly_map = fetch_weekly_returns(con, [t for t, *_ in rows], max_symbols=5)
     if not rows:
         await update.message.reply_text("Keine Trends heute.")
         return
-    lines = [
-        f"{t} – Mentions {m}, AvgUp {avg:.1f}, Hotness {h:.1f}"
-        for t, m, avg, h in rows
-    ]
+    lines = []
+    for t, m, avg, h in rows:
+        avg_val = avg if avg is not None else 0.0
+        hot_val = h if h is not None else 0.0
+        symbol_key = t.upper() if isinstance(t, str) else t
+        weekly = weekly_map.get(symbol_key)
+        base = f"{t} – Mentions {m}, AvgUp {avg_val:.1f}, Hotness {hot_val:.1f}"
+        if weekly is not None:
+            base += f", 7d {weekly * 100:+.1f}%"
+        lines.append(base)
     await update.message.reply_text("\n".join(lines))
 
 
