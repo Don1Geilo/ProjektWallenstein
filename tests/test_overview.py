@@ -137,6 +137,10 @@ def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         'wallenstein.overview.fetch_weekly_returns', fake_fetch_weekly_returns
+    monkeypatch.setattr(
+        'wallenstein.overview.fetch_weekly_returns',
+        lambda *args, **kwargs: {str(sym).upper(): 0.05 for sym in args[1]},
+
     )
 
     result = generate_overview(
@@ -145,6 +149,9 @@ def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
     assert '🔁 Mehrfach erwähnt' in result
     assert '- NVDA: 2 Posts, 7d +5.0%' in result
     assert 'NVDA' in captured['symbols']
+
+    assert '- NVDA: 2 Posts' in result
+
 
 
 def test_generate_overview_includes_weekly_line(monkeypatch, tmp_path):

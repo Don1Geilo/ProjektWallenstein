@@ -111,9 +111,11 @@ def generate_overview(
         for ticker, *_ in trending_rows:
             if ticker not in weekly_targets:
                 weekly_targets.append(ticker)
+
         for sym in multi_hit_symbols:
             if sym not in weekly_targets:
                 weekly_targets.append(sym)
+
         if weekly_targets:
             try:
                 weekly_map = fetch_weekly_returns(
