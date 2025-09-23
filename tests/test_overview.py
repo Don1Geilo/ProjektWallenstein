@@ -128,16 +128,30 @@ def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
         lambda db_path, tickers, use_eur=False: {t: 1.0 for t in tickers},
     )
     monkeypatch.setattr('wallenstein.overview.DB_PATH', str(db_path))
+    captured: dict[str, list[str]] = {}
+
+    def fake_fetch_weekly_returns(con, symbols, max_symbols=None):
+        seq = [str(sym) for sym in symbols]
+        captured['symbols'] = seq
+        return {str(sym).upper(): 0.05 for sym in seq}
+
+    monkeypatch.setattr(
+        'wallenstein.overview.fetch_weekly_returns', fake_fetch_weekly_returns
     monkeypatch.setattr(
         'wallenstein.overview.fetch_weekly_returns',
         lambda *args, **kwargs: {str(sym).upper(): 0.05 for sym in args[1]},
+
     )
 
     result = generate_overview(
-        ['NVDA'], reddit_posts={'NVDA': [{}, {}]}
+        ['MSFT'], reddit_posts={'NVDA': [{}, {}]}
     )
     assert '🔁 Mehrfach erwähnt' in result
+    assert '- NVDA: 2 Posts, 7d +5.0%' in result
+    assert 'NVDA' in captured['symbols']
+
     assert '- NVDA: 2 Posts' in result
+
 
 
 def test_generate_overview_includes_weekly_line(monkeypatch, tmp_path):

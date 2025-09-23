@@ -77,6 +77,7 @@ def generate_overview(
     lines = ["📊 Wallenstein Übersicht"]
 
     multi_hits: list[tuple[str, int]] = []
+    multi_hit_symbols: list[str] = []
     if reddit_posts:
         for sym, posts in reddit_posts.items():
             if not posts:
@@ -85,6 +86,7 @@ def generate_overview(
             if count >= 2:
                 multi_hits.append((sym, count))
         multi_hits.sort(key=lambda x: x[1], reverse=True)
+        multi_hit_symbols = [sym for sym, _ in multi_hits]
 
     with duckdb.connect(DB_PATH) as con:
         trending_rows: list[tuple[str, int, float | None, float | None]] = []
@@ -109,6 +111,11 @@ def generate_overview(
         for ticker, *_ in trending_rows:
             if ticker not in weekly_targets:
                 weekly_targets.append(ticker)
+
+        for sym in multi_hit_symbols:
+            if sym not in weekly_targets:
+                weekly_targets.append(sym)
+
         if weekly_targets:
             try:
                 weekly_map = fetch_weekly_returns(
@@ -135,7 +142,11 @@ def generate_overview(
             lines.append("")
             lines.append("🔁 Mehrfach erwähnt (neu geladen):")
             for ticker, count in multi_hits:
-                lines.append(f"- {ticker}: {count} Posts")
+                entry = f"- {ticker}: {count} Posts"
+                weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
+                if weekly is not None:
+                    entry += f", 7d {weekly * 100:+.1f}%"
+                lines.append(entry)
 
         if trending_rows or multi_hits:
             lines.append("")
