@@ -41,32 +41,58 @@ class TrainingState:
     roc_auc: Optional[float]
     precision: Optional[float]
     recall: Optional[float]
+    avg_strategy_return: Optional[float] = None
+    long_win_rate: Optional[float] = None
 
 
 def load_training_state(con: duckdb.DuckDBPyConnection) -> Dict[str, TrainingState]:
     """Return the stored training state for all tickers."""
 
+    query_extended = """
+        SELECT
+            ticker,
+            latest_price_date,
+            price_row_count,
+            latest_sentiment_date,
+            sentiment_row_count,
+            latest_post_utc,
+            trained_at,
+            accuracy,
+            f1,
+            roc_auc,
+            precision_score,
+            recall_score,
+            avg_strategy_return,
+            long_win_rate
+        FROM model_training_state
+    """
+
     try:
-        rows = con.execute(
-            """
-            SELECT
-                ticker,
-                latest_price_date,
-                price_row_count,
-                latest_sentiment_date,
-                sentiment_row_count,
-                latest_post_utc,
-                trained_at,
-                accuracy,
-                f1,
-                roc_auc,
-                precision_score,
-                recall_score
-            FROM model_training_state
-            """
-        ).fetchall()
+        rows = con.execute(query_extended).fetchall()
+        extended = True
     except duckdb.Error:
-        return {}
+        try:
+            rows = con.execute(
+                """
+                SELECT
+                    ticker,
+                    latest_price_date,
+                    price_row_count,
+                    latest_sentiment_date,
+                    sentiment_row_count,
+                    latest_post_utc,
+                    trained_at,
+                    accuracy,
+                    f1,
+                    roc_auc,
+                    precision_score,
+                    recall_score
+                FROM model_training_state
+                """
+            ).fetchall()
+        except duckdb.Error:
+            return {}
+        extended = False
 
     state: Dict[str, TrainingState] = {}
     for row in rows:
@@ -77,6 +103,8 @@ def load_training_state(con: duckdb.DuckDBPyConnection) -> Dict[str, TrainingSta
             sentiment_row_count=int(row[4]) if row[4] is not None else 0,
             latest_post_utc=row[5],
         )
+        avg_return = row[12] if extended and len(row) > 12 else None
+        win_rate = row[13] if extended and len(row) > 13 else None
         state[row[0]] = TrainingState(
             snapshot=snapshot,
             trained_at=row[6],
@@ -85,6 +113,8 @@ def load_training_state(con: duckdb.DuckDBPyConnection) -> Dict[str, TrainingSta
             roc_auc=row[9],
             precision=row[10],
             recall=row[11],
+            avg_strategy_return=avg_return,
+            long_win_rate=win_rate,
         )
     return state
 
@@ -109,6 +139,8 @@ def upsert_training_state(
     roc_auc: Optional[float],
     precision: Optional[float],
     recall: Optional[float],
+    avg_strategy_return: Optional[float],
+    long_win_rate: Optional[float],
 ) -> None:
     """Insert or update the stored training state for ``ticker``."""
 
@@ -128,7 +160,9 @@ def upsert_training_state(
                 ? AS f1,
                 ? AS roc_auc,
                 ? AS precision_score,
-                ? AS recall_score
+                ? AS recall_score,
+                ? AS avg_strategy_return,
+                ? AS long_win_rate
         ) AS src
         ON target.ticker = src.ticker
         WHEN MATCHED THEN UPDATE SET
@@ -142,7 +176,9 @@ def upsert_training_state(
             f1 = src.f1,
             roc_auc = src.roc_auc,
             precision_score = src.precision_score,
-            recall_score = src.recall_score
+            recall_score = src.recall_score,
+            avg_strategy_return = src.avg_strategy_return,
+            long_win_rate = src.long_win_rate
         WHEN NOT MATCHED THEN INSERT (
             ticker,
             latest_price_date,
@@ -155,7 +191,9 @@ def upsert_training_state(
             f1,
             roc_auc,
             precision_score,
-            recall_score
+            recall_score,
+            avg_strategy_return,
+            long_win_rate
         ) VALUES (
             src.ticker,
             src.latest_price_date,
@@ -168,7 +206,9 @@ def upsert_training_state(
             src.f1,
             src.roc_auc,
             src.precision_score,
-            src.recall_score
+            src.recall_score,
+            src.avg_strategy_return,
+            src.long_win_rate
         )
         """,
         [
@@ -183,5 +223,7 @@ def upsert_training_state(
             roc_auc,
             precision,
             recall,
+            avg_strategy_return,
+            long_win_rate,
         ],
     )

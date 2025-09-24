@@ -20,7 +20,7 @@ def test_train_per_stock_basic():
         "close": 10 + np.cumsum(np.random.randn(60)),
         "sentiment": np.sin(np.linspace(0, 3, 60)),
     })
-    acc, f1, roc_auc, precision, recall = train_per_stock(df, n_splits=3)
+    acc, f1, roc_auc, precision, recall, info = train_per_stock(df, n_splits=3)
     print(
         f"Accuracy: {acc:.3f}, F1: {f1:.3f}, ROC-AUC: {roc_auc:.3f},"
         f" Precision: {precision:.3f}, Recall: {recall:.3f}"
@@ -31,6 +31,22 @@ def test_train_per_stock_basic():
     assert 0.0 <= f1 <= 1.0
     assert 0.0 <= precision <= 1.0
     assert 0.0 <= recall <= 1.0
+    assert info is not None
+    assert info.get("horizon_days") == 1
+    proba = info.get("next_day_proba")
+    if proba is not None:
+        assert 0.0 <= proba <= 1.0
+    assert "avg_positive_return" in info
+    assert "avg_negative_return" in info
+    assert "expected_return" in info
+    assert "long_win_rate" in info
+    assert "probability_margin" in info
+    expected = info.get("expected_return")
+    if expected is not None:
+        assert -1.0 < expected < 1.0
+    win_rate = info.get("long_win_rate")
+    if win_rate is not None:
+        assert 0.0 <= win_rate <= 1.0
 
 
 def test_train_per_stock_smote():
@@ -45,9 +61,10 @@ def test_train_per_stock_smote():
         "close": close,
         "sentiment": np.random.randn(n),
     })
-    acc, f1, *_ = train_per_stock(df, n_splits=3, balance_method="smote")
+    acc, f1, *rest = train_per_stock(df, n_splits=3, balance_method="smote")
     assert acc is not None
     assert f1 is not None
+    assert isinstance(rest[-1], (dict, type(None)))
 
 
 def test_train_per_stock_undersample():
@@ -62,9 +79,10 @@ def test_train_per_stock_undersample():
         "close": close,
         "sentiment": np.random.randn(n),
     })
-    acc, f1, *_ = train_per_stock(df, n_splits=3, balance_method="undersample")
+    acc, f1, *rest = train_per_stock(df, n_splits=3, balance_method="undersample")
     assert acc is not None
     assert f1 is not None
+    assert isinstance(rest[-1], (dict, type(None)))
 
 
 def test_train_per_stock_random_forest():
@@ -75,12 +93,13 @@ def test_train_per_stock_random_forest():
         "close": 20 + np.cumsum(np.random.randn(60)),
         "sentiment": np.cos(np.linspace(0, 4, 60)),
     })
-    acc, f1, roc_auc, precision, recall = train_per_stock(
+    acc, f1, roc_auc, precision, recall, info = train_per_stock(
         df, n_splits=3, model_type="random_forest"
     )
     assert acc is not None
     assert f1 is not None
     assert roc_auc is not None
+    assert isinstance(info, (dict, type(None)))
 
 
 
@@ -92,8 +111,9 @@ def test_train_per_stock_insufficient_classes():
         "sentiment": [0, 0, 0, 0, 0],
     })
 
-    acc, f1, roc_auc, precision, recall = train_per_stock(df)
+    acc, f1, roc_auc, precision, recall, info = train_per_stock(df)
     assert all(m is None for m in [acc, f1, roc_auc, precision, recall])
+    assert info is None
 
 
 def test_backtest_strategy():
@@ -108,8 +128,9 @@ def test_backtest_strategy():
     expected = (1 / 10 - 1 / 12) / 2
     assert abs(avg - expected) < 1e-6
 
-    acc, f1, *_ = train_per_stock(df)
+    acc, f1, *rest = train_per_stock(df)
     assert acc is None and f1 is None
+    assert rest[-1] is None
 
 
 

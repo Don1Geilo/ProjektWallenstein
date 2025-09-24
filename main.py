@@ -68,7 +68,7 @@ TELEGRAM_BOT_TOKEN = (settings.TELEGRAM_BOT_TOKEN or "").strip()
 TELEGRAM_CHAT_ID = (settings.TELEGRAM_CHAT_ID or "").strip()
 
 # --- Projekt-Module ---
-from wallenstein.db_utils import ensure_prices_view, get_latest_prices
+from wallenstein.db_utils import ensure_prices_view, get_latest_prices, upsert_predictions
 from wallenstein.model_state import (
     TrainingSnapshot,
     load_training_state,
@@ -131,7 +131,15 @@ def train_model_for_ticker(
     _con: duckdb.DuckDBPyConnection,
     price_frames: dict[str, pd.DataFrame],
     sentiment_frames: dict[str, pd.DataFrame],
-) -> tuple[str, float | None, float | None, float | None, float | None, float | None]:
+) -> tuple[
+    str,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    dict | None,
+]:
     """Train the per-stock model for a single ticker.
 
     Eine offene DuckDB-Verbindung wird übergeben, wird hier jedoch nicht genutzt,
@@ -142,7 +150,7 @@ def train_model_for_ticker(
         df_price = price_frames.get(ticker, pd.DataFrame(columns=["date", "close"])).copy()
         if df_price.empty:
             log.info(f"{ticker}: Keine Preisdaten – Training übersprungen")
-            return ticker, None, None, None, None, None
+            return ticker, None, None, None, None, None, None
 
         df_price["date"] = pd.to_datetime(df_price["date"]).dt.normalize()
         df_sent = sentiment_frames.get(ticker, pd.DataFrame(columns=["date", "sentiment"])).copy()
@@ -150,13 +158,13 @@ def train_model_for_ticker(
             df_sent["date"] = pd.to_datetime(df_sent["date"]).dt.normalize()
 
         df_stock = pd.merge(df_price, df_sent, on="date", how="left")
-        acc, f1, roc_auc, precision, recall = train_per_stock(df_stock)
+        acc, f1, roc_auc, precision, recall, meta = train_per_stock(df_stock)
         if acc is None:
             log.info(f"{ticker}: Zu wenige Daten für Modelltraining")
-        return ticker, acc, f1, roc_auc, precision, recall
+        return ticker, acc, f1, roc_auc, precision, recall, meta
     except Exception as e:  # pragma: no cover
         log.warning(f"{ticker}: Modelltraining fehlgeschlagen: {e}")
-        return ticker, None, None, None, None, None
+        return ticker, None, None, None, None, None, None
 
 
 # --- Sentiment aggregation helpers ---
@@ -539,7 +547,7 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
         )
 
         with ThreadPoolExecutor() as ex:
-            for t, acc, f1, roc_auc, precision, recall in ex.map(train, trainable):
+            for t, acc, f1, roc_auc, precision, recall, meta in ex.map(train, trainable):
                 snapshot = snapshots.get(t)
                 if acc is not None:
                     roc_disp = roc_auc if roc_auc is not None else float("nan")
@@ -547,6 +555,8 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
                         f"{t}: Modell-Accuracy {acc:.2%} | F1 {f1:.2f} | ROC-AUC {roc_disp:.2f}"
                         f" | Precision {precision:.2f} | Recall {recall:.2f}"
                     )
+                avg_return_meta = meta.get("avg_strategy_return") if meta else None
+                win_rate_meta = meta.get("long_win_rate") if meta else None
                 upsert_training_state(
                     con,
                     t,
@@ -556,7 +566,50 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
                     roc_auc=roc_auc,
                     precision=precision,
                     recall=recall,
+                    avg_strategy_return=avg_return_meta,
+                    long_win_rate=win_rate_meta,
                 )
+
+                if meta:
+                    proba = meta.get("next_day_proba")
+                    signal = meta.get("signal")
+                    if proba is not None and signal:
+                        as_of = meta.get("as_of") or datetime.now(timezone.utc)
+                        horizon = int(meta.get("horizon_days", 1) or 1)
+                        version = meta.get("version") or "ml-v2"
+                        confidence = meta.get("confidence", proba)
+                        expected_return = meta.get("expected_return")
+                        backtest_return = meta.get("avg_strategy_return")
+                        probability_margin = meta.get("probability_margin")
+                        if expected_return is None:
+                            expected_return = backtest_return
+                        try:
+                            written = upsert_predictions(
+                                con,
+                                [
+                                    {
+                                        "ticker": t,
+                                        "as_of": as_of,
+                                        "horizon_days": horizon,
+                                        "signal": signal,
+                                        "confidence": confidence,
+                                        "expected_return": expected_return,
+                                        "version": version,
+                                    }
+                                ],
+                            )
+                            if written:
+                                log.info(
+                                    "%s: Stored %s signal (p=%.2f, exp=%.4f, backtest=%.4f, margin=%.4f)",
+                                    t,
+                                    signal,
+                                    proba,
+                                    expected_return if expected_return is not None else float("nan"),
+                                    backtest_return if backtest_return is not None else float("nan"),
+                                    probability_margin if probability_margin is not None else float("nan"),
+                                )
+                        except Exception as exc:  # pragma: no cover - DB best effort
+                            log.warning("%s: Prediction storage failed: %s", t, exc)
 
 
 # ---------- Main ----------

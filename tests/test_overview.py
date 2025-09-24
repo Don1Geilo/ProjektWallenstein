@@ -136,11 +136,7 @@ def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
         return {str(sym).upper(): 0.05 for sym in seq}
 
     monkeypatch.setattr(
-        'wallenstein.overview.fetch_weekly_returns', fake_fetch_weekly_returns
-    monkeypatch.setattr(
-        'wallenstein.overview.fetch_weekly_returns',
-        lambda *args, **kwargs: {str(sym).upper(): 0.05 for sym in args[1]},
-
+        'wallenstein.overview.fetch_weekly_returns', fake_fetch_weekly_returns,
     )
 
     result = generate_overview(
@@ -170,3 +166,40 @@ def test_generate_overview_includes_weekly_line(monkeypatch, tmp_path):
 
     result = generate_overview(['AMZN'], reddit_posts={'AMZN': []})
     assert 'Kurs (7d): +12.0%' in result
+
+
+def test_generate_overview_includes_ml_predictions(monkeypatch, tmp_path):
+    db_path = tmp_path / 'db.duckdb'
+    con = duckdb.connect(str(db_path))
+    con.execute(
+        "CREATE TABLE predictions (as_of TIMESTAMP, ticker TEXT, horizon_days INT, signal TEXT, confidence DOUBLE, expected_return DOUBLE, version TEXT)"
+    )
+    con.execute(
+        "CREATE TABLE model_training_state (ticker TEXT, latest_price_date DATE, price_row_count INT, latest_sentiment_date DATE, sentiment_row_count INT, latest_post_utc TIMESTAMP, trained_at TIMESTAMP, accuracy DOUBLE, f1 DOUBLE, roc_auc DOUBLE, precision_score DOUBLE, recall_score DOUBLE, avg_strategy_return DOUBLE, long_win_rate DOUBLE)"
+    )
+    con.execute(
+        "INSERT INTO predictions VALUES (TIMESTAMP '2024-03-01 12:00:00', 'NVDA', 1, 'buy', 0.72, 0.015, 'ml-v2')"
+    )
+    con.execute(
+        "INSERT INTO model_training_state VALUES ('NVDA', CURRENT_DATE, 100, CURRENT_DATE, 80, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0.68, 0.62, 0.70, 0.64, 0.59, 0.02, 0.6)"
+    )
+    con.close()
+
+    monkeypatch.setattr(
+        'wallenstein.overview.get_latest_prices',
+        lambda db_path, tickers, use_eur=False: {t: 10.0 for t in tickers},
+    )
+    monkeypatch.setattr('wallenstein.overview.DB_PATH', str(db_path))
+    monkeypatch.setattr(
+        'wallenstein.overview.fetch_weekly_returns',
+        lambda *args, **kwargs: {str(sym).upper(): 0.05 for sym in args[1]},
+    )
+
+    result = generate_overview(['NVDA'], reddit_posts={'NVDA': []})
+    assert 'ML Kaufkandidaten' in result
+    assert 'NVDA: 72.0% Aufwärtschance' in result
+    assert 'Erwartet +1.50%' in result
+    assert 'Backtest Ø +2.00%' in result
+    assert 'Trefferquote 60.0%' in result
+    assert 'Acc 0.68' in result and 'F1 0.62' in result
+    assert 'Stand 2024-03-01' in result

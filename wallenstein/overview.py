@@ -151,6 +151,91 @@ def generate_overview(
         if trending_rows or multi_hits:
             lines.append("")
 
+        buy_rows: list[tuple[str, str, float | None, float | None, object]] = []
+        try:
+            buy_rows = con.execute(
+                """
+                WITH ranked AS (
+                    SELECT *,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ticker, horizon_days, version
+                               ORDER BY as_of DESC
+                           ) AS rn
+                    FROM predictions
+                    WHERE horizon_days = 1
+                      AND version LIKE 'ml-v2%'
+                )
+                SELECT ticker, signal, confidence, expected_return, as_of
+                FROM ranked
+                WHERE rn = 1 AND lower(signal) = 'buy'
+                ORDER BY confidence DESC NULLS LAST
+                LIMIT 5
+                """,
+            ).fetchall()
+        except duckdb.Error:
+            buy_rows = []
+
+        metrics_map: dict[str, dict[str, float | None]] = {}
+        if buy_rows:
+            symbols = [str(row[0]).upper() for row in buy_rows]
+            placeholders = ",".join("?" for _ in symbols)
+            try:
+                metric_rows = con.execute(
+                    f"""
+                    SELECT ticker, accuracy, f1, avg_strategy_return, long_win_rate
+                    FROM model_training_state
+                    WHERE ticker IN ({placeholders})
+                    """,
+                    symbols,
+                ).fetchall()
+            except duckdb.Error:
+                metric_rows = []
+            for ticker_val, acc_val, f1_val, avg_ret, win_rate in metric_rows:
+                metrics_map[str(ticker_val).upper()] = {
+                    "accuracy": acc_val,
+                    "f1": f1_val,
+                    "avg_return": avg_ret,
+                    "win_rate": win_rate,
+                }
+
+        if buy_rows:
+            lines.append("")
+            lines.append("💡 ML Kaufkandidaten (1d):")
+            for ticker, _signal, confidence, expected_return, as_of in buy_rows:
+                ticker_str = str(ticker).upper()
+                parts = []
+                if confidence is not None:
+                    parts.append(f"{confidence * 100:.1f}% Aufwärtschance")
+                else:
+                    parts.append("kein Vertrauenswert")
+                if expected_return is not None:
+                    parts.append(f"Erwartet {expected_return * 100:+.2f}%")
+                metrics = metrics_map.get(ticker_str, {})
+                avg_ret = metrics.get("avg_return") if metrics else None
+                if avg_ret is not None:
+                    parts.append(f"Backtest Ø {avg_ret * 100:+.2f}%")
+                win_rate = metrics.get("win_rate") if metrics else None
+                if win_rate is not None:
+                    parts.append(f"Trefferquote {win_rate * 100:.1f}%")
+                metric_bits: list[str] = []
+                acc_val = metrics.get("accuracy") if metrics else None
+                f1_val = metrics.get("f1") if metrics else None
+                if acc_val is not None:
+                    metric_bits.append(f"Acc {acc_val:.2f}")
+                if f1_val is not None:
+                    metric_bits.append(f"F1 {f1_val:.2f}")
+                if metric_bits:
+                    parts.append(", ".join(metric_bits))
+                if as_of and hasattr(as_of, "date"):
+                    try:
+                        parts.append(f"Stand {as_of.date()}")
+                    except Exception:
+                        pass
+                lines.append(f"- {ticker_str}: " + ", ".join(parts))
+
+        if buy_rows:
+            lines.append("")
+
         for t in tickers:
             usd = prices_usd.get(t)
             eur = prices_eur.get(t)

@@ -70,20 +70,53 @@ def train_per_stock(
     model_type: str = "logistic",
     balance_method: str = "class_weight",
     search_method: str = "grid",
-) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+) -> tuple[float | None, float | None, float | None, float | None, float | None, dict | None]:
     """
     Train a classifier on lagged close+sentiment; predict if next close > prev close.
 
-    Returns (accuracy, f1, roc_auc, precision, recall) on hold-out or CV eval.
+    Returns (accuracy, f1, roc_auc, precision, recall, metadata) on hold-out or CV
+    evaluation. ``metadata`` contains the next-day probability and derived signal
+    when enough history is present.
     """
     if df_stock.empty:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     required_cols = {"date", "close", "sentiment"}
     if not required_cols.issubset(df_stock.columns):
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
-    df = df_stock.sort_values("date").copy()
+    df_stock = df_stock.copy()
+    df_stock["date"] = pd.to_datetime(df_stock["date"], errors="coerce")
+    df_stock = df_stock.sort_values("date")
+    hist_len = len(df_stock)
+    df_stock["sentiment"] = pd.to_numeric(df_stock["sentiment"], errors="coerce").fillna(0)
+    df_stock["close"] = pd.to_numeric(df_stock["close"], errors="coerce")
+
+    valid_dates = df_stock["date"].dropna()
+    if valid_dates.empty:
+        return None, None, None, None, None, None
+
+    latest_date = valid_dates.max()
+    future_date = latest_date + pd.Timedelta(days=1)
+
+    numeric_like = {"close", "open", "high", "low", "volume", "adj_close", "sentiment"}
+    future_row: dict[str, object] = {}
+    for col in df_stock.columns:
+        if col == "date":
+            future_row[col] = future_date
+        elif col in numeric_like:
+            future_row[col] = np.nan
+        else:
+            future_row[col] = pd.NA
+    if "date" not in future_row:
+        future_row["date"] = future_date
+    df_all = pd.concat([df_stock, pd.DataFrame([future_row])], ignore_index=True, sort=False)
+
+    for col in ("open", "high", "low", "volume", "adj_close"):
+        if col in df_all.columns:
+            df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
+
+    df = df_all.sort_values("date").copy()
     df["sentiment"] = pd.to_numeric(df["sentiment"], errors="coerce").fillna(0)
 
     # --- Lagged + rolling features
@@ -122,14 +155,14 @@ def train_per_stock(
     ]
 
     # Momentum- und Trend-Features
-    df["Return_1d"] = df["close"].pct_change().shift(1)
-    df["Return_3d"] = df["close"].pct_change(3).shift(1)
-    df["Return_5d"] = df["close"].pct_change(5).shift(1)
-    df["Return_10d"] = df["close"].pct_change(10).shift(1)
+    df["Return_1d"] = df["close"].pct_change(fill_method=None).shift(1)
+    df["Return_3d"] = df["close"].pct_change(3, fill_method=None).shift(1)
+    df["Return_5d"] = df["close"].pct_change(5, fill_method=None).shift(1)
+    df["Return_10d"] = df["close"].pct_change(10, fill_method=None).shift(1)
     df["Sentiment_Change1"] = df["sentiment"].diff().shift(1)
     df["Sentiment_Momentum3"] = df["sentiment"].diff().rolling(3).sum().shift(1)
     df["Sentiment_Momentum7"] = df["sentiment"].diff().rolling(7).sum().shift(1)
-    df["Volatility_7d"] = df["close"].pct_change().rolling(7).std().shift(1)
+    df["Volatility_7d"] = df["close"].pct_change(fill_method=None).rolling(7).std().shift(1)
 
     features += [
         "Return_1d",
@@ -164,8 +197,10 @@ def train_per_stock(
             ]
 
             if prefix == "Volume":
-                df["Volume_Change1"] = df[col].pct_change().shift(1)
-                df["Volume_Momentum3"] = df[col].pct_change().rolling(3).mean().shift(1)
+                df["Volume_Change1"] = df[col].pct_change(fill_method=None).shift(1)
+                df["Volume_Momentum3"] = (
+                    df[col].pct_change(fill_method=None).rolling(3).mean().shift(1)
+                )
                 features += ["Volume_Change1", "Volume_Momentum3"]
 
     # --- Technicals (defensiv bereinigt)
@@ -188,7 +223,7 @@ def train_per_stock(
     df["MACD_Hist"] = (macd - signal).shift(1)
     features += ["MACD", "MACD_Signal", "MACD_Hist"]
 
-    if len(df) >= 21:
+    if hist_len >= 21:
         bb_ma = df["close"].rolling(20).mean()
         bb_std = df["close"].rolling(20).std()
         df["BB_Middle"] = bb_ma.shift(1)
@@ -197,22 +232,51 @@ def train_per_stock(
         features += ["BB_Upper", "BB_Lower", "BB_Middle"]
 
     # --- Label & Cleanup
-    df["y"] = (df["close"] > df["Close_lag1"]).astype(int)
+    df["y"] = (df["close"] > df["Close_lag1"]).astype(float)
+    invalid_mask = df["close"].isna() | df["Close_lag1"].isna()
+    df.loc[invalid_mask, "y"] = np.nan
+
+    future_mask = df["date"] == future_date
+    inference_features: pd.DataFrame | None = None
+    if future_mask.any():
+        future_slice = df.loc[future_mask, features]
+        if not future_slice.empty:
+            last_row = future_slice.iloc[-1]
+            if pd.notna(last_row).all():
+                inference_features = last_row.to_frame().T
+
+    df = df.loc[~future_mask].copy()
     df = df.replace([float("inf"), float("-inf")], pd.NA)
+
+    # Tatsächliche Tagesrendite (gegen Vortag) – Grundlage für Erwartungswerte
+    with np.errstate(divide="ignore", invalid="ignore"):
+        close_lag1 = df["Close_lag1"].replace(0, pd.NA)
+        df["actual_return"] = (df["close"] / close_lag1) - 1
+
     df = df.dropna()
 
     if len(df) < 2 or df["y"].nunique() < 2:
         if balance_method in {"smote", "undersample"}:
-            return 0.0, 0.0, None, 0.0, 0.0
-        return None, None, None, None, None
+            return 0.0, 0.0, None, 0.0, 0.0, None
+        return None, None, None, None, None, None
+
+    df["y"] = df["y"].astype(int)
 
     X, y = df[features], df["y"]
+    pos_returns_all = df.loc[y == 1, "actual_return"].astype(float)
+    neg_returns_all = df.loc[y == 0, "actual_return"].astype(float)
+    avg_pos_return_all = (
+        float(pos_returns_all.mean()) if not pos_returns_all.empty else None
+    )
+    avg_neg_return_all = (
+        float(neg_returns_all.mean()) if not neg_returns_all.empty else None
+    )
     class_counts = Counter(y)
     if min(class_counts.values()) < 2:
         log.info("Insufficient samples per class: %s", dict(class_counts))
         if balance_method in {"smote", "undersample"}:
-            return 0.0, 0.0, None, 0.0, 0.0
-        return None, None, None, None, None
+            return 0.0, 0.0, None, 0.0, 0.0, None
+        return None, None, None, None, None, None
     n_splits = min(n_splits, max(2, min(class_counts.values())))
 
     if balance_method == "smote":
@@ -360,8 +424,8 @@ def train_per_stock(
             y_train = df_train["y"]
         if y_train.nunique() < 2:
             if balance_method in {"smote", "undersample"}:
-                return 0.0, 0.0, None, 0.0, 0.0
-            return None, None, None, None, None
+                return 0.0, 0.0, None, 0.0, 0.0, None
+            return None, None, None, None, None, None
         cv = StratifiedKFold(
             n_splits=n_splits,
             shuffle=True,
@@ -436,7 +500,7 @@ def train_per_stock(
         search.fit(X_train, y_train)
     except ValueError:
         if balance_method in {"smote", "undersample"}:
-            return 0.0, 0.0, None, 0.0, 0.0
+            return 0.0, 0.0, None, 0.0, 0.0, None
         raise
     best_model = search.best_estimator_
     log.info("%s best params: %s", model_type, getattr(search, "best_params_", {}))
@@ -469,6 +533,7 @@ def train_per_stock(
         except ValueError:
             roc_auc = None
 
+    decision_threshold = 0.5
     if y_proba is not None and len(y_proba) == len(y_eval):
         thr, best_f1 = _find_optimal_threshold(y_eval, y_proba)
         tuned_pred = (y_proba >= thr).astype(int)
@@ -478,6 +543,7 @@ def train_per_stock(
             recall = float(recall_score(y_eval, tuned_pred, zero_division=0))
             f1 = best_f1
             final_pred = tuned_pred
+            decision_threshold = float(thr)
             log.info(
                 "Adjusted decision threshold to %.2f (F1 %.4f → %.4f)",
                 thr,
@@ -487,6 +553,31 @@ def train_per_stock(
 
     final_series = pd.Series(final_pred, index=df_eval.index)
     avg_return = backtest_strategy(df_eval, final_series)
+
+    # Trefferquote der Strategie (nur Tage mit Long-Signal betrachtet)
+    long_returns = df_eval.loc[final_series == 1, "actual_return"].dropna()
+    long_win_rate: float | None
+    if not long_returns.empty:
+        long_win_rate = float((long_returns > 0).mean())
+    else:
+        long_win_rate = None
+
+    avg_pos_return_eval: float | None = None
+    avg_neg_return_eval: float | None = None
+    if not df_eval.empty:
+        pos_eval = df_eval.loc[y_eval == 1, "actual_return"].dropna()
+        neg_eval = df_eval.loc[y_eval == 0, "actual_return"].dropna()
+        if not pos_eval.empty:
+            avg_pos_return_eval = float(pos_eval.mean())
+        if not neg_eval.empty:
+            avg_neg_return_eval = float(neg_eval.mean())
+
+    avg_positive_return = (
+        avg_pos_return_eval if avg_pos_return_eval is not None else avg_pos_return_all
+    )
+    avg_negative_return = (
+        avg_neg_return_eval if avg_neg_return_eval is not None else avg_neg_return_all
+    )
     log.info(
         "Model accuracy: %.4f, F1: %.4f, ROC-AUC: %s, Precision: %.4f, Recall: %.4f",
         accuracy,
@@ -496,5 +587,72 @@ def train_per_stock(
         recall,
     )
     log.info("Avg strategy return: %.4f", avg_return)
+    if long_win_rate is not None:
+        log.info(
+            "Strategy long win-rate: %.2f%% (%d trades)",
+            long_win_rate * 100,
+            int(long_returns.shape[0]),
+        )
 
-    return accuracy, f1, roc_auc, precision, recall
+    try:
+        best_model.fit(X, y)
+    except Exception as exc:  # pragma: no cover - best effort refit
+        log.debug("Refit on full dataset failed: %s", exc)
+
+    next_day_proba: float | None = None
+    next_signal: str | None = None
+    confidence_val: float | None = None
+    expected_return: float | None = None
+    probability_margin: float | None = None
+    if inference_features is not None and hasattr(best_model, "predict_proba"):
+        try:
+            next_proba = best_model.predict_proba(inference_features[features])[:, 1]
+            if len(next_proba):
+                next_day_proba = float(next_proba[0])
+                next_signal = "buy" if next_day_proba >= decision_threshold else "hold"
+                confidence_val = next_day_proba
+                probability_margin = float(next_day_proba - decision_threshold)
+                base_pos = avg_positive_return
+                base_neg = avg_negative_return
+                if base_pos is not None or base_neg is not None:
+                    if base_pos is not None and base_neg is not None:
+                        expected_return = float(
+                            next_day_proba * base_pos + (1 - next_day_proba) * base_neg
+                        )
+                    elif base_pos is not None:
+                        expected_return = float(next_day_proba * base_pos)
+                    elif base_neg is not None:
+                        expected_return = float((1 - next_day_proba) * base_neg)
+        except Exception as exc:  # pragma: no cover - prediction optional
+            log.debug("Next-day probability estimation failed: %s", exc)
+
+    if next_day_proba is not None:
+        log.info(
+            "Next-day up-move probability: %.2f → %s (threshold %.2f, margin %.2f)",
+            next_day_proba,
+            next_signal,
+            decision_threshold,
+            probability_margin if probability_margin is not None else float("nan"),
+        )
+
+    meta: dict | None = {
+        "next_day_proba": next_day_proba,
+        "decision_threshold": decision_threshold,
+        "signal": next_signal,
+        "confidence": confidence_val,
+        "horizon_days": 1,
+        "as_of": latest_date.to_pydatetime() if latest_date is not None else None,
+        "prediction_target": future_date.to_pydatetime(),
+        "avg_strategy_return": avg_return,
+        "long_win_rate": long_win_rate,
+        "avg_positive_return": avg_positive_return,
+        "avg_negative_return": avg_negative_return,
+        "long_trades": int(long_returns.shape[0]),
+        "expected_return": expected_return,
+        "probability_margin": probability_margin,
+        "sample_size": int(len(df)),
+        "evaluation_size": int(len(df_eval)),
+        "version": f"ml-v2:{model_type}",
+    }
+
+    return accuracy, f1, roc_auc, precision, recall, meta

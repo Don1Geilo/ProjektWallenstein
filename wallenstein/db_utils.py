@@ -1,3 +1,6 @@
+from datetime import datetime, timezone
+from typing import Iterable, Mapping
+
 import duckdb
 import pandas as pd
 
@@ -178,3 +181,98 @@ def get_latest_prices(
         }
     finally:
         con.close()
+
+
+def upsert_predictions(
+    con: duckdb.DuckDBPyConnection,
+    rows: Iterable[Mapping[str, object] | None],
+) -> int:
+    """Insert or update ML predictions in DuckDB.
+
+    Returns the number of rows written. Rows without ``ticker`` or ``signal`` are
+    skipped silently to keep the caller simple.
+    """
+
+    prepared: list[tuple] = []
+    for row in rows:
+        if not row:
+            continue
+        ticker = row.get("ticker")
+        signal = row.get("signal")
+        if not ticker or not signal:
+            continue
+
+        horizon = int(row.get("horizon_days", 1))
+        version = str(row.get("version") or "ml-v2")
+        confidence = row.get("confidence")
+        expected_return = row.get("expected_return")
+        as_of = row.get("as_of")
+        if as_of is None:
+            as_of_ts = datetime.now(timezone.utc)
+        else:
+            as_of_ts = pd.Timestamp(as_of).to_pydatetime()
+
+        prepared.append(
+            (
+                as_of_ts,
+                str(ticker),
+                horizon,
+                str(signal),
+                float(confidence) if confidence is not None else None,
+                float(expected_return) if expected_return is not None else None,
+                version,
+            )
+        )
+
+    written = 0
+    for as_of_ts, ticker, horizon, signal, confidence, expected_return, version in prepared:
+        con.execute(
+            """
+            MERGE INTO predictions AS target
+            USING (
+                SELECT ? AS as_of,
+                       ? AS ticker,
+                       ? AS horizon_days,
+                       ? AS signal,
+                       ? AS confidence,
+                       ? AS expected_return,
+                       ? AS version
+            ) AS src
+            ON target.ticker = src.ticker
+               AND target.horizon_days = src.horizon_days
+               AND target.version = src.version
+            WHEN MATCHED THEN UPDATE SET
+                as_of = src.as_of,
+                signal = src.signal,
+                confidence = src.confidence,
+                expected_return = src.expected_return
+            WHEN NOT MATCHED THEN INSERT (
+                as_of,
+                ticker,
+                horizon_days,
+                signal,
+                confidence,
+                expected_return,
+                version
+            ) VALUES (
+                src.as_of,
+                src.ticker,
+                src.horizon_days,
+                src.signal,
+                src.confidence,
+                src.expected_return,
+                src.version
+            )
+            """,
+            [
+                as_of_ts,
+                ticker,
+                horizon,
+                signal,
+                confidence,
+                expected_return,
+                version,
+            ],
+        )
+        written += 1
+    return written
