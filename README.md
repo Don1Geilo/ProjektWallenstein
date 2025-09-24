@@ -4,6 +4,7 @@ This is a ready-to-push bundle. It includes:
 - Robust price updater with DuckDB storage (Stooq default with Yahoo/Stooq fallback)
 - Reddit sentiment integration (PRAW) with basic English/German keyword analysis
 - Telegram alerts (optional)
+- Machine-learning buy signals with calibrated probability, expected return, backtest win-rate and overview summary
 
 Broker-target support is temporarily disabled pending a new data provider.
 

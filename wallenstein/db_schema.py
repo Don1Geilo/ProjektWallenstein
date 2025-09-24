@@ -65,6 +65,7 @@ SCHEMAS = {
         "horizon_days": "INT",
         "signal": "TEXT",
         "confidence": "DOUBLE",
+        "expected_return": "DOUBLE",
         "version": "TEXT",
     },
     "fx_rates": {
@@ -92,6 +93,8 @@ SCHEMAS = {
         "roc_auc": "DOUBLE",
         "precision_score": "DOUBLE",
         "recall_score": "DOUBLE",
+        "avg_strategy_return": "DOUBLE",
+        "long_win_rate": "DOUBLE",
     },
 }
 
@@ -164,6 +167,33 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
                 )
             except duckdb.Error:
                 pass
+        if table == "predictions":
+            info = con.execute("PRAGMA table_info('predictions')").fetchall()
+            cols_existing = {row[1].lower() for row in info}
+            if "expected_return" not in cols_existing:
+                try:
+                    con.execute("ALTER TABLE predictions ADD COLUMN expected_return DOUBLE")
+                except duckdb.Error:
+                    pass
+            try:
+                con.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_predictions_unique ON predictions(ticker, horizon_days, version)"
+                )
+            except duckdb.Error:
+                pass
+        if table == "model_training_state":
+            info = con.execute("PRAGMA table_info('model_training_state')").fetchall()
+            cols_existing = {row[1].lower() for row in info}
+            if "avg_strategy_return" not in cols_existing:
+                try:
+                    con.execute("ALTER TABLE model_training_state ADD COLUMN avg_strategy_return DOUBLE")
+                except duckdb.Error:
+                    pass
+            if "long_win_rate" not in cols_existing:
+                try:
+                    con.execute("ALTER TABLE model_training_state ADD COLUMN long_win_rate DOUBLE")
+                except duckdb.Error:
+                    pass
         if table == "fx_rates":
             try:
                 con.execute(

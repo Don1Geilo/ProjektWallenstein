@@ -33,6 +33,8 @@ def test_training_state_roundtrip(tmp_path):
         roc_auc=0.75,
         precision=0.65,
         recall=0.6,
+        avg_strategy_return=0.012,
+        long_win_rate=0.55,
     )
 
     state = load_training_state(con)
@@ -44,6 +46,8 @@ def test_training_state_roundtrip(tmp_path):
     assert loaded.roc_auc == pytest.approx(0.75)
     assert loaded.precision == pytest.approx(0.65)
     assert loaded.recall == pytest.approx(0.6)
+    assert loaded.avg_strategy_return == pytest.approx(0.012)
+    assert loaded.long_win_rate == pytest.approx(0.55)
     assert loaded.trained_at is not None
 
     con.close()
@@ -69,6 +73,8 @@ def test_should_skip_training(tmp_path):
         roc_auc=None,
         precision=None,
         recall=None,
+        avg_strategy_return=None,
+        long_win_rate=None,
     )
 
     state = load_training_state(con)
