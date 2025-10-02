@@ -201,13 +201,13 @@ def test_generate_overview_includes_ml_predictions(monkeypatch, tmp_path):
     db_path = tmp_path / 'db.duckdb'
     con = duckdb.connect(str(db_path))
     con.execute(
-        "CREATE TABLE predictions (as_of TIMESTAMP, ticker TEXT, horizon_days INT, signal TEXT, confidence DOUBLE, expected_return DOUBLE, version TEXT)"
+        "CREATE TABLE predictions (as_of TIMESTAMP, ticker TEXT, horizon_days INT, signal TEXT, confidence DOUBLE, expected_return DOUBLE, version TEXT, probability_margin DOUBLE, signal_strength DOUBLE)"
     )
     con.execute(
         "CREATE TABLE model_training_state (ticker TEXT, latest_price_date DATE, price_row_count INT, latest_sentiment_date DATE, sentiment_row_count INT, latest_post_utc TIMESTAMP, trained_at TIMESTAMP, accuracy DOUBLE, f1 DOUBLE, roc_auc DOUBLE, precision_score DOUBLE, recall_score DOUBLE, avg_strategy_return DOUBLE, long_win_rate DOUBLE)"
     )
     con.execute(
-        "INSERT INTO predictions VALUES (TIMESTAMP '2024-03-01 12:00:00', 'NVDA', 1, 'buy', 0.72, 0.015, 'ml-v2')"
+        "INSERT INTO predictions VALUES (TIMESTAMP '2024-03-01 12:00:00', 'NVDA', 1, 'buy', 0.72, 0.015, 'ml-v2', 0.12, 31.9)"
     )
     con.execute(
         "INSERT INTO model_training_state VALUES ('NVDA', CURRENT_DATE, 100, CURRENT_DATE, 80, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0.68, 0.62, 0.70, 0.64, 0.59, 0.02, 0.6)"
@@ -229,6 +229,8 @@ def test_generate_overview_includes_ml_predictions(monkeypatch, tmp_path):
     assert '🚦 ML Signale (1d Horizont):' in str(result)
     assert '- NVDA: 72.0% Conviction' in detail
     assert 'Erwartung +1.50%' in detail
+    assert 'Margin +12.0pp' in detail
+    assert 'Score 31.9' in detail
     assert 'Backtest Ø +2.00%' in detail
     assert 'Trefferquote 60.0%' in detail
     assert 'ml-v2' in detail

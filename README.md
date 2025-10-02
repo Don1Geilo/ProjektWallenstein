@@ -153,6 +153,29 @@ ticker and day (mean, weighted mean and median) and stored in DuckDB's
 The sentiment engine runs without `transformers` or `torch`; in that case the
 VADER path is used transparently.
 
+## Kaufempfehlungen optimieren
+
+- **Signal-Score**: Die ML-Pipeline schreibt neben Wahrscheinlichkeit und
+  erwarteter Rendite jetzt auch eine `probability_margin` sowie einen
+  zusammengesetzten `signal_strength`-Score (40 % Konfidenz, 25 %
+  Erwartungsrendite, 15 % Margin, 10 % Backtest-Alpha, 10 % Trefferquote). Die
+  Übersicht sortiert Kaufempfehlungen damit automatisch nach Qualität und zeigt
+  Margin/Score direkt an.
+- **Open-Source-Referenzen**: Projekte wie [OpenBB
+  Terminal](https://github.com/OpenBB-finance/OpenBBTerminal),
+  [FinRL](https://github.com/AI4Finance-LLC/FinRL) oder das
+  [Lean-Backtesting-Framework von QuantConnect](https://github.com/QuantConnect/Lean)
+  verfolgen ähnliche Multi-Signal-Setups mit Backtests und Risikokennzahlen. Die
+  dort genutzten Ensembling-Strategien, Walk-Forward-Splits und Risiko-KPI
+  (z. B. Sharpe/Sortino) lassen sich leicht adaptieren.
+- **Weitere Ausbaustufen**: Für mehr Robustheit empfiehlt sich ein
+  Signal-Ensemble (z. B. Gradient Boosting + Time-Series Forest), ein
+  Probability-Calibrator (Isotonic/Platt), Faktor-/Makrodaten als zusätzliche
+  Features und ein laufender Vergleich gegen Risiko-Benchmarks (Max Drawdown,
+  Hit Rate pro Volatilitätsregime). Zudem können Optuna-Studien oder AutoML
+  Pipelines (vgl. AutoGluon) helfen, neue Modellvarianten automatisiert zu
+  testen.
+
 ## Dynamic Watchlist + Telegram Bot
 
 Expose ``TELEGRAM_BOT_TOKEN`` and ``TELEGRAM_CHAT_ID`` (override the database path with ``WALLENSTEIN_DB_PATH`` if needed) and start the bot with:

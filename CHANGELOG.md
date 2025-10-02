@@ -9,3 +9,4 @@
 - Removed deprecated functions `_select_latest_prices` and `get_latest_prices_auto` from `wallenstein.db_utils`.
 - Stored ML-based buy signals with probabilities/backtests and surfaced them in the overview output.
 - Enriched ML buy-signal metadata with expected returns, win rates and calibration details; overview now highlights expected vs. backtested performance.
+- Added probability margins plus a composite signal-strength score and surfaced both in the overview summaries.

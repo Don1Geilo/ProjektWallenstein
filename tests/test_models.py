@@ -41,12 +41,16 @@ def test_train_per_stock_basic():
     assert "expected_return" in info
     assert "long_win_rate" in info
     assert "probability_margin" in info
+    assert "signal_strength" in info
     expected = info.get("expected_return")
     if expected is not None:
         assert -1.0 < expected < 1.0
     win_rate = info.get("long_win_rate")
     if win_rate is not None:
         assert 0.0 <= win_rate <= 1.0
+    signal_strength = info.get("signal_strength")
+    if signal_strength is not None:
+        assert signal_strength >= 0.0
 
 
 def test_train_per_stock_smote():

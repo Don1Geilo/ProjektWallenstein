@@ -67,6 +67,8 @@ SCHEMAS = {
         "confidence": "DOUBLE",
         "expected_return": "DOUBLE",
         "version": "TEXT",
+        "probability_margin": "DOUBLE",
+        "signal_strength": "DOUBLE",
     },
     "fx_rates": {
         "date": "DATE",
@@ -173,6 +175,18 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
             if "expected_return" not in cols_existing:
                 try:
                     con.execute("ALTER TABLE predictions ADD COLUMN expected_return DOUBLE")
+                except duckdb.Error:
+                    pass
+            if "probability_margin" not in cols_existing:
+                try:
+                    con.execute(
+                        "ALTER TABLE predictions ADD COLUMN probability_margin DOUBLE"
+                    )
+                except duckdb.Error:
+                    pass
+            if "signal_strength" not in cols_existing:
+                try:
+                    con.execute("ALTER TABLE predictions ADD COLUMN signal_strength DOUBLE")
                 except duckdb.Error:
                     pass
             try:
