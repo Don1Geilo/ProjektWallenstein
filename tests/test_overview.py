@@ -23,8 +23,12 @@ def test_generate_overview_has_compact_intro(monkeypatch):
     )
 
     result = generate_overview(['NVDA'], reddit_posts={'NVDA': []})
+
     assert result.startswith("⚡️ Schnellüberblick\n")
     assert 'Top Kauf-Signale:' in result
+
+    assert result.startswith("📊 Wallenstein Markt-Update\n")
+
 
 
 def test_generate_overview_fetches_missing_price(monkeypatch):
