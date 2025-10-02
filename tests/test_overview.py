@@ -12,7 +12,7 @@ os.environ.setdefault('TELEGRAM_BOT_TOKEN', 'x')
 from wallenstein.overview import generate_overview
 
 
-def test_generate_overview_starts_with_chart_emoji(monkeypatch):
+def test_generate_overview_has_compact_intro(monkeypatch):
     def fake_get_latest_prices(db_path, tickers, use_eur=False):
         return {t: (1.11 if use_eur else 2.22) for t in tickers}
 
@@ -23,7 +23,12 @@ def test_generate_overview_starts_with_chart_emoji(monkeypatch):
     )
 
     result = generate_overview(['NVDA'], reddit_posts={'NVDA': []})
+
+    assert result.startswith("⚡️ Schnellüberblick\n")
+    assert 'Top Kauf-Signale:' in result
+
     assert result.startswith("📊 Wallenstein Markt-Update\n")
+
 
 
 def test_generate_overview_fetches_missing_price(monkeypatch):
