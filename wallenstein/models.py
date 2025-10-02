@@ -42,6 +42,45 @@ def backtest_strategy(df: pd.DataFrame, signals: pd.Series) -> float:
     return float(returns.mean()) if not returns.empty else 0.0
 
 
+def _compute_signal_strength(
+    confidence: float | None,
+    expected_return: float | None,
+    probability_margin: float | None,
+    avg_strategy_return: float | None,
+    win_rate: float | None,
+) -> float | None:
+    """Combine model metrics into a comparable strength score (0-100 scale)."""
+
+    if all(
+        value is None
+        for value in (
+            confidence,
+            expected_return,
+            probability_margin,
+            avg_strategy_return,
+            win_rate,
+        )
+    ):
+        return None
+
+    conf_pct = max(float(confidence or 0.0), 0.0) * 100
+    expected_pct = max(float(expected_return or 0.0), 0.0) * 100
+    margin_pct = max(float(probability_margin or 0.0), 0.0) * 100
+    strategy_pct = max(float(avg_strategy_return or 0.0), 0.0) * 100
+    win_delta = float(win_rate or 0.5) - 0.5
+    win_pct = max(win_delta * 100, 0.0)
+
+    score = (
+        0.4 * conf_pct
+        + 0.25 * expected_pct
+        + 0.15 * margin_pct
+        + 0.1 * strategy_pct
+        + 0.1 * win_pct
+    )
+
+    return float(round(score, 4))
+
+
 def _find_optimal_threshold(y_true: pd.Series, y_proba: np.ndarray) -> tuple[float, float]:
     """Return (threshold, f1) that maximises F1 on ``y_true``."""
 
@@ -635,6 +674,14 @@ def train_per_stock(
             probability_margin if probability_margin is not None else float("nan"),
         )
 
+    signal_strength = _compute_signal_strength(
+        confidence_val,
+        expected_return,
+        probability_margin,
+        avg_return,
+        long_win_rate,
+    )
+
     meta: dict | None = {
         "next_day_proba": next_day_proba,
         "decision_threshold": decision_threshold,
@@ -653,6 +700,7 @@ def train_per_stock(
         "sample_size": int(len(df)),
         "evaluation_size": int(len(df_eval)),
         "version": f"ml-v2:{model_type}",
+        "signal_strength": signal_strength,
     }
 
     return accuracy, f1, roc_auc, precision, recall, meta

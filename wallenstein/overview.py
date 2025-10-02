@@ -28,6 +28,36 @@ class OverviewMessage:
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.as_text()
 
+    def __getattr__(self, name: str):  # pragma: no cover - delegation helper
+        return getattr(self.as_text(), name)
+
+    def __contains__(self, item: object) -> bool:
+        if not isinstance(item, str):
+            return False
+        return item in self.as_text()
+
+    def startswith(
+        self,
+        prefix: str | tuple[str, ...],
+        start: int | None = None,
+        end: int | None = None,
+    ) -> bool:
+        def _match(target: str, pref: str) -> bool:
+            if start is None and end is None:
+                return target.startswith(pref)
+            if end is None:
+                return target.startswith(pref, start)
+            return target.startswith(pref, start, end)
+
+        if isinstance(prefix, tuple):
+            return any(self.startswith(p, start, end) for p in prefix)
+
+        pref = prefix
+        return any(
+            _match(segment, pref)
+            for segment in (self.as_text(), self.compact, self.detailed)
+        )
+
 
 def _fetch_latest_price(ticker: str) -> float | None:
     """Fetch the latest USD price for ``ticker`` via yfinance."""
@@ -195,7 +225,8 @@ def generate_overview(
         if trending_rows or multi_hits:
             detail_lines.append("")
 
-        signal_rows: list[tuple[str, str, float | None, float | None, object, str | None]] = []
+        signal_rows: list[tuple] = []
+        has_extended_cols = True
         try:
             signal_rows = con.execute(
                 """
@@ -208,16 +239,53 @@ def generate_overview(
                     FROM predictions
                     WHERE horizon_days = 1
                 )
-                SELECT ticker, signal, confidence, expected_return, as_of, version
+                SELECT ticker,
+                       signal,
+                       confidence,
+                       expected_return,
+                       as_of,
+                       version,
+                       probability_margin,
+                       signal_strength
                 FROM ranked
                 WHERE rn = 1
                 """,
             ).fetchall()
         except duckdb.Error:
-            signal_rows = []
+            has_extended_cols = False
+            try:
+                signal_rows = con.execute(
+                    """
+                    WITH ranked AS (
+                        SELECT *,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY ticker, horizon_days
+                                   ORDER BY as_of DESC
+                               ) AS rn
+                        FROM predictions
+                        WHERE horizon_days = 1
+                    )
+                    SELECT ticker, signal, confidence, expected_return, as_of, version
+                    FROM ranked
+                    WHERE rn = 1
+                    """,
+                ).fetchall()
+            except duckdb.Error:
+                signal_rows = []
+        if signal_rows and not has_extended_cols:
+            signal_rows = [row + (None, None) for row in signal_rows]
 
         latest_signals: dict[str, dict[str, object | None]] = {}
-        for ticker, signal, confidence, expected_return, as_of, version in signal_rows:
+        for (
+            ticker,
+            signal,
+            confidence,
+            expected_return,
+            as_of,
+            version,
+            probability_margin,
+            signal_strength,
+        ) in signal_rows:
             ticker_str = str(ticker).upper()
             latest_signals[ticker_str] = {
                 "signal": str(signal).upper() if signal is not None else None,
@@ -227,13 +295,25 @@ def generate_overview(
                 else None,
                 "as_of": as_of,
                 "version": str(version) if version is not None else None,
+                "probability_margin": float(probability_margin)
+                if probability_margin is not None
+                else None,
+                "signal_strength": float(signal_strength)
+                if signal_strength is not None
+                else None,
             }
 
         buy_rows = [row for row in signal_rows if str(row[1]).lower() == "buy"]
         sell_rows = [row for row in signal_rows if str(row[1]).lower() == "sell"]
 
-        buy_rows.sort(key=lambda r: (float(r[2]) if r[2] is not None else 0.0), reverse=True)
-        sell_rows.sort(key=lambda r: (float(r[2]) if r[2] is not None else 0.0), reverse=True)
+        def _signal_sort_key(row: tuple) -> tuple[float, float, float]:
+            strength = float(row[7]) if len(row) > 7 and row[7] is not None else -1e9
+            expected_val = float(row[3]) if row[3] is not None else -1e9
+            confidence_val = float(row[2]) if row[2] is not None else -1e9
+            return (strength, expected_val, confidence_val)
+
+        buy_rows.sort(key=_signal_sort_key, reverse=True)
+        sell_rows.sort(key=_signal_sort_key, reverse=True)
 
         buy_rows = buy_rows[:5]
         sell_rows = sell_rows[:5]
@@ -268,17 +348,30 @@ def generate_overview(
             lines.append("")
             lines.append("🚦 ML Signale (1d Horizont):")
 
-            if buy_rows:
-                detail_lines.append("✅ Kauf:")
-                lines.append("✅ Kauf:")
+            def _append_signal_lines(rows: list[tuple], header: str):
+                detail_lines.append(header)
+                lines.append(header)
 
-                for ticker, _signal, confidence, expected_return, as_of, version in buy_rows:
+                for (
+                    ticker,
+                    _signal,
+                    confidence,
+                    expected_return,
+                    as_of,
+                    version,
+                    probability_margin,
+                    signal_strength,
+                ) in rows:
                     ticker_str = str(ticker).upper()
                     parts = []
                     if confidence is not None:
                         parts.append(f"{float(confidence) * 100:.1f}% Conviction")
                     if expected_return is not None:
                         parts.append(f"Erwartung {float(expected_return) * 100:+.2f}%")
+                    if probability_margin is not None:
+                        parts.append(f"Margin {float(probability_margin) * 100:+.1f}pp")
+                    if signal_strength is not None:
+                        parts.append(f"Score {float(signal_strength):.1f}")
                     metrics = metrics_map.get(ticker_str, {})
                     avg_ret = metrics.get("avg_return") if metrics else None
                     if avg_ret is not None:
@@ -296,35 +389,12 @@ def generate_overview(
 
                     detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
                     lines.append("- " + ticker_str + ": " + ", ".join(parts))
+
+            if buy_rows:
+                _append_signal_lines(buy_rows, "✅ Kauf:")
 
             if sell_rows:
-                detail_lines.append("⛔ Verkauf:")
-                lines.append("⛔ Verkauf:")
-
-                for ticker, _signal, confidence, expected_return, as_of, version in sell_rows:
-                    ticker_str = str(ticker).upper()
-                    parts = []
-                    if confidence is not None:
-                        parts.append(f"{float(confidence) * 100:.1f}% Conviction")
-                    if expected_return is not None:
-                        parts.append(f"Erwartung {float(expected_return) * 100:+.2f}%")
-                    metrics = metrics_map.get(ticker_str, {})
-                    avg_ret = metrics.get("avg_return") if metrics else None
-                    if avg_ret is not None:
-                        parts.append(f"Backtest Ø {avg_ret * 100:+.2f}%")
-                    win_rate = metrics.get("win_rate") if metrics else None
-                    if win_rate is not None:
-                        parts.append(f"Trefferquote {win_rate * 100:.1f}%")
-                    if as_of and hasattr(as_of, "date"):
-                        try:
-                            parts.append(f"Stand {as_of.date()}")
-                        except Exception:
-                            pass
-                    if version:
-                        parts.append(str(version))
-
-                    detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
-                    lines.append("- " + ticker_str + ": " + ", ".join(parts))
+                _append_signal_lines(sell_rows, "⛔ Verkauf:")
 
             detail_lines.append("")
             lines.append("")
@@ -388,19 +458,32 @@ def generate_overview(
             if not buy_rows:
                 return "Top Kauf-Signale: aktuell keine frischen Empfehlungen"
             summaries: list[str] = []
-            for ticker, _signal, confidence, expected_return, _as_of, _version in buy_rows[:3]:
+            for (
+                ticker,
+                _signal,
+                confidence,
+                expected_return,
+                _as_of,
+                _version,
+                probability_margin,
+                signal_strength,
+            ) in buy_rows[:3]:
                 ticker_str = str(ticker).upper()
                 price = prices_usd.get(ticker_str)
                 change_pct = _format_change_pct(ticker_str)
                 parts: list[str] = []
                 if price is not None:
                     parts.append(f"{price:.2f} USD")
-                if change_pct is not None:
-                    parts.append(f"1d {change_pct:+.1f}%")
-                if expected_return is not None:
-                    parts.append(f"Ziel {float(expected_return) * 100:+.1f}%")
+                if signal_strength is not None:
+                    parts.append(f"Score {float(signal_strength):.1f}")
                 if confidence is not None:
                     parts.append(f"Conv. {float(confidence) * 100:.0f}%")
+                if expected_return is not None:
+                    parts.append(f"Erwartung {float(expected_return) * 100:+.2f}%")
+                if probability_margin is not None:
+                    parts.append(f"Margin {float(probability_margin) * 100:+.1f}pp")
+                if change_pct is not None:
+                    parts.append(f"1d {change_pct:+.1f}%")
                 summary = ticker_str
                 if parts:
                     summary += " (" + ", ".join(parts) + ")"
@@ -411,7 +494,16 @@ def generate_overview(
             if not sell_rows:
                 return None
             snippets: list[str] = []
-            for ticker, _signal, confidence, expected_return, _as_of, _version in sell_rows[:2]:
+            for (
+                ticker,
+                _signal,
+                confidence,
+                expected_return,
+                _as_of,
+                _version,
+                probability_margin,
+                signal_strength,
+            ) in sell_rows[:2]:
                 ticker_str = str(ticker).upper()
                 change_pct = _format_change_pct(ticker_str)
                 parts: list[str] = []
@@ -421,6 +513,10 @@ def generate_overview(
                     parts.append(f"Ziel {float(expected_return) * 100:+.1f}%")
                 if confidence is not None:
                     parts.append(f"Conv. {float(confidence) * 100:.0f}%")
+                if probability_margin is not None:
+                    parts.append(f"Margin {float(probability_margin) * 100:+.1f}pp")
+                if signal_strength is not None:
+                    parts.append(f"Score {float(signal_strength):.1f}")
                 snippet = ticker_str
                 if parts:
                     snippet += " (" + ", ".join(parts) + ")"

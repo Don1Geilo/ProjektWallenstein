@@ -207,6 +207,8 @@ def upsert_predictions(
         confidence = row.get("confidence")
         expected_return = row.get("expected_return")
         as_of = row.get("as_of")
+        probability_margin = row.get("probability_margin")
+        signal_strength = row.get("signal_strength")
         if as_of is None:
             as_of_ts = datetime.now(timezone.utc)
         else:
@@ -221,11 +223,23 @@ def upsert_predictions(
                 float(confidence) if confidence is not None else None,
                 float(expected_return) if expected_return is not None else None,
                 version,
+                float(probability_margin) if probability_margin is not None else None,
+                float(signal_strength) if signal_strength is not None else None,
             )
         )
 
     written = 0
-    for as_of_ts, ticker, horizon, signal, confidence, expected_return, version in prepared:
+    for (
+        as_of_ts,
+        ticker,
+        horizon,
+        signal,
+        confidence,
+        expected_return,
+        version,
+        probability_margin,
+        signal_strength,
+    ) in prepared:
         con.execute(
             """
             MERGE INTO predictions AS target
@@ -236,7 +250,9 @@ def upsert_predictions(
                        ? AS signal,
                        ? AS confidence,
                        ? AS expected_return,
-                       ? AS version
+                       ? AS version,
+                       ? AS probability_margin,
+                       ? AS signal_strength
             ) AS src
             ON target.ticker = src.ticker
                AND target.horizon_days = src.horizon_days
@@ -245,7 +261,9 @@ def upsert_predictions(
                 as_of = src.as_of,
                 signal = src.signal,
                 confidence = src.confidence,
-                expected_return = src.expected_return
+                expected_return = src.expected_return,
+                probability_margin = src.probability_margin,
+                signal_strength = src.signal_strength
             WHEN NOT MATCHED THEN INSERT (
                 as_of,
                 ticker,
@@ -253,7 +271,9 @@ def upsert_predictions(
                 signal,
                 confidence,
                 expected_return,
-                version
+                version,
+                probability_margin,
+                signal_strength
             ) VALUES (
                 src.as_of,
                 src.ticker,
@@ -261,7 +281,9 @@ def upsert_predictions(
                 src.signal,
                 src.confidence,
                 src.expected_return,
-                src.version
+                src.version,
+                src.probability_margin,
+                src.signal_strength
             )
             """,
             [
@@ -272,6 +294,8 @@ def upsert_predictions(
                 confidence,
                 expected_return,
                 version,
+                probability_margin,
+                signal_strength,
             ],
         )
         written += 1

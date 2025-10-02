@@ -581,6 +581,7 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
                         expected_return = meta.get("expected_return")
                         backtest_return = meta.get("avg_strategy_return")
                         probability_margin = meta.get("probability_margin")
+                        signal_strength = meta.get("signal_strength")
                         if expected_return is None:
                             expected_return = backtest_return
                         try:
@@ -595,6 +596,8 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
                                         "confidence": confidence,
                                         "expected_return": expected_return,
                                         "version": version,
+                                        "probability_margin": probability_margin,
+                                        "signal_strength": signal_strength,
                                     }
                                 ],
                             )
@@ -607,6 +610,9 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
                                     expected_return if expected_return is not None else float("nan"),
                                     backtest_return if backtest_return is not None else float("nan"),
                                     probability_margin if probability_margin is not None else float("nan"),
+                                )
+                                log.info(
+                                    "%s: Signal strength %.2f", t, signal_strength if signal_strength is not None else float("nan")
                                 )
                         except Exception as exc:  # pragma: no cover - DB best effort
                             log.warning("%s: Prediction storage failed: %s", t, exc)
