@@ -265,15 +265,12 @@ def generate_overview(
 
             detail_lines.append("")
             detail_lines.append("🚦 ML Signale (1d Horizont):")
-            if buy_rows:
-                detail_lines.append("✅ Kauf:")
-
-
             lines.append("")
             lines.append("🚦 ML Signale (1d Horizont):")
-            if buy_rows:
-                lines.append("✅ Kauf:")
 
+            if buy_rows:
+                detail_lines.append("✅ Kauf:")
+                lines.append("✅ Kauf:")
 
                 for ticker, _signal, confidence, expected_return, as_of, version in buy_rows:
                     ticker_str = str(ticker).upper()
@@ -298,16 +295,10 @@ def generate_overview(
                         parts.append(str(version))
 
                     detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
-            if sell_rows:
-                detail_lines.append("⛔ Verkauf:")
-
-
-                    detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
-            if sell_rows:
-                detail_lines.append("⛔ Verkauf:")
-
                     lines.append("- " + ticker_str + ": " + ", ".join(parts))
+
             if sell_rows:
+                detail_lines.append("⛔ Verkauf:")
                 lines.append("⛔ Verkauf:")
 
                 for ticker, _signal, confidence, expected_return, as_of, version in sell_rows:
@@ -333,9 +324,10 @@ def generate_overview(
                         parts.append(str(version))
 
                     detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
+                    lines.append("- " + ticker_str + ": " + ", ".join(parts))
 
-        if buy_rows or sell_rows:
             detail_lines.append("")
+            lines.append("")
 
         # Preis- und Change-Daten vorbereiten
         price_source = None
@@ -457,15 +449,6 @@ def generate_overview(
         trend_summary = _format_trend_summary()
         if trend_summary:
             compact_lines.append(trend_summary)
-
-
-                    lines.append("- " + ticker_str + ": " + ", ".join(parts))
-
-        if buy_rows or sell_rows:
-            lines.append("")
-
-
-
         # Preis- und Change-Daten vorbereiten
         price_source = None
         for candidate in ("stocks", "stocks_view", "prices"):
@@ -588,7 +571,7 @@ def generate_overview(
                 sent_row_1d = None
             if sent_row_1d and sent_row_1d[0] is not None:
                 detail_lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
-      lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
+                lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
 
 
             try:
