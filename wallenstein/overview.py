@@ -244,6 +244,13 @@ def generate_overview(
 
             if buy_rows:
                 detail_lines.append("✅ Kauf:")
+            lines.append("")
+            lines.append("🚦 ML Signale (1d Horizont):")
+
+            if buy_rows:
+                detail_lines.append("✅ Kauf:")
+                lines.append("✅ Kauf:")
+
 
                 for ticker, _signal, confidence, expected_return, as_of, version in buy_rows:
                     ticker_str = str(ticker).upper()
@@ -269,8 +276,16 @@ def generate_overview(
 
                     detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
 
+
             if sell_rows:
                 detail_lines.append("⛔ Verkauf:")
+
+                    lines.append("- " + ticker_str + ": " + ", ".join(parts))
+
+            if sell_rows:
+                detail_lines.append("⛔ Verkauf:")
+                lines.append("⛔ Verkauf:")
+
 
                 for ticker, _signal, confidence, expected_return, as_of, version in sell_rows:
                     ticker_str = str(ticker).upper()
@@ -295,8 +310,10 @@ def generate_overview(
                         parts.append(str(version))
 
                     detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
+                    lines.append("- " + ticker_str + ": " + ", ".join(parts))
 
             detail_lines.append("")
+            lines.append("")
 
         # Preis- und Change-Daten vorbereiten
         price_source = None
@@ -418,6 +435,46 @@ def generate_overview(
         trend_summary = _format_trend_summary()
         if trend_summary:
             compact_lines.append(trend_summary)
+
+        # Preis- und Change-Daten vorbereiten
+        price_source = None
+        for candidate in ("stocks", "stocks_view", "prices"):
+            try:
+                con.execute(f"SELECT 1 FROM {candidate} LIMIT 1")
+            except duckdb.Error:
+                continue
+            price_source = candidate
+            break
+
+        change_map: dict[str, tuple[float | None, float | None]] = {}
+        if price_source and tickers:
+            placeholders = ",".join("?" for _ in tickers)
+            try:
+                change_rows = con.execute(
+                    f"""
+                    WITH ranked AS (
+                        SELECT ticker, close, date,
+                               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) rn
+                        FROM {price_source}
+                        WHERE ticker IN ({placeholders})
+                    )
+                    SELECT ticker,
+                           MAX(CASE WHEN rn = 1 THEN close END) AS last_close,
+                           MAX(CASE WHEN rn = 2 THEN close END) AS prev_close
+                    FROM ranked
+                    GROUP BY ticker
+                    """,
+                    tickers,
+                ).fetchall()
+            except duckdb.Error:
+                change_rows = []
+            for ticker, last_close, prev_close in change_rows:
+                change_map[str(ticker).upper()] = (
+                    float(last_close) if last_close is not None else None,
+                    float(prev_close) if prev_close is not None else None,
+                )
+
+
         for t in tickers:
             ticker_upper = t.upper()
             usd = prices_usd.get(t)
@@ -478,6 +535,9 @@ def generate_overview(
                 sent_row_1d = None
             if sent_row_1d and sent_row_1d[0] is not None:
                 detail_lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
+
+                lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
+
 
             try:
                 sent_row_24h = con.execute(
