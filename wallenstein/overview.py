@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import duckdb
 
 from wallenstein.config import settings
@@ -10,6 +12,21 @@ from .db_utils import get_latest_prices
 from .trending import fetch_weekly_returns
 
 DB_PATH = settings.WALLENSTEIN_DB_PATH
+
+
+@dataclass
+class OverviewMessage:
+    """Container for the compact and detailed Telegram messages."""
+
+    compact: str
+    detailed: str
+
+    def as_text(self) -> str:
+        parts = [self.compact.strip(), self.detailed.strip()]
+        return "\n\n".join(part for part in parts if part)
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return self.as_text()
 
 
 def _fetch_latest_price(ticker: str) -> float | None:
@@ -47,7 +64,7 @@ def _fetch_usd_per_eur_rate() -> float | None:
 def generate_overview(
     tickers: list[str],
     reddit_posts: dict[str, list[dict]] | None = None,
-) -> str:
+) -> OverviewMessage:
     """Return a formatted overview for ``tickers``.
 
     The overview lists the latest USD and EUR prices and a simple Reddit-based
@@ -77,7 +94,11 @@ def generate_overview(
 
     detail_lines: list[str] = ["📊 Wallenstein Markt-Update"]
 
+
+    detail_lines: list[str] = ["📊 Wallenstein Markt-Update"]
+
     lines = ["📊 Wallenstein Markt-Update"]
+
 
     multi_hits: list[tuple[str, int]] = []
     multi_hit_symbols: list[str] = []
@@ -133,8 +154,13 @@ def generate_overview(
             detail_lines.append("")
             detail_lines.append("🔥 Reddit Trends:")
 
+
+            detail_lines.append("")
+            detail_lines.append("🔥 Reddit Trends:")
+
             lines.append("")
             lines.append("🔥 Reddit Trends:")
+
 
             for ticker, mentions, avg_up, hotness in trending_rows:
                 avg_val = float(avg_up) if avg_up is not None else 0.0
@@ -152,8 +178,13 @@ def generate_overview(
             detail_lines.append("")
             detail_lines.append("🔁 Mehrfach erwähnt:")
 
+
+            detail_lines.append("")
+            detail_lines.append("🔁 Mehrfach erwähnt:")
+
             lines.append("")
             lines.append("🔁 Mehrfach erwähnt:")
+
             for ticker, count in multi_hits:
                 entry = f"- {ticker}: {count} Posts"
                 weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
@@ -237,10 +268,12 @@ def generate_overview(
             if buy_rows:
                 detail_lines.append("✅ Kauf:")
 
+
             lines.append("")
             lines.append("🚦 ML Signale (1d Horizont):")
             if buy_rows:
                 lines.append("✅ Kauf:")
+
 
                 for ticker, _signal, confidence, expected_return, as_of, version in buy_rows:
                     ticker_str = str(ticker).upper()
@@ -268,9 +301,15 @@ def generate_overview(
             if sell_rows:
                 detail_lines.append("⛔ Verkauf:")
 
+
+                    detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
+            if sell_rows:
+                detail_lines.append("⛔ Verkauf:")
+
                     lines.append("- " + ticker_str + ": " + ", ".join(parts))
             if sell_rows:
                 lines.append("⛔ Verkauf:")
+
                 for ticker, _signal, confidence, expected_return, as_of, version in sell_rows:
                     ticker_str = str(ticker).upper()
                     parts = []
@@ -419,10 +458,12 @@ def generate_overview(
         if trend_summary:
             compact_lines.append(trend_summary)
 
+
                     lines.append("- " + ticker_str + ": " + ", ".join(parts))
 
         if buy_rows or sell_rows:
             lines.append("")
+
 
 
         # Preis- und Change-Daten vorbereiten
@@ -479,6 +520,9 @@ def generate_overview(
 
                 detail_lines.append(f"Alias: {aliases}")
 
+
+                detail_lines.append(f"Alias: {aliases}")
+
                 lines.append(f"Alias: {aliases}")
 
             change_tuple = change_map.get(t.upper())
@@ -497,6 +541,12 @@ def generate_overview(
                 price_bits.append(f"1d {change_pct:+.2f}%")
             detail_lines.append("Preis: " + (" | ".join(price_bits) if price_bits else "n/a"))
 
+
+            weekly = weekly_map.get(str(t).upper()) if weekly_map else None
+            if weekly is not None:
+                detail_lines.append(f"Trend 7d: {weekly * 100:+.1f}%")
+
+
             weekly = weekly_map.get(str(t).upper()) if weekly_map else None
             if weekly is not None:
                 detail_lines.append(f"Trend 7d: {weekly * 100:+.1f}%")
@@ -505,6 +555,7 @@ def generate_overview(
             weekly = weekly_map.get(str(t).upper()) if weekly_map else None
             if weekly is not None:
                 lines.append(f"Trend 7d: {weekly * 100:+.1f}%")
+
 
 
             try:
@@ -522,6 +573,9 @@ def generate_overview(
 
             detail_lines.append(f"Sentiment 7d: {w_sent:+.2f}")
 
+
+            detail_lines.append(f"Sentiment 7d: {w_sent:+.2f}")
+
             lines.append(f"Sentiment 7d: {w_sent:+.2f}")
 
 
@@ -534,7 +588,8 @@ def generate_overview(
                 sent_row_1d = None
             if sent_row_1d and sent_row_1d[0] is not None:
                 detail_lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
-                lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
+      lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
+
 
             try:
                 sent_row_24h = con.execute(
@@ -549,7 +604,9 @@ def generate_overview(
                 sent_row_24h = None
             if sent_row_24h and sent_row_24h[0] is not None:
                 detail_lines.append(f"Sentiment 24h: {sent_row_24h[0]:+.2f}")
+
                 lines.append(f"Sentiment 24h: {sent_row_24h[0]:+.2f}")
+
 
             try:
                 trend_today = con.execute(
@@ -593,6 +650,7 @@ def generate_overview(
                     parts.append(str(version_val))
                 detail_lines.append("Signal: " + ", ".join(parts))
 
+
             ticker_signal = latest_signals.get(t.upper())
             if ticker_signal and ticker_signal.get("signal"):
                 sig = str(ticker_signal["signal"]).upper()
@@ -607,6 +665,7 @@ def generate_overview(
                 if version_val:
                     parts.append(str(version_val))
                 lines.append("Signal: " + ", ".join(parts))
+
 
             try:
                 top_post = con.execute(
@@ -623,6 +682,11 @@ def generate_overview(
                 detail_lines.append(f"Kurs seit Top-Post (+3d): {top_post[0] * 100:+.1f}%")
 
             detail_lines.append("")
+
+
+    compact_text = "\n".join(compact_lines).strip()
+    detail_text = "\n".join(detail_lines).strip()
+    return OverviewMessage(compact=compact_text, detailed=detail_text)
 
     segments = []
     if compact_lines:

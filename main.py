@@ -76,7 +76,7 @@ from wallenstein.model_state import (
     upsert_training_state,
 )
 from wallenstein.models import train_per_stock
-from wallenstein.overview import generate_overview
+from wallenstein.overview import OverviewMessage, generate_overview
 from wallenstein.reddit_enrich import (
     compute_reddit_sentiment,
     compute_reddit_trends,
@@ -642,8 +642,14 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
     train_models(tickers, reddit_posts)
 
     try:
-        msg = generate_overview(tickers, reddit_posts=reddit_posts)
-        notify_telegram(msg)
+        overview = generate_overview(tickers, reddit_posts=reddit_posts)
+        if isinstance(overview, OverviewMessage):
+            if overview.compact:
+                notify_telegram(overview.compact)
+            if overview.detailed:
+                notify_telegram(overview.detailed)
+        else:  # pragma: no cover - backward compatibility safety
+            notify_telegram(str(overview))
     except Exception as e:
         log.warning(f"Übersicht/Telegram fehlgeschlagen: {e}")
 

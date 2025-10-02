@@ -28,6 +28,8 @@ import importlib
 import wallenstein.config as config_module
 importlib.reload(config_module)
 
+from wallenstein.overview import OverviewMessage
+
 from telegram_bot import cmd_add, cmd_alerts, cmd_list, cmd_remove, handle_ticker
 
 
@@ -48,7 +50,7 @@ def test_handle_ticker(monkeypatch):
 
     def fake_overview(tickers):
         called['overview'] = tickers
-        return 'OVERVIEW'
+        return OverviewMessage(compact='COMPACT', detailed='DETAIL')
 
     async def fake_run_in_executor(executor, func, tickers):
         func(tickers)
@@ -63,7 +65,7 @@ def test_handle_ticker(monkeypatch):
     asyncio.run(handle_ticker(update, context))
     assert called['pipeline'] == ['NVDA']
     assert called['overview'] == ['NVDA']
-    assert update.message.replies == ['OVERVIEW']
+    assert update.message.replies == ['COMPACT', 'DETAIL']
 
 
 def test_cmd_add(monkeypatch):
