@@ -23,8 +23,16 @@ def test_generate_overview_has_compact_intro(monkeypatch):
     )
 
     result = generate_overview(['NVDA'], reddit_posts={'NVDA': []})
+
     assert result.compact.startswith("⚡️ Schnellüberblick\n")
     assert 'Top Kauf-Signale:' in result.compact
+
+
+    assert result.startswith("⚡️ Schnellüberblick\n")
+    assert 'Top Kauf-Signale:' in result
+
+    assert result.startswith("📊 Wallenstein Markt-Update\n")
+
 
 
 def test_generate_overview_fetches_missing_price(monkeypatch):
@@ -41,6 +49,8 @@ def test_generate_overview_fetches_missing_price(monkeypatch):
 
     result = generate_overview(['MSFT'], reddit_posts={'MSFT': []})
     assert 'Preis: 42.00 USD | 21.00 EUR' in result.detailed
+    assert 'Preis: 42.00 USD | 21.00 EUR' in result
+
 
 
 def test_generate_overview_includes_latest_sentiment(monkeypatch, tmp_path):
@@ -65,7 +75,11 @@ def test_generate_overview_includes_latest_sentiment(monkeypatch, tmp_path):
     )
 
     result = generate_overview(['NVDA'], reddit_posts={'NVDA': []})
+
     assert 'Sentiment 1d: +0.50' in result.detailed
+
+    assert 'Sentiment 1d: +0.50' in result
+
 
 
 def test_generate_overview_lists_aliases(monkeypatch, tmp_path):
@@ -120,6 +134,11 @@ def test_generate_overview_includes_trending_section(monkeypatch, tmp_path):
     assert '- TSLA: 5 Mentions' in text
     assert '7d +5.0%' in text
 
+    assert '🔥 Reddit Trends:' in result
+    assert '- TSLA: 5 Mentions' in result
+    assert '7d +5.0%' in result
+
+
 
 def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
     db_path = tmp_path / 'db.duckdb'
@@ -144,9 +163,13 @@ def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
     result = generate_overview(
         ['MSFT'], reddit_posts={'NVDA': [{}, {}]}
     )
+
     detail = result.detailed
     assert '🔁 Mehrfach erwähnt:' in detail
     assert '- NVDA: 2 Posts, 7d +5.0%' in detail
+
+    assert '🔁 Mehrfach erwähnt:' in result
+    assert '- NVDA: 2 Posts, 7d +5.0%' in result
     assert 'NVDA' in captured['symbols']
 
     assert '- NVDA: 2 Posts' in detail
@@ -169,6 +192,9 @@ def test_generate_overview_includes_weekly_line(monkeypatch, tmp_path):
 
     result = generate_overview(['AMZN'], reddit_posts={'AMZN': []})
     assert 'Trend 7d: +12.0%' in result.detailed
+
+    assert 'Trend 7d: +12.0%' in result
+
 
 
 def test_generate_overview_includes_ml_predictions(monkeypatch, tmp_path):
@@ -206,3 +232,10 @@ def test_generate_overview_includes_ml_predictions(monkeypatch, tmp_path):
     assert 'Backtest Ø +2.00%' in detail
     assert 'Trefferquote 60.0%' in detail
     assert 'ml-v2' in detail
+    assert '🚦 ML Signale (1d Horizont):' in result
+    assert '- NVDA: 72.0% Conviction' in result
+    assert 'Erwartung +1.50%' in result
+    assert 'Backtest Ø +2.00%' in result
+    assert 'Trefferquote 60.0%' in result
+    assert 'ml-v2' in result
+
