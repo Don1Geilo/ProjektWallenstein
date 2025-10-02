@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import duckdb
 
 from wallenstein.config import settings
@@ -10,6 +12,21 @@ from .db_utils import get_latest_prices
 from .trending import fetch_weekly_returns
 
 DB_PATH = settings.WALLENSTEIN_DB_PATH
+
+
+@dataclass
+class OverviewMessage:
+    """Container for the compact and detailed Telegram messages."""
+
+    compact: str
+    detailed: str
+
+    def as_text(self) -> str:
+        parts = [self.compact.strip(), self.detailed.strip()]
+        return "\n\n".join(part for part in parts if part)
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return self.as_text()
 
 
 def _fetch_latest_price(ticker: str) -> float | None:
@@ -47,7 +64,7 @@ def _fetch_usd_per_eur_rate() -> float | None:
 def generate_overview(
     tickers: list[str],
     reddit_posts: dict[str, list[dict]] | None = None,
-) -> str:
+) -> OverviewMessage:
     """Return a formatted overview for ``tickers``.
 
     The overview lists the latest USD and EUR prices and a simple Reddit-based
@@ -74,7 +91,7 @@ def generate_overview(
         count = min(int(val // 500), 3)
         return "🔥" * count
 
-    lines = ["📊 Wallenstein Übersicht"]
+    detail_lines: list[str] = ["📊 Wallenstein Markt-Update"]
 
     multi_hits: list[tuple[str, int]] = []
     multi_hit_symbols: list[str] = []
@@ -124,9 +141,10 @@ def generate_overview(
             except Exception:
                 weekly_map = {}
 
+        # --- ML Signale (Buy/Sell) ---
         if trending_rows:
-            lines.append("")
-            lines.append("🔥 Trends heute (≥2 Erwähnungen):")
+            detail_lines.append("")
+            detail_lines.append("🔥 Reddit Trends:")
             for ticker, mentions, avg_up, hotness in trending_rows:
                 avg_val = float(avg_up) if avg_up is not None else 0.0
                 emoji = _hotness_to_emoji(hotness)
@@ -136,49 +154,68 @@ def generate_overview(
                 if weekly is not None:
                     entry += f", 7d {weekly * 100:+.1f}%"
                 entry += suffix
-                lines.append(entry)
+                detail_lines.append(entry)
 
         if multi_hits:
-            lines.append("")
-            lines.append("🔁 Mehrfach erwähnt (neu geladen):")
+            detail_lines.append("")
+            detail_lines.append("🔁 Mehrfach erwähnt:")
             for ticker, count in multi_hits:
                 entry = f"- {ticker}: {count} Posts"
                 weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
                 if weekly is not None:
                     entry += f", 7d {weekly * 100:+.1f}%"
-                lines.append(entry)
+                detail_lines.append(entry)
 
         if trending_rows or multi_hits:
-            lines.append("")
+            detail_lines.append("")
 
-        buy_rows: list[tuple[str, str, float | None, float | None, object]] = []
+        signal_rows: list[tuple[str, str, float | None, float | None, object, str | None]] = []
         try:
-            buy_rows = con.execute(
+            signal_rows = con.execute(
                 """
                 WITH ranked AS (
                     SELECT *,
                            ROW_NUMBER() OVER (
-                               PARTITION BY ticker, horizon_days, version
+                               PARTITION BY ticker, horizon_days
                                ORDER BY as_of DESC
                            ) AS rn
                     FROM predictions
                     WHERE horizon_days = 1
-                      AND version LIKE 'ml-v2%'
                 )
-                SELECT ticker, signal, confidence, expected_return, as_of
+                SELECT ticker, signal, confidence, expected_return, as_of, version
                 FROM ranked
-                WHERE rn = 1 AND lower(signal) = 'buy'
-                ORDER BY confidence DESC NULLS LAST
-                LIMIT 5
+                WHERE rn = 1
                 """,
             ).fetchall()
         except duckdb.Error:
-            buy_rows = []
+            signal_rows = []
+
+        latest_signals: dict[str, dict[str, object | None]] = {}
+        for ticker, signal, confidence, expected_return, as_of, version in signal_rows:
+            ticker_str = str(ticker).upper()
+            latest_signals[ticker_str] = {
+                "signal": str(signal).upper() if signal is not None else None,
+                "confidence": float(confidence) if confidence is not None else None,
+                "expected_return": float(expected_return)
+                if expected_return is not None
+                else None,
+                "as_of": as_of,
+                "version": str(version) if version is not None else None,
+            }
+
+        buy_rows = [row for row in signal_rows if str(row[1]).lower() == "buy"]
+        sell_rows = [row for row in signal_rows if str(row[1]).lower() == "sell"]
+
+        buy_rows.sort(key=lambda r: (float(r[2]) if r[2] is not None else 0.0), reverse=True)
+        sell_rows.sort(key=lambda r: (float(r[2]) if r[2] is not None else 0.0), reverse=True)
+
+        buy_rows = buy_rows[:5]
+        sell_rows = sell_rows[:5]
 
         metrics_map: dict[str, dict[str, float | None]] = {}
-        if buy_rows:
-            symbols = [str(row[0]).upper() for row in buy_rows]
-            placeholders = ",".join("?" for _ in symbols)
+        signal_symbols = [str(row[0]).upper() for row in buy_rows + sell_rows]
+        if signal_symbols:
+            placeholders = ",".join("?" for _ in signal_symbols)
             try:
                 metric_rows = con.execute(
                     f"""
@@ -186,7 +223,7 @@ def generate_overview(
                     FROM model_training_state
                     WHERE ticker IN ({placeholders})
                     """,
-                    symbols,
+                    signal_symbols,
                 ).fetchall()
             except duckdb.Error:
                 metric_rows = []
@@ -198,48 +235,186 @@ def generate_overview(
                     "win_rate": win_rate,
                 }
 
-        if buy_rows:
-            lines.append("")
-            lines.append("💡 ML Kaufkandidaten (1d):")
-            for ticker, _signal, confidence, expected_return, as_of in buy_rows:
-                ticker_str = str(ticker).upper()
-                parts = []
-                if confidence is not None:
-                    parts.append(f"{confidence * 100:.1f}% Aufwärtschance")
-                else:
-                    parts.append("kein Vertrauenswert")
-                if expected_return is not None:
-                    parts.append(f"Erwartet {expected_return * 100:+.2f}%")
-                metrics = metrics_map.get(ticker_str, {})
-                avg_ret = metrics.get("avg_return") if metrics else None
-                if avg_ret is not None:
-                    parts.append(f"Backtest Ø {avg_ret * 100:+.2f}%")
-                win_rate = metrics.get("win_rate") if metrics else None
-                if win_rate is not None:
-                    parts.append(f"Trefferquote {win_rate * 100:.1f}%")
-                metric_bits: list[str] = []
-                acc_val = metrics.get("accuracy") if metrics else None
-                f1_val = metrics.get("f1") if metrics else None
-                if acc_val is not None:
-                    metric_bits.append(f"Acc {acc_val:.2f}")
-                if f1_val is not None:
-                    metric_bits.append(f"F1 {f1_val:.2f}")
-                if metric_bits:
-                    parts.append(", ".join(metric_bits))
-                if as_of and hasattr(as_of, "date"):
-                    try:
-                        parts.append(f"Stand {as_of.date()}")
-                    except Exception:
-                        pass
-                lines.append(f"- {ticker_str}: " + ", ".join(parts))
+        if buy_rows or sell_rows:
+            detail_lines.append("")
+            detail_lines.append("🚦 ML Signale (1d Horizont):")
+            if buy_rows:
+                detail_lines.append("✅ Kauf:")
+                for ticker, _signal, confidence, expected_return, as_of, version in buy_rows:
+                    ticker_str = str(ticker).upper()
+                    parts = []
+                    if confidence is not None:
+                        parts.append(f"{float(confidence) * 100:.1f}% Conviction")
+                    if expected_return is not None:
+                        parts.append(f"Erwartung {float(expected_return) * 100:+.2f}%")
+                    metrics = metrics_map.get(ticker_str, {})
+                    avg_ret = metrics.get("avg_return") if metrics else None
+                    if avg_ret is not None:
+                        parts.append(f"Backtest Ø {avg_ret * 100:+.2f}%")
+                    win_rate = metrics.get("win_rate") if metrics else None
+                    if win_rate is not None:
+                        parts.append(f"Trefferquote {win_rate * 100:.1f}%")
+                    if as_of and hasattr(as_of, "date"):
+                        try:
+                            parts.append(f"Stand {as_of.date()}")
+                        except Exception:
+                            pass
+                    if version:
+                        parts.append(str(version))
+                    detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
+            if sell_rows:
+                detail_lines.append("⛔ Verkauf:")
+                for ticker, _signal, confidence, expected_return, as_of, version in sell_rows:
+                    ticker_str = str(ticker).upper()
+                    parts = []
+                    if confidence is not None:
+                        parts.append(f"{float(confidence) * 100:.1f}% Conviction")
+                    if expected_return is not None:
+                        parts.append(f"Erwartung {float(expected_return) * 100:+.2f}%")
+                    metrics = metrics_map.get(ticker_str, {})
+                    avg_ret = metrics.get("avg_return") if metrics else None
+                    if avg_ret is not None:
+                        parts.append(f"Backtest Ø {avg_ret * 100:+.2f}%")
+                    win_rate = metrics.get("win_rate") if metrics else None
+                    if win_rate is not None:
+                        parts.append(f"Trefferquote {win_rate * 100:.1f}%")
+                    if as_of and hasattr(as_of, "date"):
+                        try:
+                            parts.append(f"Stand {as_of.date()}")
+                        except Exception:
+                            pass
+                    if version:
+                        parts.append(str(version))
+                    detail_lines.append("- " + ticker_str + ": " + ", ".join(parts))
 
-        if buy_rows:
-            lines.append("")
+        if buy_rows or sell_rows:
+            detail_lines.append("")
+
+        # Preis- und Change-Daten vorbereiten
+        price_source = None
+        for candidate in ("stocks", "stocks_view", "prices"):
+            try:
+                con.execute(f"SELECT 1 FROM {candidate} LIMIT 1")
+            except duckdb.Error:
+                continue
+            price_source = candidate
+            break
+
+        summary_targets = list(dict.fromkeys([str(sym).upper() for sym in tickers]))
+        for sym in signal_symbols:
+            sym_u = str(sym).upper()
+            if sym_u not in summary_targets:
+                summary_targets.append(sym_u)
+
+        change_map: dict[str, tuple[float | None, float | None]] = {}
+        if price_source and summary_targets:
+            placeholders = ",".join("?" for _ in summary_targets)
+            try:
+                change_rows = con.execute(
+                    f"""
+                    WITH ranked AS (
+                        SELECT ticker, close, date,
+                               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) rn
+                        FROM {price_source}
+                        WHERE ticker IN ({placeholders})
+                    )
+                    SELECT ticker,
+                           MAX(CASE WHEN rn = 1 THEN close END) AS last_close,
+                           MAX(CASE WHEN rn = 2 THEN close END) AS prev_close
+                    FROM ranked
+                    GROUP BY ticker
+                    """,
+                    summary_targets,
+                ).fetchall()
+            except duckdb.Error:
+                change_rows = []
+            for ticker, last_close, prev_close in change_rows:
+                change_map[str(ticker).upper()] = (
+                    float(last_close) if last_close is not None else None,
+                    float(prev_close) if prev_close is not None else None,
+                )
+
+        def _format_change_pct(ticker_symbol: str) -> float | None:
+            change_tuple = change_map.get(ticker_symbol.upper())
+            if not change_tuple:
+                return None
+            last_close, prev_close = change_tuple
+            if last_close is None or prev_close in (None, 0):
+                return None
+            return (last_close / prev_close - 1) * 100
+
+        compact_lines: list[str] = []
+
+        def _format_buy_summary() -> str:
+            if not buy_rows:
+                return "Top Kauf-Signale: aktuell keine frischen Empfehlungen"
+            summaries: list[str] = []
+            for ticker, _signal, confidence, expected_return, _as_of, _version in buy_rows[:3]:
+                ticker_str = str(ticker).upper()
+                price = prices_usd.get(ticker_str)
+                change_pct = _format_change_pct(ticker_str)
+                parts: list[str] = []
+                if price is not None:
+                    parts.append(f"{price:.2f} USD")
+                if change_pct is not None:
+                    parts.append(f"1d {change_pct:+.1f}%")
+                if expected_return is not None:
+                    parts.append(f"Ziel {float(expected_return) * 100:+.1f}%")
+                if confidence is not None:
+                    parts.append(f"Conv. {float(confidence) * 100:.0f}%")
+                summary = ticker_str
+                if parts:
+                    summary += " (" + ", ".join(parts) + ")"
+                summaries.append(summary)
+            return "Top Kauf-Signale: " + "; ".join(summaries)
+
+        def _format_sell_summary() -> str | None:
+            if not sell_rows:
+                return None
+            snippets: list[str] = []
+            for ticker, _signal, confidence, expected_return, _as_of, _version in sell_rows[:2]:
+                ticker_str = str(ticker).upper()
+                change_pct = _format_change_pct(ticker_str)
+                parts: list[str] = []
+                if change_pct is not None:
+                    parts.append(f"1d {change_pct:+.1f}%")
+                if expected_return is not None:
+                    parts.append(f"Ziel {float(expected_return) * 100:+.1f}%")
+                if confidence is not None:
+                    parts.append(f"Conv. {float(confidence) * 100:.0f}%")
+                snippet = ticker_str
+                if parts:
+                    snippet += " (" + ", ".join(parts) + ")"
+                snippets.append(snippet)
+            if snippets:
+                return "Achtung Verkauf: " + "; ".join(snippets)
+            return None
+
+        def _format_trend_summary() -> str | None:
+            if not trending_rows:
+                return None
+            ticker, mentions, avg_up, _hotness = trending_rows[0]
+            weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
+            parts = [f"{int(mentions)} Mentions"]
+            if avg_up is not None:
+                parts.append(f"AvgUp {float(avg_up):.0f}")
+            if weekly is not None:
+                parts.append(f"7d {weekly * 100:+.1f}%")
+            return f"Heißeste Diskussion: {ticker} (" + ", ".join(parts) + ")"
+
+        compact_lines.append("⚡️ Schnellüberblick")
+        compact_lines.append(_format_buy_summary())
+        sell_summary = _format_sell_summary()
+        if sell_summary:
+            compact_lines.append(sell_summary)
+        trend_summary = _format_trend_summary()
+        if trend_summary:
+            compact_lines.append(trend_summary)
 
         for t in tickers:
             usd = prices_usd.get(t)
             eur = prices_eur.get(t)
-            lines.append(f"📈 {t}")
+            detail_lines.append(f"📈 {t}")
             try:
                 alias_rows = con.execute(
                     "SELECT alias FROM ticker_aliases WHERE ticker = ? ORDER BY alias",
@@ -249,19 +424,26 @@ def generate_overview(
                 alias_rows = []
             aliases = ", ".join(a for a, in alias_rows if a)
             if aliases:
-                lines.append(f"Alias: {aliases}")
-            if usd is not None and eur is not None:
-                lines.append(f"{t}: {usd:.2f} USD ({eur:.2f} EUR)")
-            elif usd is not None:
-                lines.append(f"{t}: {usd:.2f} USD")
-            elif eur is not None:
-                lines.append(f"{t}: {eur:.2f} EUR")
-            else:
-                lines.append(f"{t}: n/a")
+                detail_lines.append(f"Alias: {aliases}")
+            change_tuple = change_map.get(t.upper())
+            change_pct: float | None = None
+            if change_tuple:
+                last_close, prev_close = change_tuple
+                if last_close is not None and prev_close not in (None, 0):
+                    change_pct = (last_close / prev_close - 1) * 100
+
+            price_bits: list[str] = []
+            if usd is not None:
+                price_bits.append(f"{usd:.2f} USD")
+            if eur is not None:
+                price_bits.append(f"{eur:.2f} EUR")
+            if change_pct is not None:
+                price_bits.append(f"1d {change_pct:+.2f}%")
+            detail_lines.append("Preis: " + (" | ".join(price_bits) if price_bits else "n/a"))
 
             weekly = weekly_map.get(str(t).upper()) if weekly_map else None
             if weekly is not None:
-                lines.append(f"Kurs (7d): {weekly * 100:+.1f}%")
+                detail_lines.append(f"Trend 7d: {weekly * 100:+.1f}%")
 
             try:
                 sent_row = con.execute(
@@ -275,7 +457,7 @@ def generate_overview(
             except duckdb.Error:
                 sent_row = None
             w_sent = sent_row[1] if sent_row and sent_row[1] is not None else 0.0
-            lines.append(f"Sentiment (7d, weighted): {w_sent:+.2f}")
+            detail_lines.append(f"Sentiment 7d: {w_sent:+.2f}")
 
             try:
                 sent_row_1d = con.execute(
@@ -285,7 +467,7 @@ def generate_overview(
             except duckdb.Error:
                 sent_row_1d = None
             if sent_row_1d and sent_row_1d[0] is not None:
-                lines.append(f"Sentiment (1d, weighted): {sent_row_1d[0]:+.2f}")
+                detail_lines.append(f"Sentiment 1d: {sent_row_1d[0]:+.2f}")
 
             try:
                 sent_row_24h = con.execute(
@@ -299,7 +481,7 @@ def generate_overview(
             except duckdb.Error:
                 sent_row_24h = None
             if sent_row_24h and sent_row_24h[0] is not None:
-                lines.append(f"Sentiment (24h, weighted): {sent_row_24h[0]:+.2f}")
+                detail_lines.append(f"Sentiment 24h: {sent_row_24h[0]:+.2f}")
 
             try:
                 trend_today = con.execute(
@@ -323,10 +505,25 @@ def generate_overview(
                 trend_avg = None
             avg_mentions = trend_avg[0] if trend_avg and trend_avg[0] else 0
             change = ((mentions / avg_mentions) - 1) * 100 if avg_mentions else 0.0
-            lines.append(f"Mentions: {mentions} ({change:+.0f}% ggü. 7d Ø)")
+            detail_lines.append(f"Mentions: {mentions} ({change:+.0f}% ggü. 7d Ø)")
             emoji = _hotness_to_emoji(hotness)
             if emoji:
-                lines.append(f"Hotness: {emoji}")
+                detail_lines.append(f"Hotness: {emoji}")
+
+            ticker_signal = latest_signals.get(t.upper())
+            if ticker_signal and ticker_signal.get("signal"):
+                sig = str(ticker_signal["signal"]).upper()
+                parts: list[str] = [sig]
+                conf_val = ticker_signal.get("confidence")
+                if isinstance(conf_val, (int, float)):
+                    parts.append(f"{float(conf_val) * 100:.1f}% Conviction")
+                exp_val = ticker_signal.get("expected_return")
+                if isinstance(exp_val, (int, float)):
+                    parts.append(f"Erwartung {float(exp_val) * 100:+.2f}%")
+                version_val = ticker_signal.get("version")
+                if version_val:
+                    parts.append(str(version_val))
+                detail_lines.append("Signal: " + ", ".join(parts))
 
             try:
                 top_post = con.execute(
@@ -340,8 +537,10 @@ def generate_overview(
             except duckdb.Error:
                 top_post = None
             if top_post and top_post[0] is not None:
-                lines.append(f"Kurs seit Top-Post (+3d): {top_post[0] * 100:+.1f}%")
+                detail_lines.append(f"Kurs seit Top-Post (+3d): {top_post[0] * 100:+.1f}%")
 
-            lines.append("")
+            detail_lines.append("")
 
-    return "\n".join(lines).strip()
+    compact_text = "\n".join(compact_lines).strip()
+    detail_text = "\n".join(detail_lines).strip()
+    return OverviewMessage(compact=compact_text, detailed=detail_text)

@@ -15,7 +15,7 @@ from telegram.ext import (
 from main import run_pipeline
 from wallenstein.config import settings, validate_config
 from wallenstein.db import init_schema
-from wallenstein.overview import generate_overview
+from wallenstein.overview import OverviewMessage, generate_overview
 from wallenstein.trending import fetch_weekly_returns
 from wallenstein.watchlist import add_ticker, list_tickers, remove_ticker
 
@@ -79,7 +79,13 @@ async def handle_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     try:
         overview = generate_overview([ticker])
-        await update.message.reply_text(overview)
+        if isinstance(overview, OverviewMessage):
+            if overview.compact:
+                await update.message.reply_text(overview.compact)
+            if overview.detailed:
+                await update.message.reply_text(overview.detailed)
+        else:  # pragma: no cover - backwards compatibility safety
+            await update.message.reply_text(str(overview))
     except Exception as exc:  # pragma: no cover
         await update.message.reply_text(f"Fehler beim Abrufen von {ticker}: {exc}")
 
