@@ -563,6 +563,18 @@ def auto_add_candidates_to_watchlist(
     min_lift: float = 4.0,
 ) -> list[str]:
     ensure_trending_tables(con)
+    # Ensure the watchlist table exists – fresh databases on CI might not have
+    # been initialised via the watchlist helpers yet.
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS watchlist (
+            chat_id VARCHAR NOT NULL,
+            symbol  VARCHAR NOT NULL,
+            note    VARCHAR,
+            UNIQUE(chat_id, symbol)
+        )
+        """
+    )
     known_symbols: set[str] = set(
         alias_map(con, include_ticker_itself=True, use_synonyms=False).keys()
     )
