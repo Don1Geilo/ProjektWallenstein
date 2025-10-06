@@ -3,11 +3,18 @@ import duckdb
 from wallenstein.aliases import add_alias
 from wallenstein.trending import ensure_trending_tables, auto_add_candidates_to_watchlist
 
+from wallenstein.watchlist import add_symbols
+
+
 
 def test_auto_added_trends_use_global_watchlist_chat_id():
     con = duckdb.connect(":memory:")
 
     # ensure dependent tables exist
+
+
+    add_symbols(con, "_init", [])
+
     ensure_trending_tables(con)
     add_alias(con, "HOT", "Hot Corp")
 
@@ -33,6 +40,7 @@ def test_auto_added_trends_use_global_watchlist_chat_id():
         "SELECT chat_id, symbol FROM watchlist WHERE symbol = 'HOT'"
     ).fetchall()
     assert rows == [("_GLOBAL_", "HOT")]
+
 
 
 def test_auto_add_initialises_watchlist_table_if_missing():
