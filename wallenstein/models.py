@@ -63,6 +63,39 @@ def _find_optimal_threshold(y_true: pd.Series, y_proba: np.ndarray) -> tuple[flo
     return best_thr, max(best_f1, 0.0)
 
 
+def derive_signal_from_proba(
+    next_day_proba: float | None, decision_threshold: float
+) -> tuple[str | None, float | None, float | None]:
+    """Translate an up-move probability into a trading signal."""
+
+    if next_day_proba is None:
+        return None, None, None
+
+    try:
+        proba = float(next_day_proba)
+    except (TypeError, ValueError):
+        return None, None, None
+
+    if np.isnan(proba):
+        return None, None, None
+
+    thr = float(decision_threshold)
+    thr = min(max(thr, 0.0), 1.0)
+    sell_thr = 1.0 - thr
+
+    if proba >= thr:
+        return "buy", proba, proba - thr
+
+    if proba <= sell_thr:
+        down_proba = 1.0 - proba
+        return "sell", down_proba, sell_thr - proba
+
+    down_proba = 1.0 - proba
+    confidence = max(proba, down_proba)
+    margin = min(thr - proba, proba - sell_thr)
+    return "hold", confidence, max(margin, 0.0)
+
+
 def train_per_stock(
     df_stock: pd.DataFrame,
     use_kfold: bool = True,
@@ -609,9 +642,13 @@ def train_per_stock(
             next_proba = best_model.predict_proba(inference_features[features])[:, 1]
             if len(next_proba):
                 next_day_proba = float(next_proba[0])
-                next_signal = "buy" if next_day_proba >= decision_threshold else "hold"
-                confidence_val = next_day_proba
-                probability_margin = float(next_day_proba - decision_threshold)
+                (
+                    next_signal,
+                    confidence_val,
+                    probability_margin,
+                ) = derive_signal_from_proba(next_day_proba, decision_threshold)
+                if probability_margin is not None:
+                    probability_margin = float(probability_margin)
                 base_pos = avg_positive_return
                 base_neg = avg_negative_return
                 if base_pos is not None or base_neg is not None:
@@ -627,9 +664,11 @@ def train_per_stock(
             log.debug("Next-day probability estimation failed: %s", exc)
 
     if next_day_proba is not None:
+        down_proba = 1.0 - next_day_proba
         log.info(
-            "Next-day up-move probability: %.2f → %s (threshold %.2f, margin %.2f)",
+            "Next-day up-move probability: %.2f (down %.2f) → %s (threshold %.2f, margin %.2f)",
             next_day_proba,
+            down_proba,
             next_signal,
             decision_threshold,
             probability_margin if probability_margin is not None else float("nan"),
@@ -638,6 +677,7 @@ def train_per_stock(
     meta: dict | None = {
         "next_day_proba": next_day_proba,
         "decision_threshold": decision_threshold,
+        "decision_threshold_sell": 1.0 - decision_threshold,
         "signal": next_signal,
         "confidence": confidence_val,
         "horizon_days": 1,
@@ -650,6 +690,7 @@ def train_per_stock(
         "long_trades": int(long_returns.shape[0]),
         "expected_return": expected_return,
         "probability_margin": probability_margin,
+        "downside_probability": (1.0 - next_day_proba) if next_day_proba is not None else None,
         "sample_size": int(len(df)),
         "evaluation_size": int(len(df_eval)),
         "version": f"ml-v2:{model_type}",
