@@ -594,7 +594,7 @@ def auto_add_candidates_to_watchlist(
             continue
         if mentions >= min_mentions and lift >= min_lift:
             con.execute(
-                "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES ('GLOBAL', ?, ?)",
+                "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES ('_GLOBAL_', ?, ?)",
                 [sym, f"auto-added {mentions} m24h, lift {lift:.1f}, trend {trend:.2f}"],
             )
             added.append(sym)
