@@ -3,13 +3,18 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import wallenstein.models as models
-from wallenstein.models import backtest_strategy, train_per_stock
+from wallenstein.models import (
+    backtest_strategy,
+    derive_signal_from_proba,
+    train_per_stock,
+)
 
 
 def test_train_per_stock_basic():
@@ -156,4 +161,24 @@ def test_train_per_stock_uses_timeseries_split(monkeypatch):
 
     train_per_stock(df, n_splits=3, use_kfold=True)
     assert RecordingTS.called
+
+
+def test_derive_signal_from_proba_three_way():
+    signal, confidence, margin = derive_signal_from_proba(0.8, 0.6)
+    assert signal == "buy"
+    assert confidence == pytest.approx(0.8)
+    assert margin == pytest.approx(0.2)
+
+    signal, confidence, margin = derive_signal_from_proba(0.2, 0.6)
+    assert signal == "sell"
+    assert confidence == pytest.approx(0.8)
+    assert margin == pytest.approx(0.2)
+
+    signal, confidence, margin = derive_signal_from_proba(0.5, 0.6)
+    assert signal == "hold"
+    assert confidence == pytest.approx(0.5)
+    assert margin == pytest.approx(0.1)
+
+    signal, confidence, margin = derive_signal_from_proba(None, 0.6)
+    assert signal is None and confidence is None and margin is None
 
