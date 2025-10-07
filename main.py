@@ -92,6 +92,11 @@ from wallenstein.trending import (
 )
 
 
+AUTO_WATCHLIST_MAX_NEW = 3
+AUTO_WATCHLIST_MIN_MENTIONS = 30
+AUTO_WATCHLIST_MIN_LIFT = 4.0
+
+
 def resolve_tickers(override: str | None = None) -> list[str]:
     """Return the list of ticker symbols to process.
 
@@ -116,6 +121,22 @@ def resolve_tickers(override: str | None = None) -> list[str]:
         from wallenstein.watchlist import all_unique_symbols as wl_all
 
         with duckdb.connect(DB_PATH) as con:
+            try:
+                added_syms = auto_add_candidates_to_watchlist(
+                    con,
+                    notify_fn=None,
+                    max_new=AUTO_WATCHLIST_MAX_NEW,
+                    min_mentions=AUTO_WATCHLIST_MIN_MENTIONS,
+                    min_lift=AUTO_WATCHLIST_MIN_LIFT,
+                )
+                if added_syms:
+                    log.info(
+                        "Watchlist vor Pipeline-Lauf ergänzt: %s",
+                        ", ".join(sorted(added_syms)),
+                    )
+            except Exception as auto_exc:  # pragma: no cover - defensive logging
+                log.debug("Auto-Watchlist-Update vor Lauf fehlgeschlagen: %s", auto_exc)
+
             wl_list = [s.strip().upper() for s in wl_all(con)]
     except Exception as exc:  # pragma: no cover
         log.warning(f"Watchlist-Abfrage fehlgeschlagen: {exc}")
@@ -333,8 +354,144 @@ def persist_sentiment(reddit_posts: dict[str, list]) -> None:
         log.error(f"❌ Sentiment-Aggregation fehlgeschlagen: {e}")
 
 
-def generate_trends(reddit_posts: dict[str, list]) -> None:
-    """Enrich posts, compute trends, returns and scan for candidates."""
+def _merge_reddit_posts(existing: list[dict], new_posts: list[dict]) -> int:
+    """Extend ``existing`` with ``new_posts`` while avoiding duplicates by ID."""
+
+    if not new_posts:
+        return 0
+
+    seen_ids = {
+        str(post.get("id"))
+        for post in existing
+        if post.get("id") is not None
+    }
+    added = 0
+    for post in new_posts:
+        pid = post.get("id")
+        key = str(pid) if pid is not None else None
+        if key and key in seen_ids:
+            continue
+        existing.append(post)
+        added += 1
+        if key:
+            seen_ids.add(key)
+    return added
+
+
+def _ensure_post_sentiments(posts: list[dict]) -> None:
+    """Populate missing sentiment scores in-place using VADER/transformers."""
+
+    missing_indices: list[int] = []
+    texts: list[str] = []
+    for idx, post in enumerate(posts):
+        val = post.get("sentiment")
+        try:
+            if val is not None and np.isfinite(float(val)):
+                continue
+        except (TypeError, ValueError):
+            pass
+
+        title = str(post.get("title", "") or "")
+        body = str(
+            post.get("selftext")
+            if post.get("selftext") is not None
+            else post.get("text", "")
+        )
+        combined = (title + " " + body).strip()
+        if not combined:
+            continue
+        missing_indices.append(idx)
+        texts.append(combined)
+
+    if not texts:
+        return
+
+    try:
+        scores = analyze_sentiment_many(texts)
+    except Exception as exc:  # pragma: no cover - robustness
+        log.debug("Sentiment scoring for auto posts failed: %s", exc)
+        return
+
+    for idx, score in zip(missing_indices, scores):
+        try:
+            posts[idx]["sentiment"] = float(score)
+        except Exception:
+            posts[idx]["sentiment"] = None
+
+
+def _summarize_post_sentiments(posts: list[dict]) -> tuple[float | None, float | None, int, int]:
+    """Return mean, median, number of valid scores and total posts for a bucket."""
+
+    total_posts = len(posts)
+    if total_posts == 0:
+        return None, None, 0, 0
+
+    _ensure_post_sentiments(posts)
+
+    scores: list[float] = []
+    for post in posts:
+        val = post.get("sentiment")
+        if val is None:
+            continue
+        try:
+            score = float(val)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(score):
+            scores.append(score)
+
+    if not scores:
+        return None, None, 0, total_posts
+
+    arr = np.asarray(scores, dtype=float)
+    mean = float(np.mean(arr))
+    median = float(np.median(arr))
+    return mean, median, len(scores), total_posts
+
+
+def _format_auto_sentiment_line(symbol: str, posts: list[dict], candidate) -> str:
+    mean, median, valid, total = _summarize_post_sentiments(posts)
+
+    if mean is None:
+        detail = "keine Sentiment-Daten"
+        if total:
+            detail += f" ({total} Beiträge)"
+    else:
+        detail_parts = [f"Ø {mean:+.2f}"]
+        if median is not None and not np.isclose(mean, median):
+            detail_parts.append(f"Median {median:+.2f}")
+        detail_parts.append(f"{valid} Beiträge")
+        if total > valid:
+            detail_parts.append(f"{total - valid} ohne Score")
+        detail = ", ".join(detail_parts)
+
+    extras: list[str] = []
+    if candidate is not None:
+        mentions = getattr(candidate, "mentions_24h", None)
+        lift = getattr(candidate, "lift", None)
+        if isinstance(mentions, (int, float)) and mentions > 0:
+            extras.append(f"m24h={int(mentions)}")
+        if isinstance(lift, (int, float)) and lift > 0:
+            extras.append(f"Lift x{float(lift):.1f}")
+
+    if extras:
+        detail = detail + " | " + ", ".join(extras)
+
+    return f"- {symbol}: {detail}"
+
+
+def generate_trends(reddit_posts: dict[str, list]) -> dict[str, list]:
+    """Enrich posts, compute trends, returns and scan for candidates.
+
+    Returns a dictionary containing the trending candidates and any symbols that
+    were automatically added to the watchlist so the caller can react to them
+    within the same pipeline run.
+    """
+
+    known_candidates: list = []
+    unknown_candidates: list = []
+    added_symbols: list[str] = []
+
     try:
         with duckdb.connect(DB_PATH) as con:
             enriched = enrich_reddit_posts(con, reddit_posts)
@@ -347,6 +504,7 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
             log.info(f"Sentiment-Aggregate aktualisiert: hourly≈{h_count}, daily≈{d_count}")
     except Exception as e:
         log.error(f"❌ Reddit-Enrichment/Sentiments fehlgeschlagen: {e}")
+
     try:
         with duckdb.connect(DB_PATH) as con:
             cands = scan_reddit_for_candidates(
@@ -357,11 +515,15 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                 min_lift=3.0,
             )
             if cands:
-                known = [c for c in cands if getattr(c, "is_known", True)]
-                unknown = [c for c in cands if not getattr(c, "is_known", True)]
-                if known:
+                known_candidates = [c for c in cands if getattr(c, "is_known", True)]
+                unknown_candidates = [
+                    c for c in cands if not getattr(c, "is_known", True)
+                ]
+                if known_candidates:
                     missing_weekly = [
-                        c.symbol for c in known if getattr(c, "weekly_return", None) is None
+                        c.symbol
+                        for c in known_candidates
+                        if getattr(c, "weekly_return", None) is None
                     ]
                     weekly_fallback: dict[str, float] = {}
                     if missing_weekly:
@@ -385,17 +547,17 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                         return base
 
                     top_preview = ", ".join(
-                        [_format_candidate(c) for c in known[:5]]
+                        [_format_candidate(c) for c in known_candidates[:5]]
                     )
                     log.info(f"Trending-Kandidaten (Top 5, verifiziert): {top_preview}")
                     notify_telegram("🔥 Reddit-Trends: " + top_preview)
                 else:
                     log.info("Trending-Kandidaten: keine verifizierten Treffer")
-                if unknown:
+                if unknown_candidates:
                     unknown_preview = ", ".join(
                         [
                             f"{c.symbol} (m24h={c.mentions_24h}, x{c.lift:.1f})"
-                            for c in unknown[:5]
+                            for c in unknown_candidates[:5]
                         ]
                     )
                     log.info(
@@ -404,17 +566,26 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
                     )
             else:
                 log.info("Trending-Kandidaten: keine")
-            added_syms = auto_add_candidates_to_watchlist(
+            added_symbols = auto_add_candidates_to_watchlist(
                 con,
                 notify_fn=notify_telegram,
-                max_new=3,
-                min_mentions=30,
-                min_lift=4.0,
+                max_new=AUTO_WATCHLIST_MAX_NEW,
+                min_mentions=AUTO_WATCHLIST_MIN_MENTIONS,
+                min_lift=AUTO_WATCHLIST_MIN_LIFT,
             )
-            if added_syms:
-                log.info(f"Auto zur Watchlist hinzugefügt: {', '.join(added_syms)}")
+            if added_symbols:
+                log.info(
+                    "Auto zur Watchlist hinzugefügt: %s",
+                    ", ".join(added_symbols),
+                )
     except Exception as e:
         log.warning(f"Trending-Scan fehlgeschlagen: {e}")
+
+    return {
+        "known_candidates": known_candidates,
+        "unknown_candidates": unknown_candidates,
+        "added_symbols": added_symbols,
+    }
 
 
 def _build_training_snapshot(
@@ -628,7 +799,80 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
 
     reddit_posts = fetch_updates(tickers)
     persist_sentiment(reddit_posts)
-    generate_trends(reddit_posts)
+    trend_result = generate_trends(reddit_posts)
+
+    added_symbols = [
+        str(sym).upper()
+        for sym in trend_result.get("added_symbols", [])
+        if isinstance(sym, str)
+    ]
+    candidate_map = {
+        getattr(cand, "symbol", "").upper(): cand
+        for cand in trend_result.get("known_candidates", [])
+    }
+    existing_symbols = {t.upper() for t in tickers}
+    new_auto_symbols = [sym for sym in added_symbols if sym and sym not in existing_symbols]
+
+    if new_auto_symbols:
+        log.info(
+            "Direktverarbeitung für neue Auto-Watchlist-Ticker: %s",
+            ", ".join(new_auto_symbols),
+        )
+        for sym in new_auto_symbols:
+            reddit_posts.setdefault(sym, [])
+        try:
+            added_rows = update_prices(DB_PATH, new_auto_symbols)
+            if added_rows:
+                log.info(
+                    "📈 Nachgeladene Kursdaten für Auto-Ticker: +%d Zeilen",
+                    added_rows,
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            log.warning("Kursupdate für Auto-Ticker fehlgeschlagen: %s", exc)
+
+        auto_posts: dict[str, list] = {}
+        try:
+            auto_posts = update_reddit_data(
+                new_auto_symbols,
+                ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
+                include_comments=True,
+            )
+        except Exception as exc:  # pragma: no cover - reddit hiccup
+            log.warning("Reddit-Update für Auto-Ticker fehlgeschlagen: %s", exc)
+            auto_posts = {}
+
+        merged_for_sentiment: dict[str, list] = {}
+        if isinstance(auto_posts, dict):
+            for sym in new_auto_symbols:
+                posts = list(auto_posts.get(sym, []) or [])
+                if not posts:
+                    continue
+                bucket = reddit_posts.setdefault(sym, [])
+                added = _merge_reddit_posts(bucket, posts)
+                if added:
+                    merged_for_sentiment[sym] = bucket
+
+        if merged_for_sentiment:
+            try:
+                persist_sentiment(merged_for_sentiment)
+            except Exception as exc:  # pragma: no cover - robustness
+                log.warning("Sentiment-Aktualisierung für Auto-Ticker fehlgeschlagen: %s", exc)
+
+        sentiment_lines = [
+            _format_auto_sentiment_line(
+                sym,
+                reddit_posts.get(sym, []),
+                candidate_map.get(sym.upper()),
+            )
+            for sym in new_auto_symbols
+        ]
+        summary_text = "\n".join(sentiment_lines).strip()
+        if summary_text:
+            notify_telegram("🆕 Auto-Watchlist Sentiment\n" + summary_text)
+
+        merged = set(tickers)
+        merged.update(new_auto_symbols)
+        tickers = sorted(merged)
 
     ensure_prices_view(DB_PATH, view_name="stocks", table_name="prices")
     prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
