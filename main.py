@@ -92,6 +92,11 @@ from wallenstein.trending import (
 )
 
 
+AUTO_WATCHLIST_MAX_NEW = 3
+AUTO_WATCHLIST_MIN_MENTIONS = 30
+AUTO_WATCHLIST_MIN_LIFT = 4.0
+
+
 def resolve_tickers(override: str | None = None) -> list[str]:
     """Return the list of ticker symbols to process.
 
@@ -116,6 +121,22 @@ def resolve_tickers(override: str | None = None) -> list[str]:
         from wallenstein.watchlist import all_unique_symbols as wl_all
 
         with duckdb.connect(DB_PATH) as con:
+            try:
+                added_syms = auto_add_candidates_to_watchlist(
+                    con,
+                    notify_fn=None,
+                    max_new=AUTO_WATCHLIST_MAX_NEW,
+                    min_mentions=AUTO_WATCHLIST_MIN_MENTIONS,
+                    min_lift=AUTO_WATCHLIST_MIN_LIFT,
+                )
+                if added_syms:
+                    log.info(
+                        "Watchlist vor Pipeline-Lauf ergänzt: %s",
+                        ", ".join(sorted(added_syms)),
+                    )
+            except Exception as auto_exc:  # pragma: no cover - defensive logging
+                log.debug("Auto-Watchlist-Update vor Lauf fehlgeschlagen: %s", auto_exc)
+
             wl_list = [s.strip().upper() for s in wl_all(con)]
     except Exception as exc:  # pragma: no cover
         log.warning(f"Watchlist-Abfrage fehlgeschlagen: {exc}")
@@ -407,9 +428,9 @@ def generate_trends(reddit_posts: dict[str, list]) -> None:
             added_syms = auto_add_candidates_to_watchlist(
                 con,
                 notify_fn=notify_telegram,
-                max_new=3,
-                min_mentions=30,
-                min_lift=4.0,
+                max_new=AUTO_WATCHLIST_MAX_NEW,
+                min_mentions=AUTO_WATCHLIST_MIN_MENTIONS,
+                min_lift=AUTO_WATCHLIST_MIN_LIFT,
             )
             if added_syms:
                 log.info(f"Auto zur Watchlist hinzugefügt: {', '.join(added_syms)}")
