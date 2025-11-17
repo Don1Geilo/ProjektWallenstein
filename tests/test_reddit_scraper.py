@@ -97,6 +97,7 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
             self.id = cid
             self.body = body
             self.created_utc = now.timestamp()
+            self.score = 0
 
     class FakePost:
         def __init__(self, pid, title, comments=None):
@@ -105,10 +106,21 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
             self.selftext = ""
             self.created_utc = now.timestamp()
             self.comments = comments or FakeComments([])
+            self.num_comments = len(self.comments)
+            self.score = 0
 
     class FakeSub:
         def hot(self, limit):
-            return [FakePost("h1", "hot post", FakeComments([FakeComment("c1", "AAPL is great")]))]
+            return [
+                FakePost(
+                    "h1",
+                    "hot post",
+                    FakeComments([
+                        FakeComment("c1", "AAPL is great"),
+                        FakeComment("c2", "MSFT is meh"),
+                    ]),
+                )
+            ]
 
         def new(self, limit):
             return [FakePost("n1", "new post")]
@@ -119,9 +131,17 @@ def test_fetches_hot_and_new_posts_with_comments(monkeypatch):
 
     monkeypatch.setattr(reddit_scraper.praw, "Reddit", lambda **k: FakeReddit())
 
-    df = reddit_scraper.fetch_reddit_posts("dummy", limit=1, include_comments=True)
+    df = reddit_scraper.fetch_reddit_posts(
+        "dummy", limit=1, include_comments=True, comment_limit=1
+    )
     ids = set(df["id"]) if not df.empty else set()
     assert ids == {"h1", "n1", "h1_c1"}
+    assert "num_comments" in df.columns
+    hot_row = df[df["id"] == "h1"].iloc[0]
+    assert hot_row["num_comments"] == 2
+    comment_rows = df[df["id"].str.startswith("h1_")]
+    assert comment_rows.shape[0] == 1  # limited to 1 even though two exist
+    assert (comment_rows["num_comments"] == 0).all()
 
 
 def test_sentiment_added_to_buckets(monkeypatch):
@@ -133,7 +153,7 @@ def test_sentiment_added_to_buckets(monkeypatch):
     monkeypatch.setattr(reddit_scraper, "fetch_reddit_posts", lambda *a, **k: df)
     monkeypatch.setattr(reddit_scraper, "_load_posts_from_db", lambda: df)
     monkeypatch.setattr(reddit_scraper, "purge_old_posts", lambda: None)
-    monkeypatch.setattr(reddit_scraper, "analyze_sentiment_batch", lambda texts: [0.5 for _ in texts])
+    monkeypatch.setattr(reddit_scraper, "analyze_sentiment_many", lambda texts: [0.5 for _ in texts])
 
     out = reddit_scraper.update_reddit_data(["ABC"], subreddits=None)
     assert out["ABC"][0]["sentiment"] == 0.5
@@ -222,7 +242,7 @@ def test_auto_discovery_adds_new_ticker(monkeypatch, tmp_path):
     monkeypatch.setattr(reddit_scraper, "discover_new_tickers", fake_discover)
     monkeypatch.setattr(
         reddit_scraper,
-        "analyze_sentiment_batch",
+        "analyze_sentiment_many",
         lambda texts: [0.0 for _ in texts],
     )
 
@@ -265,5 +285,3 @@ def test_alias_file_reloaded_each_call(monkeypatch, tmp_path):
         ["ZZZ"], subreddits=None, aliases_path=alias_file
     )
     assert out2["ZZZ"] and "corp2" in out2["ZZZ"][0]["text"].lower()
-
-

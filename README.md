@@ -243,7 +243,9 @@ python scripts/fetch_reddit_posts.py --subreddit wallstreetbets --limit 50
 ```
 
 The command writes a JSON file to `data/reddit_posts.json` containing the
-queried posts and comments.
+queried posts. By default it also appends the top-level comments from the
+"hot" listing (up to three per post). Use `--no-comments` to skip them or
+`--comment-limit N` to tighten/loosen the cap.
 
 ### Notes
 - If you already have your own `stock_data.py`, you can keep it. This repo’s version is robust and compatible with `update_prices(TICKERS)` signature.

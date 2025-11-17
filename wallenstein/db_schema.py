@@ -17,6 +17,7 @@ SCHEMAS = {
         "title": "TEXT",
         "text": "TEXT",
         "upvotes": "INTEGER",
+        "num_comments": "INTEGER",
     },
     "reddit_enriched": {
         "id": "VARCHAR",
@@ -123,6 +124,13 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
                     con.execute("ALTER TABLE reddit_posts ADD COLUMN upvotes INTEGER")
                 except duckdb.Error:
                     pass
+            if "num_comments" not in cols_existing:
+                try:
+                    con.execute(
+                        "ALTER TABLE reddit_posts ADD COLUMN num_comments INTEGER DEFAULT 0"
+                    )
+                except duckdb.Error:
+                    pass
             has_pk = any(row[1] == "id" and row[5] for row in info)
             if not has_pk:
                 try:
@@ -132,10 +140,10 @@ def ensure_tables(con: duckdb.DuckDBPyConnection):
                     pass
             if not has_pk:
                 con.execute(
-                    "CREATE TABLE reddit_posts_tmp (id TEXT PRIMARY KEY, created_utc TIMESTAMP, title TEXT, text TEXT, upvotes INTEGER)"
+                    "CREATE TABLE reddit_posts_tmp (id TEXT PRIMARY KEY, created_utc TIMESTAMP, title TEXT, text TEXT, upvotes INTEGER, num_comments INTEGER)"
                 )
                 con.execute(
-                    "INSERT INTO reddit_posts_tmp SELECT id, created_utc, title, text, COALESCE(upvotes,0) FROM reddit_posts"
+                    "INSERT INTO reddit_posts_tmp SELECT id, created_utc, title, text, COALESCE(upvotes,0), COALESCE(num_comments,0) FROM reddit_posts"
                 )
                 con.execute("DROP TABLE reddit_posts")
                 con.execute("ALTER TABLE reddit_posts_tmp RENAME TO reddit_posts")

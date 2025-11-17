@@ -1,7 +1,6 @@
 # wallenstein/reddit_scraper.py
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import os
@@ -17,8 +16,7 @@ import praw
 from wallenstein.aliases import add_alias
 from wallenstein.config import settings
 from wallenstein.db_schema import ensure_tables, validate_df
-from wallenstein.sentiment import analyze_sentiment_batch
-from wallenstein.sentiment_analysis import analyze_sentiment
+from wallenstein.sentiment_analysis import analyze_sentiment, analyze_sentiment_many
 from wallenstein.ticker_detection import TickerMetadata, discover_new_tickers
 
 try:  # Optional dependency
@@ -172,16 +170,18 @@ _load_aliases_from_file()
 # Bestehende Funktion von dir
 # ----------------------------
 def fetch_reddit_posts(
-    subreddit: str = "wallstreetbets",     
+    subreddit: str = "wallstreetbets",
     limit: int = 50,
     include_comments: bool = False,
+    comment_limit: int | None = 3,
 ) -> pd.DataFrame:
     """Return hot and new posts from ``subreddit`` as a ``DataFrame``.
 
     Hot and new results are merged and deduplicated. If ``include_comments`` is
-    ``True`` the top comments for each post are fetched and returned as separate
-    rows. Only interacts with the Reddit API; no database reads or writes occur
-    here. Callers can persist the resulting frame if needed.
+    ``True`` we fetch up to ``comment_limit`` top-level comments for each *hot*
+    post (to keep API usage bounded) and emit them as additional rows. Only
+    interacts with the Reddit API; no database reads or writes occur here.
+    Callers can persist the resulting frame if needed.
     """
 
     reddit = praw.Reddit(
@@ -190,38 +190,56 @@ def fetch_reddit_posts(
         user_agent=settings.REDDIT_USER_AGENT or os.getenv("USER_AGENT") or "wallenstein",
     )
 
-    posts = []
+    posts: list[dict] = []
     sub = reddit.subreddit(subreddit)
-    for post in itertools.chain(sub.hot(limit=limit), sub.new(limit=limit)):
+    comment_cap = 0 if comment_limit is None else max(0, int(comment_limit))
+
+    def _append_post(post_obj) -> None:
         posts.append(
             {
-                "id": post.id,
-                "title": post.title or "",
-                "created_utc": datetime.fromtimestamp(post.created_utc, tz=timezone.utc),
-                "text": post.selftext or "",
-                "upvotes": getattr(post, "score", 0),
+                "id": post_obj.id,
+                "title": post_obj.title or "",
+                "created_utc": datetime.fromtimestamp(post_obj.created_utc, tz=timezone.utc),
+                "text": post_obj.selftext or "",
+                "upvotes": getattr(post_obj, "score", 0),
+                "num_comments": getattr(post_obj, "num_comments", 0) or 0,
             }
         )
 
-        if include_comments:
-            try:
-                post.comments.replace_more(limit=0)
-            except Exception:
+    def _append_comments(post_obj) -> None:
+        if not include_comments or comment_cap <= 0:
+            return
+        try:
+            post_obj.comments.replace_more(limit=0)
+        except Exception:
+            return
+        added = 0
+        for comment in getattr(post_obj, "comments", []) or []:
+            body = getattr(comment, "body", "")
+            if not body:
                 continue
+            created_val = getattr(comment, "created_utc", post_obj.created_utc)
+            posts.append(
+                {
+                    "id": f"{post_obj.id}_{comment.id}",
+                    "title": "",
+                    "created_utc": datetime.fromtimestamp(created_val, tz=timezone.utc),
+                    "text": body,
+                    "upvotes": getattr(comment, "score", 0),
+                    "num_comments": 0,
+                }
+            )
+            added += 1
+            if added >= comment_cap:
+                break
 
-            for comment in post.comments[:3]:
-                posts.append(
-                    {
-                        "id": f"{post.id}_{comment.id}",
-                        "title": "",
-                        "created_utc": datetime.fromtimestamp(
-                            getattr(comment, "created_utc", post.created_utc),
-                            tz=timezone.utc,
-                        ),
-                        "text": comment.body or "",
-                        "upvotes": getattr(comment, "score", 0),
-                    }
-                )
+    hot_posts = list(sub.hot(limit=limit))
+    for post in hot_posts:
+        _append_post(post)
+        _append_comments(post)
+
+    for post in sub.new(limit=limit):
+        _append_post(post)
 
     df = pd.DataFrame(posts)
     df.drop_duplicates(subset="id", inplace=True)
@@ -274,11 +292,12 @@ def _load_posts_from_db() -> pd.DataFrame:
     with duckdb.connect(DB_PATH) as con:
         try:
             df = con.execute(
-                "SELECT id, created_utc, title, text, upvotes FROM reddit_posts ORDER BY created_utc DESC"
+                "SELECT id, created_utc, title, text, upvotes, num_comments "
+                "FROM reddit_posts ORDER BY created_utc DESC"
             ).fetch_df()
         except Exception:
             # Falls Tabelle noch nicht existiert
-            df = pd.DataFrame(columns=["id", "created_utc", "title", "text", "upvotes"])
+            df = pd.DataFrame(columns=["id", "created_utc", "title", "text", "upvotes", "num_comments"])
     return df
 
 
@@ -340,6 +359,7 @@ def update_reddit_data(
     subreddits: list[str] | None = None,
     limit_per_sub: int = 50,
     include_comments: bool = False,
+    comment_limit: int | None = 3,
     aliases_path: str | Path | None = None,
     aliases: dict[str, list[str]] | None = None,
 ) -> dict[str, list[dict]]:
@@ -355,6 +375,9 @@ def update_reddit_data(
         Number of posts to fetch per subreddit.
     include_comments:
         Whether to also scan a few top-level comments.
+    comment_limit:
+        Maximum number of comments to fetch per hot post when
+        ``include_comments`` is enabled. ``None`` disables the limit.
     aliases_path / aliases:
         Extra ticker alias definitions.  ``aliases_path`` points to a JSON/YAML
         file that is reloaded on every call. ``aliases`` is an in-memory mapping
@@ -385,6 +408,7 @@ def update_reddit_data(
                 subreddit=sub,
                 limit=limit_per_sub,
                 include_comments=include_comments,
+                comment_limit=comment_limit,
             )
             for sub in subreddits
         ]
@@ -399,10 +423,12 @@ def update_reddit_data(
         df_all = pd.concat(frames, ignore_index=True)
         if "upvotes" not in df_all.columns:
             df_all["upvotes"] = 0
+        if "num_comments" not in df_all.columns:
+            df_all["num_comments"] = 0
         df_all = df_all.drop_duplicates(subset="id")
 
         if not df_all.empty:
-            df_all = df_all[["id", "created_utc", "title", "text", "upvotes"]]
+            df_all = df_all[["id", "created_utc", "title", "text", "upvotes", "num_comments"]]
             ids = df_all["id"].tolist()
             with duckdb.connect(DB_PATH) as con:
                 ensure_tables(con)
@@ -418,8 +444,8 @@ def update_reddit_data(
                     con.register("df_all", df_all)
                     validate_df(df_all, "reddit_posts")
                     con.execute(
-                        "INSERT INTO reddit_posts (id, created_utc, title, text, upvotes) "
-                        "SELECT id, created_utc, title, text, upvotes FROM df_all"
+                        "INSERT INTO reddit_posts (id, created_utc, title, text, upvotes, num_comments) "
+                        "SELECT id, created_utc, title, text, upvotes, num_comments FROM df_all"
                     )
                 after = con.execute("SELECT COUNT(*) FROM reddit_posts").fetchone()[0]
                 added = max(0, after - before)
@@ -432,6 +458,8 @@ def update_reddit_data(
     df = _load_posts_from_db()
     if "upvotes" not in df.columns:
         df["upvotes"] = 0
+    if "num_comments" not in df.columns:
+        df["num_comments"] = 0
     df["combined"] = df["title"].fillna("") + "\n" + df["text"].fillna("")
 
     discovered: dict[str, TickerMetadata] = {}
@@ -479,14 +507,18 @@ def update_reddit_data(
     for tkr in tracked_tickers:
         if tkr not in df.columns:
             continue
+        columns = ["id", "created_utc", "combined", "upvotes", "num_comments"]
+        for col in columns:
+            if col not in df.columns and col != "combined":
+                df[col] = 0
         bucket_df = (
-            df.loc[df[tkr], ["id", "created_utc", "combined", "upvotes"]]
+            df.loc[df[tkr], columns]
             .head(100)
             .rename(columns={"combined": "text"})
         )
         texts = bucket_df["text"].astype(str).str[:2000].tolist()
         bucket_df["text"] = texts
-        bucket_df["sentiment"] = analyze_sentiment_batch(texts)
+        bucket_df["sentiment"] = analyze_sentiment_many(texts)
         bucket = bucket_df.to_dict(orient="records")
         log.debug(f"{tkr}: {len(bucket)} matched posts")
         out[tkr] = bucket

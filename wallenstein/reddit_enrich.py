@@ -6,7 +6,7 @@ import duckdb
 import pandas as pd
 
 from .db_schema import validate_df
-from .sentiment import analyze_sentiment
+from .sentiment_analysis import analyze_sentiment
 
 # =========================
 # Helper

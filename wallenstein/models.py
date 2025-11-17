@@ -264,9 +264,10 @@ def train_per_stock(
         df["BB_Lower"] = (bb_ma - 2 * bb_std).shift(1)
         features += ["BB_Upper", "BB_Lower", "BB_Middle"]
 
-    # --- Label & Cleanup
-    df["y"] = (df["close"] > df["Close_lag1"]).astype(float)
-    invalid_mask = df["close"].isna() | df["Close_lag1"].isna()
+    # --- Label (predict next-day move) & Cleanup
+    df["future_close"] = df["close"].shift(-1)
+    df["y"] = (df["future_close"] > df["close"]).astype(float)
+    invalid_mask = df["close"].isna() | df["future_close"].isna()
     df.loc[invalid_mask, "y"] = np.nan
 
     future_mask = df["date"] == future_date
@@ -281,10 +282,10 @@ def train_per_stock(
     df = df.loc[~future_mask].copy()
     df = df.replace([float("inf"), float("-inf")], pd.NA)
 
-    # Tatsächliche Tagesrendite (gegen Vortag) – Grundlage für Erwartungswerte
+    # Tatsächliche Forward-Rendite (gegen aktuellen Schlusskurs) – Basis für Erwartungswerte
     with np.errstate(divide="ignore", invalid="ignore"):
-        close_lag1 = df["Close_lag1"].replace(0, pd.NA)
-        df["actual_return"] = (df["close"] / close_lag1) - 1
+        close_base = df["close"].replace(0, pd.NA)
+        df["actual_return"] = (df["future_close"] / close_base) - 1
 
     df = df.dropna()
 

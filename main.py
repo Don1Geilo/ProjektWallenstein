@@ -95,6 +95,7 @@ from wallenstein.trending import (
 AUTO_WATCHLIST_MAX_NEW = 3
 AUTO_WATCHLIST_MIN_MENTIONS = 30
 AUTO_WATCHLIST_MIN_LIFT = 4.0
+OVERVIEW_EXPORT_DIR = Path("stockOverview")
 
 
 def resolve_tickers(override: str | None = None) -> list[str]:
@@ -145,6 +146,150 @@ def resolve_tickers(override: str | None = None) -> list[str]:
     if not tickers:
         log.warning("Keine Ticker gefunden (ENV leer, Watchlist leer)")
     return tickers
+
+
+def export_stock_overview(tickers: list[str]) -> Path | None:
+    """Write a CSV summary of prices, sentiment and ML signals for artifacts."""
+
+    if not tickers:
+        return None
+
+    prices_usd = get_latest_prices(DB_PATH, tickers, use_eur=False)
+    prices_eur = get_latest_prices(DB_PATH, tickers, use_eur=True)
+    tickers_upper = [t.upper() for t in tickers]
+    placeholders = ",".join("?" for _ in tickers_upper) or "''"
+
+    predictions: dict[str, dict[str, object | None]] = {}
+    sentiment_daily: dict[str, dict[str, object | None]] = {}
+    trends_map: dict[str, dict[str, object | None]] = {}
+    weekly_returns: dict[str, float] = {}
+
+    with duckdb.connect(DB_PATH) as con:
+        if tickers_upper:
+            try:
+                rows = con.execute(
+                    f"""
+                    WITH ranked AS (
+                        SELECT *,
+                               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY as_of DESC) AS rn
+                        FROM predictions
+                        WHERE ticker IN ({placeholders}) AND horizon_days = 1
+                    )
+                    SELECT ticker, signal, confidence, expected_return, as_of, version
+                    FROM ranked
+                    WHERE rn = 1
+                    """,
+                    tickers_upper,
+                ).fetchall()
+            except duckdb.Error:
+                rows = []
+            for ticker, signal, confidence, expected_return, as_of, version in rows:
+                predictions[str(ticker).upper()] = {
+                    "signal": signal,
+                    "confidence": confidence,
+                    "expected_return": expected_return,
+                    "as_of": as_of,
+                    "version": version,
+                }
+
+            try:
+                sent_rows = con.execute(
+                    f"""
+                    WITH ranked AS (
+                        SELECT *,
+                               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
+                        FROM reddit_sentiment_daily
+                        WHERE ticker IN ({placeholders})
+                    )
+                    SELECT ticker, sentiment_weighted, posts, date
+                    FROM ranked
+                    WHERE rn = 1
+                    """,
+                    tickers_upper,
+                ).fetchall()
+            except duckdb.Error:
+                sent_rows = []
+            for ticker, sentiment_weighted, posts, date_val in sent_rows:
+                sentiment_daily[str(ticker).upper()] = {
+                    "sentiment": sentiment_weighted,
+                    "posts": posts,
+                    "date": date_val,
+                }
+
+            try:
+                trend_rows = con.execute(
+                    f"""
+                    SELECT ticker, mentions, hotness
+                    FROM reddit_trends
+                    WHERE date = CURRENT_DATE AND ticker IN ({placeholders})
+                    """,
+                    tickers_upper,
+                ).fetchall()
+            except duckdb.Error:
+                trend_rows = []
+            for ticker, mentions, hotness in trend_rows:
+                trends_map[str(ticker).upper()] = {
+                    "mentions": mentions,
+                    "hotness": hotness,
+                }
+
+            try:
+                weekly_returns = fetch_weekly_returns(
+                    con,
+                    tickers_upper,
+                    max_symbols=len(tickers_upper),
+                )
+            except Exception:
+                weekly_returns = {}
+
+    rows_out: list[dict[str, object | None]] = []
+    now_ts = datetime.now(timezone.utc).astimezone()
+
+    for ticker in sorted({t.upper() for t in tickers}):
+        pred = predictions.get(ticker, {})
+        sentiment = sentiment_daily.get(ticker, {})
+        trend = trends_map.get(ticker, {})
+        weekly = weekly_returns.get(ticker)
+        as_of = pred.get("as_of")
+        if hasattr(as_of, "isoformat"):
+            as_of_str = as_of.isoformat()
+        else:
+            as_of_str = str(as_of) if as_of is not None else None
+        sent_date = sentiment.get("date")
+        if hasattr(sent_date, "isoformat"):
+            sent_date_str = sent_date.isoformat()
+        else:
+            sent_date_str = str(sent_date) if sent_date is not None else None
+        rows_out.append(
+            {
+                "ticker": ticker,
+                "price_usd": prices_usd.get(ticker),
+                "price_eur": prices_eur.get(ticker),
+                "ml_signal": pred.get("signal"),
+                "ml_confidence": pred.get("confidence"),
+                "ml_expected_return": pred.get("expected_return"),
+                "signal_as_of": as_of_str,
+                "signal_version": pred.get("version"),
+                "sentiment_weighted": sentiment.get("sentiment"),
+                "sentiment_posts": sentiment.get("posts"),
+                "sentiment_date": sent_date_str,
+                "mentions_today": trend.get("mentions"),
+                "hotness_today": trend.get("hotness"),
+                "weekly_return": weekly,
+                "generated_at": now_ts.isoformat(),
+            }
+        )
+
+    if not rows_out:
+        log.info("Stock overview export skipped – no data rows available.")
+        return None
+
+    OVERVIEW_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"overview-{now_ts.strftime('%Y%m%d-%H%M')}.csv"
+    out_path = OVERVIEW_EXPORT_DIR / filename
+    pd.DataFrame(rows_out).to_csv(out_path, index=False)
+    log.info("📤 Stock overview export: %s", out_path)
+    return out_path
 
 
 def train_model_for_ticker(
@@ -287,6 +432,7 @@ def fetch_updates(tickers: list[str]) -> dict[str, list]:
             tickers,
             ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
             include_comments=True,
+            comment_limit=settings.REDDIT_COMMENT_LIMIT,
         )
         fut_fx = executor.submit(update_fx_rates, DB_PATH)
         try:
@@ -837,6 +983,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 new_auto_symbols,
                 ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
                 include_comments=True,
+                comment_limit=settings.REDDIT_COMMENT_LIMIT,
             )
         except Exception as exc:  # pragma: no cover - reddit hiccup
             log.warning("Reddit-Update für Auto-Ticker fehlgeschlagen: %s", exc)
@@ -886,6 +1033,10 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
             log.warning(f"Alertprüfung fehlgeschlagen: {e}")
 
     train_models(tickers, reddit_posts)
+    try:
+        export_stock_overview(tickers)
+    except Exception as exc:  # pragma: no cover - export optional
+        log.warning("Stock overview export failed: %s", exc)
 
     try:
         overview = generate_overview(tickers, reddit_posts=reddit_posts)

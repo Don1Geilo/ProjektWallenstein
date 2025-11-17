@@ -33,13 +33,37 @@ def main() -> None:
         help="Number of posts to fetch from hot and new each",
     )
     parser.add_argument(
+        "--include-comments",
+        dest="include_comments",
+        action="store_true",
+        help="Include top-level comments from hot posts (default)",
+    )
+    parser.add_argument(
+        "--no-comments",
+        dest="include_comments",
+        action="store_false",
+        help="Disable comment fetching",
+    )
+    parser.set_defaults(include_comments=True)
+    parser.add_argument(
+        "--comment-limit",
+        type=int,
+        default=3,
+        help="Maximum number of comments to fetch per hot post",
+    )
+    parser.add_argument(
         "--output",
         default="data/reddit_posts.json",
         help="Path to output JSON file",
     )
     args = parser.parse_args()
 
-    df = reddit_scraper.fetch_reddit_posts(subreddit=args.subreddit, limit=args.limit)
+    df = reddit_scraper.fetch_reddit_posts(
+        subreddit=args.subreddit,
+        limit=args.limit,
+        include_comments=args.include_comments,
+        comment_limit=args.comment_limit,
+    )
     records = df.to_dict(orient="records")
 
     out_path = Path(args.output)
