@@ -28,6 +28,10 @@ __pycache__/
 dist/
 build/
 
+# --- JavaScript / Node ---
+node_modules/
+package-lock.json
+
 # --- IDE / Editor ---
 .vscode/*
 !.vscode/tasks.json
@@ -41,3 +45,6 @@ build/
 .DS_Store
 
 models/finbert/
+
+# --- Language Resources ---
+nltk_data/

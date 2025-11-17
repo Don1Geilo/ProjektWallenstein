@@ -1,0 +1,26 @@
+{
+  "name": "projektwallenstein",
+  "version": "1.0.0",
+  "description": "This is a ready-to-push bundle. It includes: - Robust price updater with DuckDB storage (Stooq default with Yahoo/Stooq fallback) - Reddit sentiment integration (PRAW) with basic English/German keyword analysis - Telegram alerts (optional) - Machine-learning buy signals with calibrated probability, expected return, backtest win-rate and overview summary",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Don1Geilo/ProjektWallenstein.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Don1Geilo/ProjektWallenstein/issues"
+  },
+  "homepage": "https://github.com/Don1Geilo/ProjektWallenstein#readme",
+  "dependencies": {
+    "openai": "^6.9.0"
+  }
+}
