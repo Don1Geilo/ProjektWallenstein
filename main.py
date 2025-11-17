@@ -354,12 +354,80 @@ def persist_sentiment(reddit_posts: dict[str, list]) -> None:
         log.error(f"❌ Sentiment-Aggregation fehlgeschlagen: {e}")
 
 
+
+def _merge_reddit_posts(existing: list[dict], new_posts: list[dict]) -> int:
+    """Extend ``existing`` with ``new_posts`` while avoiding duplicates by ID."""
+
+    if not new_posts:
+        return 0
+
+    seen_ids = {
+        str(post.get("id"))
+        for post in existing
+        if post.get("id") is not None
+    }
+    added = 0
+    for post in new_posts:
+        pid = post.get("id")
+        key = str(pid) if pid is not None else None
+        if key and key in seen_ids:
+            continue
+        existing.append(post)
+        added += 1
+        if key:
+            seen_ids.add(key)
+    return added
+
+
+def _ensure_post_sentiments(posts: list[dict]) -> None:
+    """Populate missing sentiment scores in-place using VADER/transformers."""
+
+    missing_indices: list[int] = []
+    texts: list[str] = []
+    for idx, post in enumerate(posts):
+        val = post.get("sentiment")
+        try:
+            if val is not None and np.isfinite(float(val)):
+                continue
+        except (TypeError, ValueError):
+            pass
+
+        title = str(post.get("title", "") or "")
+        body = str(
+            post.get("selftext")
+            if post.get("selftext") is not None
+            else post.get("text", "")
+        )
+        combined = (title + " " + body).strip()
+        if not combined:
+            continue
+        missing_indices.append(idx)
+        texts.append(combined)
+
+    if not texts:
+        return
+
+    try:
+        scores = analyze_sentiment_many(texts)
+    except Exception as exc:  # pragma: no cover - robustness
+        log.debug("Sentiment scoring for auto posts failed: %s", exc)
+        return
+
+    for idx, score in zip(missing_indices, scores):
+        try:
+            posts[idx]["sentiment"] = float(score)
+        except Exception:
+            posts[idx]["sentiment"] = None
+
+
+
 def _summarize_post_sentiments(posts: list[dict]) -> tuple[float | None, float | None, int, int]:
     """Return mean, median, number of valid scores and total posts for a bucket."""
 
     total_posts = len(posts)
     if total_posts == 0:
         return None, None, 0, 0
+
 
     scores: list[float] = []
     for post in posts:
@@ -762,6 +830,35 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 )
         except Exception as exc:  # pragma: no cover - best effort
             log.warning("Kursupdate für Auto-Ticker fehlgeschlagen: %s", exc)
+
+        auto_posts: dict[str, list] = {}
+        try:
+            auto_posts = update_reddit_data(
+                new_auto_symbols,
+                ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
+                include_comments=True,
+            )
+        except Exception as exc:  # pragma: no cover - reddit hiccup
+            log.warning("Reddit-Update für Auto-Ticker fehlgeschlagen: %s", exc)
+            auto_posts = {}
+
+        merged_for_sentiment: dict[str, list] = {}
+        if isinstance(auto_posts, dict):
+            for sym in new_auto_symbols:
+                posts = list(auto_posts.get(sym, []) or [])
+                if not posts:
+                    continue
+                bucket = reddit_posts.setdefault(sym, [])
+                added = _merge_reddit_posts(bucket, posts)
+                if added:
+                    merged_for_sentiment[sym] = bucket
+
+        if merged_for_sentiment:
+            try:
+                persist_sentiment(merged_for_sentiment)
+            except Exception as exc:  # pragma: no cover - robustness
+                log.warning("Sentiment-Aktualisierung für Auto-Ticker fehlgeschlagen: %s", exc)
+
 
         sentiment_lines = [
             _format_auto_sentiment_line(

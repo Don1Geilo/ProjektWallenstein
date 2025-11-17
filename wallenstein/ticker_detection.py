@@ -28,6 +28,7 @@ SYMBOL_STOPWORDS: set[str] = {
     "ALL",
     "AND",
     "API",
+    "TO",
     "ATH",
     "BBQ",
     "CEO",
