@@ -111,6 +111,7 @@ def test_auto_sentiment_formatter_without_scores(monkeypatch):
     assert "(3 Beiträge)" in line
 
 
+
 def test_pipeline_fetches_sentiment_for_auto_symbols(tmp_path, monkeypatch):
     os.environ.setdefault("REDDIT_CLIENT_ID", "x")
     os.environ.setdefault("REDDIT_CLIENT_SECRET", "x")
@@ -204,3 +205,4 @@ def test_pipeline_fetches_sentiment_for_auto_symbols(tmp_path, monkeypatch):
     assert auto_msgs, "Auto sentiment notification missing"
     assert "AMD" in auto_msgs[0]
     assert "Ø +0.90" in auto_msgs[0]
+

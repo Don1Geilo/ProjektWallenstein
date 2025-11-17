@@ -354,6 +354,7 @@ def persist_sentiment(reddit_posts: dict[str, list]) -> None:
         log.error(f"❌ Sentiment-Aggregation fehlgeschlagen: {e}")
 
 
+
 def _merge_reddit_posts(existing: list[dict], new_posts: list[dict]) -> int:
     """Extend ``existing`` with ``new_posts`` while avoiding duplicates by ID."""
 
@@ -419,6 +420,7 @@ def _ensure_post_sentiments(posts: list[dict]) -> None:
             posts[idx]["sentiment"] = None
 
 
+
 def _summarize_post_sentiments(posts: list[dict]) -> tuple[float | None, float | None, int, int]:
     """Return mean, median, number of valid scores and total posts for a bucket."""
 
@@ -426,7 +428,6 @@ def _summarize_post_sentiments(posts: list[dict]) -> tuple[float | None, float |
     if total_posts == 0:
         return None, None, 0, 0
 
-    _ensure_post_sentiments(posts)
 
     scores: list[float] = []
     for post in posts:
@@ -857,6 +858,7 @@ def run_pipeline(tickers: list[str] | None = None) -> int:
                 persist_sentiment(merged_for_sentiment)
             except Exception as exc:  # pragma: no cover - robustness
                 log.warning("Sentiment-Aktualisierung für Auto-Ticker fehlgeschlagen: %s", exc)
+
 
         sentiment_lines = [
             _format_auto_sentiment_line(
