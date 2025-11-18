@@ -1,10 +1,10 @@
 import logging
 from collections import Counter
-import logging
 
 import numpy as np
 import pandas as pd
 from scipy.stats import loguniform, randint
+from sklearn.impute import SimpleImputer
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -64,8 +64,48 @@ def _find_optimal_threshold(y_true: pd.Series, y_proba: np.ndarray) -> tuple[flo
     return best_thr, max(best_f1, 0.0)
 
 
+def _calibrate_dual_thresholds(
+    y_true: pd.Series, y_proba: np.ndarray
+) -> tuple[float, float]:
+    """Learn asymmetric buy/sell thresholds based on validation metrics."""
+
+    if y_proba.size == 0 or y_true.empty:
+        return 0.55, 0.45
+
+    thresholds = np.linspace(0.25, 0.75, 21)
+    y_true_arr = np.asarray(y_true, dtype=int)
+
+    best_buy_thr = 0.55
+    best_buy_prec = -1.0
+    best_sell_thr = 0.45
+    best_sell_recall0 = -1.0
+
+    for thr in thresholds:
+        buy_preds = (y_proba >= thr).astype(int)
+        prec = precision_score(y_true_arr, buy_preds, zero_division=0)
+        if prec > best_buy_prec:
+            best_buy_prec = float(prec)
+            best_buy_thr = float(thr)
+
+        neg_mask = y_true_arr == 0
+        if not np.any(neg_mask):
+            continue
+        sell_preds = y_proba <= thr
+        tp_neg = np.sum(sell_preds & neg_mask)
+        fn_neg = np.sum(~sell_preds & neg_mask)
+        recall0 = tp_neg / (tp_neg + fn_neg) if (tp_neg + fn_neg) else 0.0
+        if recall0 > best_sell_recall0:
+            best_sell_recall0 = float(recall0)
+            best_sell_thr = float(thr)
+
+    return best_buy_thr, best_sell_thr
+
+
 def derive_signal_from_proba(
-    next_day_proba: float | None, decision_threshold: float
+    next_day_proba: float | None,
+    buy_threshold: float,
+    sell_threshold: float,
+    expected_return: float | None = None,
 ) -> tuple[str | None, float | None, float | None]:
     """Translate an up-move probability into a trading signal."""
 
@@ -80,12 +120,15 @@ def derive_signal_from_proba(
     if np.isnan(proba):
         return None, None, None
 
-    thr = float(decision_threshold)
-    thr = min(max(thr, 0.0), 1.0)
-    sell_thr = 1.0 - thr
+    buy_thr = min(max(float(buy_threshold), 0.0), 1.0)
+    sell_thr = min(max(float(sell_threshold), 0.0), buy_thr)
 
-    if proba >= thr:
-        return "buy", proba, proba - thr
+    if expected_return is not None and expected_return < 0:
+        down_proba = 1.0 - proba
+        return "sell", down_proba, abs(expected_return)
+
+    if proba >= buy_thr:
+        return "buy", proba, proba - buy_thr
 
     if proba <= sell_thr:
         down_proba = 1.0 - proba
@@ -93,7 +136,7 @@ def derive_signal_from_proba(
 
     down_proba = 1.0 - proba
     confidence = max(proba, down_proba)
-    margin = min(thr - proba, proba - sell_thr)
+    margin = min(buy_thr - proba, proba - sell_thr)
     return "hold", confidence, max(margin, 0.0)
 
 
@@ -161,15 +204,15 @@ def train_per_stock(
     df["Sentiment_lag2"] = df["sentiment"].shift(2)
     df["Sentiment_lag3"] = df["sentiment"].shift(3)
 
-    df["Close_MA3"] = df["close"].rolling(3).mean().shift(1)
-    df["Close_STD3"] = df["close"].rolling(3).std().shift(1)
-    df["Sentiment_MA3"] = df["sentiment"].rolling(3).mean().shift(1)
-    df["Sentiment_STD3"] = df["sentiment"].rolling(3).std().shift(1)
+    df["Close_MA3"] = df["close"].rolling(3, min_periods=1).mean().shift(1)
+    df["Close_STD3"] = df["close"].rolling(3, min_periods=2).std().shift(1)
+    df["Sentiment_MA3"] = df["sentiment"].rolling(3, min_periods=1).mean().shift(1)
+    df["Sentiment_STD3"] = df["sentiment"].rolling(3, min_periods=2).std().shift(1)
 
-    df["Close_MA7"] = df["close"].rolling(7).mean().shift(1)
-    df["Close_STD7"] = df["close"].rolling(7).std().shift(1)
-    df["Sentiment_MA7"] = df["sentiment"].rolling(7).mean().shift(1)
-    df["Sentiment_STD7"] = df["sentiment"].rolling(7).std().shift(1)
+    df["Close_MA7"] = df["close"].rolling(7, min_periods=3).mean().shift(1)
+    df["Close_STD7"] = df["close"].rolling(7, min_periods=3).std().shift(1)
+    df["Sentiment_MA7"] = df["sentiment"].rolling(7, min_periods=3).mean().shift(1)
+    df["Sentiment_STD7"] = df["sentiment"].rolling(7, min_periods=3).std().shift(1)
 
     features = [
         "Close_lag1",
@@ -194,14 +237,18 @@ def train_per_stock(
     df["Return_5d"] = df["close"].pct_change(5, fill_method=None).shift(1)
     df["Return_10d"] = df["close"].pct_change(10, fill_method=None).shift(1)
     df["Sentiment_Change1"] = df["sentiment"].diff().shift(1)
-    df["Sentiment_Momentum3"] = df["sentiment"].diff().rolling(3).sum().shift(1)
-    df["Sentiment_Momentum7"] = df["sentiment"].diff().rolling(7).sum().shift(1)
-    df["Volatility_7d"] = df["close"].pct_change(fill_method=None).rolling(7).std().shift(1)
+    df["Sentiment_Momentum3"] = df["sentiment"].diff().rolling(3, min_periods=1).sum().shift(1)
+    df["Sentiment_Momentum7"] = df["sentiment"].diff().rolling(7, min_periods=1).sum().shift(1)
+    df["Volatility_7d"] = (
+        df["close"].pct_change(fill_method=None).rolling(7, min_periods=2).std().shift(1)
+    )
 
     price_returns = df["close"].pct_change(fill_method=None)
     sentiment_series = df["sentiment"]
-    df["Price_Sentiment_Corr7"] = price_returns.rolling(7).corr(sentiment_series).shift(1)
-    df["Return_Momentum7"] = price_returns.rolling(7).sum().shift(1)
+    df["Price_Sentiment_Corr7"] = (
+        price_returns.rolling(7, min_periods=3).corr(sentiment_series).shift(1)
+    )
+    df["Return_Momentum7"] = price_returns.rolling(7, min_periods=2).sum().shift(1)
 
     features += [
         "Return_1d",
@@ -223,10 +270,10 @@ def train_per_stock(
             df[f"{prefix}_lag1"] = df[col].shift(1)
             df[f"{prefix}_lag2"] = df[col].shift(2)
             df[f"{prefix}_lag3"] = df[col].shift(3)
-            df[f"{prefix}_MA3"] = df[col].rolling(3).mean().shift(1)
-            df[f"{prefix}_STD3"] = df[col].rolling(3).std().shift(1)
-            df[f"{prefix}_MA7"] = df[col].rolling(7).mean().shift(1)
-            df[f"{prefix}_STD7"] = df[col].rolling(7).std().shift(1)
+            df[f"{prefix}_MA3"] = df[col].rolling(3, min_periods=1).mean().shift(1)
+            df[f"{prefix}_STD3"] = df[col].rolling(3, min_periods=2).std().shift(1)
+            df[f"{prefix}_MA7"] = df[col].rolling(7, min_periods=3).mean().shift(1)
+            df[f"{prefix}_STD7"] = df[col].rolling(7, min_periods=3).std().shift(1)
             features += [
                 f"{prefix}_lag1",
                 f"{prefix}_lag2",
@@ -240,7 +287,7 @@ def train_per_stock(
             if prefix == "Volume":
                 df["Volume_Change1"] = df[col].pct_change(fill_method=None).shift(1)
                 df["Volume_Momentum3"] = (
-                    df[col].pct_change(fill_method=None).rolling(3).mean().shift(1)
+                df[col].pct_change(fill_method=None).rolling(3, min_periods=1).mean().shift(1)
                 )
                 features += ["Volume_Change1", "Volume_Momentum3"]
 
@@ -248,8 +295,8 @@ def train_per_stock(
     delta = df["close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
+    avg_gain = gain.rolling(14, min_periods=3).mean()
+    avg_loss = loss.rolling(14, min_periods=3).mean()
     rs = avg_gain / avg_loss.replace(0, pd.NA)
     df["RSI"] = (100 - (100 / (1 + rs))).shift(1)
     df["RSI"] = df["RSI"].replace([float("inf"), float("-inf")], pd.NA)
@@ -264,9 +311,9 @@ def train_per_stock(
     df["MACD_Hist"] = (macd - signal).shift(1)
     features += ["MACD", "MACD_Signal", "MACD_Hist"]
 
-    if hist_len >= 21:
-        bb_ma = df["close"].rolling(20).mean()
-        bb_std = df["close"].rolling(20).std()
+    if hist_len >= 5:
+        bb_ma = df["close"].rolling(20, min_periods=5).mean()
+        bb_std = df["close"].rolling(20, min_periods=5).std()
         df["BB_Middle"] = bb_ma.shift(1)
         df["BB_Upper"] = (bb_ma + 2 * bb_std).shift(1)
         df["BB_Lower"] = (bb_ma - 2 * bb_std).shift(1)
@@ -278,24 +325,24 @@ def train_per_stock(
     invalid_mask = df["close"].isna() | df["future_close"].isna()
     df.loc[invalid_mask, "y"] = np.nan
 
+    df = df.replace([float("inf"), float("-inf")], pd.NA)
+    df[features] = df[features].ffill().fillna(0)
+
     future_mask = df["date"] == future_date
     inference_features: pd.DataFrame | None = None
     if future_mask.any():
         future_slice = df.loc[future_mask, features]
         if not future_slice.empty:
-            last_row = future_slice.iloc[-1]
-            if pd.notna(last_row).all():
-                inference_features = last_row.to_frame().T
+            inference_features = future_slice.tail(1)
 
     df = df.loc[~future_mask].copy()
-    df = df.replace([float("inf"), float("-inf")], pd.NA)
 
     # Tatsächliche Forward-Rendite (gegen aktuellen Schlusskurs) – Basis für Erwartungswerte
     with np.errstate(divide="ignore", invalid="ignore"):
         close_base = df["close"].replace(0, pd.NA)
         df["actual_return"] = (df["future_close"] / close_base) - 1
 
-    df = df.dropna()
+    df = df.dropna(subset=["future_close", "y", "actual_return", "close"])
 
     if len(df) < 2 or df["y"].nunique() < 2:
         if balance_method in {"smote", "undersample"}:
@@ -364,6 +411,7 @@ def train_per_stock(
     param_grid = None
     optuna_distributions = None
     use_optuna = search_method == "optuna"
+    imputer_step = ("imputer", SimpleImputer(strategy="median"))
 
     if model_type == "logistic":
         param_name = "clf__C"
@@ -371,6 +419,7 @@ def train_per_stock(
             model = ImbPipeline(
                 [
                     ("sampler", SMOTE(random_state=42, k_neighbors=k_neighbors)),
+                    imputer_step,
                     ("scaler", StandardScaler()),
                     ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
@@ -379,6 +428,7 @@ def train_per_stock(
             model = ImbPipeline(
                 [
                     ("sampler", RandomUnderSampler(random_state=42)),
+                    imputer_step,
                     ("scaler", StandardScaler()),
                     ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
@@ -386,6 +436,7 @@ def train_per_stock(
         else:
             model = Pipeline(
                 [
+                    imputer_step,
                     ("scaler", StandardScaler()),
                     ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
                 ]
@@ -398,39 +449,46 @@ def train_per_stock(
             optuna_distributions = {"clf__C": ("float_log", 1e-4, 1e2)}
 
     elif model_type == "random_forest":
-        model = RandomForestClassifier(random_state=42)
-        param_grid = {"n_estimators": [50, 100, 200], "max_depth": [3, 5, None]}
+        model = Pipeline(
+            [("imputer", SimpleImputer(strategy="median")), ("clf", RandomForestClassifier(random_state=42))]
+        )
+        param_grid = {"clf__n_estimators": [50, 100, 200], "clf__max_depth": [3, 5, None]}
         if search_method == "random":
             param_distributions = {
-                "n_estimators": randint(50, 401),
-                "max_depth": [3, 5, 7, None],
-                "min_samples_split": randint(2, 11),
+                "clf__n_estimators": randint(50, 401),
+                "clf__max_depth": [3, 5, 7, None],
+                "clf__min_samples_split": randint(2, 11),
             }
         elif use_optuna:
             optuna_distributions = {
-                "n_estimators": ("int", 50, 400),
-                "max_depth": ("cat", [3, 5, 7, None]),
-                "min_samples_split": ("int", 2, 10),
+                "clf__n_estimators": ("int", 50, 400),
+                "clf__max_depth": ("cat", [3, 5, 7, None]),
+                "clf__min_samples_split": ("int", 2, 10),
             }
 
     elif model_type == "gradient_boosting":
-        model = GradientBoostingClassifier(random_state=42)
+        model = Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("clf", GradientBoostingClassifier(random_state=42)),
+            ]
+        )
         param_grid = {
-            "n_estimators": [50, 100, 200],
-            "learning_rate": [0.01, 0.1, 0.2],
-            "max_depth": [3, 5],
+            "clf__n_estimators": [50, 100, 200],
+            "clf__learning_rate": [0.01, 0.1, 0.2],
+            "clf__max_depth": [3, 5],
         }
         if search_method == "random":
             param_distributions = {
-                "n_estimators": randint(50, 201),
-                "learning_rate": loguniform(1e-3, 1e-1),
-                "max_depth": randint(3, 6),
+                "clf__n_estimators": randint(50, 201),
+                "clf__learning_rate": loguniform(1e-3, 1e-1),
+                "clf__max_depth": randint(3, 6),
             }
         elif use_optuna:
             optuna_distributions = {
-                "n_estimators": ("int", 50, 200),
-                "learning_rate": ("float_log", 0.01, 0.2),
-                "max_depth": ("int", 3, 5),
+                "clf__n_estimators": ("int", 50, 200),
+                "clf__learning_rate": ("float_log", 0.01, 0.2),
+                "clf__max_depth": ("int", 3, 5),
             }
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
@@ -576,6 +634,7 @@ def train_per_stock(
             roc_auc = None
 
     decision_threshold = 0.5
+    sell_threshold = 0.5
     if y_proba is not None and len(y_proba) == len(y_eval):
         thr, best_f1 = _find_optimal_threshold(y_eval, y_proba)
         tuned_pred = (y_proba >= thr).astype(int)
@@ -592,6 +651,10 @@ def train_per_stock(
                 base_f1,
                 f1,
             )
+
+        buy_thr, sell_thr = _calibrate_dual_thresholds(y_eval, y_proba)
+        decision_threshold = float(buy_thr)
+        sell_threshold = float(sell_thr)
 
     final_series = pd.Series(final_pred, index=df_eval.index)
     avg_return = backtest_strategy(df_eval, final_series)
@@ -651,13 +714,6 @@ def train_per_stock(
             next_proba = best_model.predict_proba(inference_features[features])[:, 1]
             if len(next_proba):
                 next_day_proba = float(next_proba[0])
-                (
-                    next_signal,
-                    confidence_val,
-                    probability_margin,
-                ) = derive_signal_from_proba(next_day_proba, decision_threshold)
-                if probability_margin is not None:
-                    probability_margin = float(probability_margin)
                 base_pos = avg_positive_return
                 base_neg = avg_negative_return
                 if base_pos is not None or base_neg is not None:
@@ -669,24 +725,37 @@ def train_per_stock(
                         expected_return = float(next_day_proba * base_pos)
                     elif base_neg is not None:
                         expected_return = float((1 - next_day_proba) * base_neg)
+                (
+                    next_signal,
+                    confidence_val,
+                    probability_margin,
+                ) = derive_signal_from_proba(
+                    next_day_proba,
+                    decision_threshold,
+                    sell_threshold,
+                    expected_return,
+                )
+                if probability_margin is not None:
+                    probability_margin = float(probability_margin)
         except Exception as exc:  # pragma: no cover - prediction optional
             log.debug("Next-day probability estimation failed: %s", exc)
 
     if next_day_proba is not None:
         down_proba = 1.0 - next_day_proba
         log.info(
-            "Next-day up-move probability: %.2f (down %.2f) → %s (threshold %.2f, margin %.2f)",
+            "Next-day up-move probability: %.2f (down %.2f) → %s (buy %.2f / sell %.2f, margin %.2f)",
             next_day_proba,
             down_proba,
             next_signal,
             decision_threshold,
+            sell_threshold,
             probability_margin if probability_margin is not None else float("nan"),
         )
 
     meta: dict | None = {
         "next_day_proba": next_day_proba,
         "decision_threshold": decision_threshold,
-        "decision_threshold_sell": 1.0 - decision_threshold,
+        "decision_threshold_sell": sell_threshold,
         "signal": next_signal,
         "confidence": confidence_val,
         "horizon_days": 1,

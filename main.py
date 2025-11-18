@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -93,9 +94,48 @@ from wallenstein.trending import (
 
 
 AUTO_WATCHLIST_MAX_NEW = 3
-AUTO_WATCHLIST_MIN_MENTIONS = 30
-AUTO_WATCHLIST_MIN_LIFT = 4.0
+AUTO_WATCHLIST_MIN_MENTIONS = settings.AUTO_WATCHLIST_DEFAULT_MIN_MENTIONS
+AUTO_WATCHLIST_MIN_LIFT = settings.AUTO_WATCHLIST_DEFAULT_MIN_LIFT
 OVERVIEW_EXPORT_DIR = Path("stockOverview")
+
+_RAW_WATCHLIST_RULES = settings.AUTO_WATCHLIST_RULES or ".*.DE:15:2.5,DEFAULT:25:3.5"
+
+
+def _parse_watchlist_rules(raw_rules: str) -> list[tuple[re.Pattern | None, int, float]]:
+    rules: list[tuple[re.Pattern | None, int, float]] = []
+    for part in raw_rules.split(","):
+        if ":" not in part:
+            continue
+        try:
+            pattern_str, min_mentions_str, min_lift_str = part.split(":", 2)
+            mentions_val = int(min_mentions_str)
+            lift_val = float(min_lift_str)
+        except ValueError:
+            continue
+        pattern_str = pattern_str.strip()
+        if pattern_str.lower() == "default":
+            rules.append((None, mentions_val, lift_val))
+            continue
+        try:
+            pattern = re.compile(pattern_str)
+        except re.error:
+            continue
+        rules.append((pattern, mentions_val, lift_val))
+    return rules
+
+
+WATCHLIST_RULES = _parse_watchlist_rules(_RAW_WATCHLIST_RULES)
+if not any(pat is None for pat, *_ in WATCHLIST_RULES):
+    WATCHLIST_RULES.append(
+        (None, AUTO_WATCHLIST_MIN_MENTIONS, AUTO_WATCHLIST_MIN_LIFT)
+    )
+
+
+def resolve_watchlist_thresholds(symbol: str) -> tuple[int, float]:
+    for pattern, mentions_val, lift_val in WATCHLIST_RULES:
+        if pattern is None or pattern.search(symbol):
+            return mentions_val, lift_val
+    return AUTO_WATCHLIST_MIN_MENTIONS, AUTO_WATCHLIST_MIN_LIFT
 
 
 def resolve_tickers(override: str | None = None) -> list[str]:
@@ -129,6 +169,7 @@ def resolve_tickers(override: str | None = None) -> list[str]:
                     max_new=AUTO_WATCHLIST_MAX_NEW,
                     min_mentions=AUTO_WATCHLIST_MIN_MENTIONS,
                     min_lift=AUTO_WATCHLIST_MIN_LIFT,
+                    thresholds_for_symbol=resolve_watchlist_thresholds,
                 )
                 if added_syms:
                     log.info(
@@ -430,7 +471,7 @@ def fetch_updates(tickers: list[str]) -> dict[str, list]:
         fut_reddit = executor.submit(
             update_reddit_data,
             tickers,
-            ["wallstreetbets", "wallstreetbetsGer", "mauerstrassenwetten"],
+            settings.REDDIT_SUBREDDITS,
             include_comments=True,
             comment_limit=settings.REDDIT_COMMENT_LIMIT,
         )
@@ -654,13 +695,39 @@ def generate_trends(reddit_posts: dict[str, list]) -> dict[str, list]:
 
     try:
         with duckdb.connect(DB_PATH) as con:
-            cands = scan_reddit_for_candidates(
-                con,
-                lookback_days=7,
-                window_hours=24,
-                min_mentions=20,
-                min_lift=3.0,
+            aggregated: dict[str, object] = {}
+            for lookback in settings.TREND_LOOKBACK_DAYS:
+                for window in settings.TREND_WINDOW_HOURS:
+                    try:
+                        cands_window = scan_reddit_for_candidates(
+                            con,
+                            lookback_days=lookback,
+                            window_hours=window,
+                            min_mentions=settings.TREND_MIN_MENTIONS,
+                            min_lift=settings.TREND_MIN_LIFT,
+                            use_weighted=settings.TREND_USE_WEIGHTED,
+                            lift_quantile=settings.TREND_LIFT_QUANTILE,
+                        )
+                    except Exception as exc:
+                        log.debug(
+                            "Trendscan failed for lookback %s / window %s: %s",
+                            lookback,
+                            window,
+                            exc,
+                        )
+                        continue
+
+                    for cand in cands_window:
+                        best = aggregated.get(cand.symbol)
+                        if best is None or getattr(cand, "trend", 0) > getattr(best, "trend", 0):
+                            aggregated[cand.symbol] = cand
+
+            cands = sorted(
+                aggregated.values(),
+                key=lambda x: (int(getattr(x, "is_known", True)), getattr(x, "trend", 0), getattr(x, "lift", 0), getattr(x, "mentions_24h", 0)),
+                reverse=True,
             )
+
             if cands:
                 known_candidates = [c for c in cands if getattr(c, "is_known", True)]
                 unknown_candidates = [
@@ -719,6 +786,7 @@ def generate_trends(reddit_posts: dict[str, list]) -> dict[str, list]:
                 max_new=AUTO_WATCHLIST_MAX_NEW,
                 min_mentions=AUTO_WATCHLIST_MIN_MENTIONS,
                 min_lift=AUTO_WATCHLIST_MIN_LIFT,
+                thresholds_for_symbol=resolve_watchlist_thresholds,
             )
             if added_symbols:
                 log.info(
@@ -928,6 +996,12 @@ def train_models(tickers: list[str], reddit_posts: dict[str, list]) -> None:
                                 )
                         except Exception as exc:  # pragma: no cover - DB best effort
                             log.warning("%s: Prediction storage failed: %s", t, exc)
+                    else:
+                        log.info(
+                            "%s: Model trained but no actionable next-day proba (samples=%s)",
+                            t,
+                            meta.get("sample_size"),
+                        )
 
 
 # ---------- Main ----------

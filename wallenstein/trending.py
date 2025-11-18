@@ -353,6 +353,7 @@ def scan_reddit_for_candidates(
     min_lift: float = 3.0,
     k_smooth: float = 0.5,  # Laplace-Glättung
     use_weighted: bool = False,  # Upvotes/Kommentare gewichten?
+    lift_quantile: float | None = None,
 ) -> list[TrendCandidate]:
     """
     Liefert sortierte Trendkandidaten (trend desc).
@@ -440,6 +441,17 @@ def scan_reddit_for_candidates(
         # Laplace: +k in Zähler und Nenner
         baseline_rate_per_h[s] = (base_val + k_smooth) / (base_hours + k_smooth)
 
+    effective_min_lift = float(min_lift)
+    if lift_quantile is not None and baseline_rate_per_h:
+        try:
+            q_val = float(np.quantile(list(baseline_rate_per_h.values()), lift_quantile))
+            if q_val < 1.0:
+                effective_min_lift = max(1.5, min_lift * max(q_val, 0.1))
+            else:
+                effective_min_lift = max(min_lift, min_lift * (q_val / max(1.0, base_hours / window_hours)))
+        except Exception:
+            effective_min_lift = float(min_lift)
+    
     # Kandidaten bauen
     candidates: list[TrendCandidate] = []
     unknown_symbols: set[str] = set()
@@ -452,7 +464,7 @@ def scan_reddit_for_candidates(
         expected_24h = max(1e-6, rate * window_hours)
         lift = float(mentions) / expected_24h
         trend = lift * math.log1p(max(0, mentions))
-        if lift >= min_lift:
+        if lift >= effective_min_lift:
             is_known = s in known_symbols
             if not is_known:
                 unknown_symbols.add(s)
@@ -559,6 +571,7 @@ def auto_add_candidates_to_watchlist(
     max_new: int = 3,
     min_mentions: int = 30,
     min_lift: float = 4.0,
+    thresholds_for_symbol=None,
 ) -> list[str]:
     ensure_trending_tables(con)
     # Ensure the watchlist table exists – fresh databases on CI might not have
@@ -602,10 +615,21 @@ def auto_add_candidates_to_watchlist(
             continue
         if sym not in known_symbols:
             continue
-        if mentions >= min_mentions and lift >= min_lift:
+        sym_min_mentions, sym_min_lift = min_mentions, min_lift
+        if thresholds_for_symbol:
+            try:
+                candidate_thresholds = thresholds_for_symbol(sym)
+                if candidate_thresholds:
+                    sym_min_mentions, sym_min_lift = candidate_thresholds
+            except Exception:
+                pass
+        if mentions >= sym_min_mentions and lift >= sym_min_lift:
             con.execute(
                 "INSERT OR REPLACE INTO watchlist (chat_id, symbol, note) VALUES ('_GLOBAL_', ?, ?)",
-                [sym, f"auto-added {mentions} m24h, lift {lift:.1f}, trend {trend:.2f}"],
+                [
+                    sym,
+                    f"auto-added {mentions} m24h, lift {lift:.1f}, trend {trend:.2f}",
+                ],
             )
             added.append(sym)
 
