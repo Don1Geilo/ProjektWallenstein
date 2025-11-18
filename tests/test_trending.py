@@ -274,3 +274,33 @@ def test_scan_candidates_prefers_display_order_for_weekly(monkeypatch):
         cand = next(c for c in candidates if c.symbol == sym)
         assert cand.weekly_return == pytest.approx(weekly_values[sym])
 
+
+def test_scan_candidates_adds_weekly_for_unknown_symbols(monkeypatch):
+    con = duckdb.connect(database=":memory:")
+    ensure_tables(con)
+
+    add_alias(con, "TSLA", "tesla")
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("p1", now - timedelta(hours=1), "🚀 $NEW to the moon", "", 42),
+        ("p2", now - timedelta(hours=2), "$TSLA steady", "", 30),
+        ("p3", now - timedelta(hours=3), "Buying TSLA", "", 15),
+    ]
+    _insert_posts(con, rows)
+
+    monkeypatch.setattr(trending, "_weekly_return_from_db", lambda *_: None)
+    monkeypatch.setattr(
+        trending, "_weekly_return_from_yfinance", lambda symbol: {"NEW": 0.11}.get(symbol)
+    )
+
+    candidates = scan_reddit_for_candidates(
+        con,
+        lookback_days=2,
+        window_hours=24,
+        min_mentions=1,
+        min_lift=1.0,
+    )
+
+    new_candidate = next(c for c in candidates if c.symbol == "NEW")
+    assert new_candidate.weekly_return == pytest.approx(0.11)
+

@@ -1,5 +1,6 @@
 import logging
 from collections import Counter
+import logging
 
 import numpy as np
 import pandas as pd
@@ -197,6 +198,11 @@ def train_per_stock(
     df["Sentiment_Momentum7"] = df["sentiment"].diff().rolling(7).sum().shift(1)
     df["Volatility_7d"] = df["close"].pct_change(fill_method=None).rolling(7).std().shift(1)
 
+    price_returns = df["close"].pct_change(fill_method=None)
+    sentiment_series = df["sentiment"]
+    df["Price_Sentiment_Corr7"] = price_returns.rolling(7).corr(sentiment_series).shift(1)
+    df["Return_Momentum7"] = price_returns.rolling(7).sum().shift(1)
+
     features += [
         "Return_1d",
         "Return_3d",
@@ -206,6 +212,8 @@ def train_per_stock(
         "Sentiment_Momentum3",
         "Sentiment_Momentum7",
         "Volatility_7d",
+        "Price_Sentiment_Corr7",
+        "Return_Momentum7",
     ]
 
     # --- Optional OHLCV features
