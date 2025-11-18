@@ -34,6 +34,43 @@ def _as_bool(v: str | None, default: bool = False) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "y")
 
 
+def _parse_int_list(value: str | None, default: list[int]) -> list[int]:
+    if value is None:
+        return default
+    items = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            items.append(int(part))
+        except ValueError:
+            continue
+    return items or default
+
+
+def _parse_float_list(value: str | None, default: list[float]) -> list[float]:
+    if value is None:
+        return default
+    items: list[float] = []
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            items.append(float(part))
+        except ValueError:
+            continue
+    return items or default
+
+
+def _parse_str_list(value: str | None, default: list[str]) -> list[str]:
+    if value is None:
+        return default
+    items = [p.strip() for p in value.split(",") if p.strip()]
+    return items or default
+
+
 # wallenstein/config.py  (nur der relevante Ausschnitt in Settings)
 
 
@@ -71,9 +108,36 @@ class Settings:
     MAX_RETRIES = int(_get("MAX_RETRIES") or "5")
     PIPELINE_MAX_WORKERS = int(_get("PIPELINE_MAX_WORKERS") or "4")
     REDDIT_COMMENT_LIMIT = int(_get("REDDIT_COMMENT_LIMIT") or "3")
+    REDDIT_SUBREDDITS = _parse_str_list(
+        _get("REDDIT_SUBREDDITS"),
+        [
+            "wallstreetbets",
+            "wallstreetbetsGer",
+            "mauerstrassenwetten",
+            "stocks",
+            "Investing",
+            "Finanzen",
+            "FinanzielleFreiheit",
+        ],
+    )
 
     WALLENSTEIN_TICKERS = _get("WALLENSTEIN_TICKERS") or "NVDA,AMZN,SMCI,TSLA,RHM.DE,NVO,UNH"
     WALLENSTEIN_DATA_SOURCE = (_get("WALLENSTEIN_DATA_SOURCE") or "stooq").lower()
+
+    TREND_LOOKBACK_DAYS = _parse_int_list(_get("TREND_LOOKBACK_DAYS"), [3, 7])
+    TREND_WINDOW_HOURS = _parse_int_list(_get("TREND_WINDOW_HOURS"), [12, 24])
+    TREND_MIN_MENTIONS = int(_get("TREND_MIN_MENTIONS") or "20")
+    TREND_MIN_LIFT = float(_get("TREND_MIN_LIFT") or "3.0")
+    TREND_LIFT_QUANTILE = float(_get("TREND_LIFT_QUANTILE") or "0.6")
+    TREND_USE_WEIGHTED = _as_bool(_get("TREND_USE_WEIGHTED"), default=True)
+
+    AUTO_WATCHLIST_RULES = _get("AUTO_WATCHLIST_RULES")
+    AUTO_WATCHLIST_DEFAULT_MIN_MENTIONS = int(
+        _get("AUTO_WATCHLIST_DEFAULT_MIN_MENTIONS") or "25"
+    )
+    AUTO_WATCHLIST_DEFAULT_MIN_LIFT = float(
+        _get("AUTO_WATCHLIST_DEFAULT_MIN_LIFT") or "3.5"
+    )
 
     DATA_RETENTION_DAYS = int(_get("DATA_RETENTION_DAYS") or "30")
     SENTIMENT_BACKEND = (_get("SENTIMENT_BACKEND") or "finbert").lower()
