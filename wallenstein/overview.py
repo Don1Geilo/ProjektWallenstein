@@ -105,7 +105,31 @@ def generate_overview(
         return "🔥" * count
 
 
+    def _count_posts_and_comments(
+        posts_mapping: dict[str, list[dict]] | None,
+    ) -> tuple[int, int]:
+        posts_total = 0
+        comments_total = 0
+        if not posts_mapping:
+            return posts_total, comments_total
+
+        for posts in posts_mapping.values():
+            for post in posts or []:
+                posts_total += 1
+                pid = post.get("id")
+                if isinstance(pid, str) and "_" in pid:
+                    comments_total += 1
+
+        return posts_total, comments_total
+
+    posts_analyzed, comments_analyzed = _count_posts_and_comments(reddit_posts)
+
     detail_lines: list[str] = ["📊 Wallenstein Markt-Update"]
+
+    if reddit_posts is not None:
+        detail_lines.append(f"Reddit Posts analysiert: {posts_analyzed}")
+        detail_lines.append(f"💬 Kommentare analysiert: {comments_analyzed}")
+        detail_lines.append("")
 
 
     multi_hits: list[tuple[str, int]] = []
@@ -421,6 +445,7 @@ def generate_overview(
             return f"Heißeste Diskussion: {ticker} (" + ", ".join(parts) + ")"
 
         compact_lines.append("⚡️ Schnellüberblick")
+        compact_lines.append(f"💬 Kommentare analysiert: {comments_analyzed}")
         compact_lines.append(_format_buy_summary())
         sell_summary = _format_sell_summary()
         if sell_summary:
