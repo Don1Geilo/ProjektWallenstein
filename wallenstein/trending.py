@@ -478,9 +478,7 @@ def scan_reddit_for_candidates(
         reverse=True,
     )
 
-    fetch_order = [c.symbol for c in sorted_candidates if c.is_known]
-    if not fetch_order:
-        fetch_order = [c.symbol for c in sorted_candidates]
+    fetch_order = [c.symbol for c in sorted_candidates]
     weekly_returns = fetch_weekly_returns(con, fetch_order, max_symbols=10)
     if weekly_returns:
         for cand in sorted_candidates:

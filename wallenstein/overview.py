@@ -8,6 +8,7 @@ import duckdb
 
 from wallenstein.config import settings
 
+from .correlations import compute_price_sentiment_correlations
 from .db_utils import get_latest_prices
 from .trending import fetch_weekly_returns
 
@@ -160,6 +161,7 @@ def generate_overview(
             trending_rows = []
 
         weekly_map: dict[str, float] = {}
+        correlation_map: dict[str, dict[str, float | int | None]] = {}
         weekly_targets: list[str] = []
         for sym in tickers:
             if sym not in weekly_targets:
@@ -180,6 +182,13 @@ def generate_overview(
             except Exception:
                 weekly_map = {}
 
+            try:
+                correlation_map = compute_price_sentiment_correlations(
+                    con, weekly_targets, min_samples=5
+                )
+            except Exception:
+                correlation_map = {}
+
         # --- ML Signale (Buy/Sell) ---
         if trending_rows:
             detail_lines.append("")
@@ -189,9 +198,13 @@ def generate_overview(
                 emoji = _hotness_to_emoji(hotness)
                 suffix = f" {emoji}" if emoji else ""
                 entry = f"- {ticker}: {int(mentions)} Mentions, AvgUp {avg_val:.1f}"
-                weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
+                symbol_key = str(ticker).upper()
+                weekly = weekly_map.get(symbol_key) if weekly_map else None
                 if weekly is not None:
                     entry += f", 7d {weekly * 100:+.1f}%"
+                corr = correlation_map.get(symbol_key) if correlation_map else None
+                if corr and corr.get("pearson") is not None:
+                    entry += f", Corr {float(corr['pearson']):+.2f} (n={corr['samples']})"
                 entry += suffix
                 detail_lines.append(entry)
 
@@ -201,9 +214,13 @@ def generate_overview(
 
             for ticker, count in multi_hits:
                 entry = f"- {ticker}: {count} Posts"
-                weekly = weekly_map.get(str(ticker).upper()) if weekly_map else None
+                symbol_key = str(ticker).upper()
+                weekly = weekly_map.get(symbol_key) if weekly_map else None
                 if weekly is not None:
                     entry += f", 7d {weekly * 100:+.1f}%"
+                corr = correlation_map.get(symbol_key) if correlation_map else None
+                if corr and corr.get("pearson") is not None:
+                    entry += f", Corr {float(corr['pearson']):+.2f} (n={corr['samples']})"
                 detail_lines.append(entry)
 
         if trending_rows or multi_hits:
