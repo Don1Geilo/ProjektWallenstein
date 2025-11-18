@@ -139,7 +139,7 @@ class Settings:
         _get("AUTO_WATCHLIST_DEFAULT_MIN_LIFT") or "3.5"
     )
 
-    DATA_RETENTION_DAYS = int(_get("DATA_RETENTION_DAYS") or "30")
+    DATA_RETENTION_DAYS = int(_get("DATA_RETENTION_DAYS") or "180")
     SENTIMENT_BACKEND = (_get("SENTIMENT_BACKEND") or "finbert").lower()
 
 

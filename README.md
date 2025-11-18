@@ -23,6 +23,20 @@ python -m bot.telegram_bot  # optional: manage watchlist via Telegram
 
 The main pipeline reads symbols from the watchlist and exits with a warning if none exist.
 
+### Historical backfills
+
+The daily pipeline keeps the working set compact by purging rows older than
+``DATA_RETENTION_DAYS``.  To refill the database with older price history run:
+
+```bash
+python scripts/backfill_prices.py --days 365 --include-watchlist
+```
+
+The helper forces :func:`wallenstein.stock_data.update_prices` to reload data
+starting from the chosen date (default 180 days back) for either a custom
+symbol list (`--tickers` or `--tickers-file`) or the configured watchlist/env
+tickers.
+
 ## Install (reproducible)
 
 Core dependencies live in `requirements-base.txt`. Heavy ML extras (FinBERT,
@@ -61,6 +75,7 @@ pre-commit install
   keyword approach. Set to `1`/`true` to force BERT or `0`/`false` to force the
   keyword method.
 - `PIPELINE_MAX_WORKERS` = number of parallel threads for price, Reddit and FX updates (default `4`)
+- `DATA_RETENTION_DAYS` = Aufbewahrungszeitraum für Preise und Reddit-Posts in DuckDB (default `180`)
 
 ### Structure
 ```

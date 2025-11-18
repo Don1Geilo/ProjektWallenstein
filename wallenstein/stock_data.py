@@ -599,15 +599,36 @@ def _yahoo_fetch_many(
 # ------------------------------------------------------------------------------
 
 
-def update_prices(db_path: str, tickers: List[str]) -> int:
+def update_prices(
+    db_path: str,
+    tickers: List[str],
+    *,
+    start_date: str | date | pd.Timestamp | None = None,
+) -> int:
     """
     Schreibt Daily-Kurse ins DuckDB-Schema 'prices'.
     Quelle per ENV (WALLENSTEIN_DATA_SOURCE):
       - 'yahoo'  (primär Yahoo, Stooq-Fallback)
       - 'stooq'  (primär Stooq, Yahoo-Fallback)
+    Optional kann ``start_date`` gesetzt werden, um explizit ab diesem Datum
+    (inklusiv) neu zu laden – unabhängig davon, welche Daten bereits lokal
+    vorliegen. Das ist nützlich für Backfills.
     """
     if not tickers:
         raise ValueError("Keine Ticker übergeben.")
+
+    start_override: pd.Timestamp | None = None
+    if start_date is not None:
+        try:
+            start_override = pd.to_datetime(start_date, utc=False)
+        except Exception as exc:  # pragma: no cover - defensive conversion
+            raise ValueError(f"Ungültiges start_date: {start_date}") from exc
+        if pd.isna(start_override):
+            raise ValueError(f"Ungültiges start_date: {start_date}")
+        # Timestamps ohne Uhrzeit, damit Vergleiche konsistent sind
+        if getattr(start_override, "tzinfo", None) is not None:
+            start_override = start_override.tz_convert(None)
+        start_override = start_override.normalize()
 
     con = _connect(db_path)
     try:
@@ -635,6 +656,9 @@ def update_prices(db_path: str, tickers: List[str]) -> int:
             # Start-Datum je Ticker (None => Voll-Download)
             start_map: Dict[str, Optional[pd.Timestamp]] = {}
             for t in tickers:
+                if start_override is not None:
+                    start_map[t] = start_override
+                    continue
                 ld = last_map.get(t)
                 if pd.notna(ld):
                     start_map[t] = pd.Timestamp(ld) + pd.Timedelta(days=1)

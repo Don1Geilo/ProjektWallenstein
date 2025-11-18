@@ -156,9 +156,10 @@ def _count_weighted_mentions(
     """Count mentions weighted by upvotes and comment volume."""
     counts: dict[str, float] = {}
     ups_series = df.get("ups", df.get("upvotes", 0))
-    ups = pd.to_numeric(ups_series, errors="coerce").fillna(0).astype(float)
+    ups = pd.to_numeric(ups_series, errors="coerce").fillna(0).clip(lower=0).astype(float)
     com_series = df.get("num_comments", 0)
-    com = pd.to_numeric(com_series, errors="coerce").fillna(0).astype(float)
+    com = pd.to_numeric(com_series, errors="coerce").fillna(0).clip(lower=0).astype(float)
+    # Clamp to non-negative before log10 to avoid runtime warnings when Reddit reports negative values
     weights = 1.0 + ups.add(1).apply(math.log10) + 0.2 * com.add(1).apply(math.log10)
     texts = df["text"].astype(str)
     if len(texts) != len(weights):
@@ -658,4 +659,3 @@ def _normalise_symbol(sym: str | None) -> str | None:
     if not re.fullmatch(r"[A-Z0-9]+(?:[.\-][A-Z0-9]+)*", symbol):
         return None
     return symbol
-
