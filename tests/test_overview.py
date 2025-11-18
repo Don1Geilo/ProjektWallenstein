@@ -176,6 +176,34 @@ def test_generate_overview_lists_multi_hits(monkeypatch, tmp_path):
 
 
 
+
+def test_generate_overview_counts_comments(monkeypatch, tmp_path):
+    db_path = tmp_path / 'db.duckdb'
+    duckdb.connect(str(db_path)).close()
+
+    monkeypatch.setattr(
+        'wallenstein.overview.get_latest_prices',
+        lambda db_path, tickers, use_eur=False: {t: 1.0 for t in tickers},
+    )
+    monkeypatch.setattr('wallenstein.overview.DB_PATH', str(db_path))
+    monkeypatch.setattr(
+        'wallenstein.overview.fetch_weekly_returns',
+        lambda *args, **kwargs: {str(sym).upper(): 0.05 for sym in args[1]},
+    )
+
+    reddit_posts = {
+        'MSFT': [
+            {'id': 'a1', 'title': 'Headline', 'text': 'Post body'},
+            {'id': 'a1_c1', 'title': '', 'text': 'First comment'},
+            {'id': 'a2_c2', 'title': '', 'text': 'Second comment'},
+        ]
+    }
+
+    result = generate_overview(['MSFT'], reddit_posts=reddit_posts)
+
+    assert '💬 Kommentare analysiert: 2' in result.compact
+    assert 'Reddit Posts analysiert: 3' in result.detailed
+
 def test_generate_overview_includes_weekly_line(monkeypatch, tmp_path):
     db_path = tmp_path / 'db.duckdb'
     duckdb.connect(str(db_path)).close()
