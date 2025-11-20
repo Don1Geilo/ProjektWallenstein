@@ -53,3 +53,11 @@ def test_alias_variants_strip_suffixes():
     assert "apple inc" in variants
     # Ensure suffix removal handled
     assert "apple inc." not in variants
+
+
+def test_symbol_stopwords_filter_common_words():
+    texts = ["$THE market is volatile", "#if only we knew", "$A setup", "$B", "$AS"]
+
+    stats = extract_candidate_symbols(texts)
+
+    assert stats == {}
