@@ -25,6 +25,7 @@ PLAIN_TICKER_PATTERN = re.compile(
 # not tickers.  This helps to avoid unnecessary lookups against yfinance.
 SYMBOL_STOPWORDS: set[str] = {
     "A",
+    "AN",
     "AI",
     "ALL",
     "AND",
@@ -42,6 +43,7 @@ SYMBOL_STOPWORDS: set[str] = {
     "DM",
     "DNA",
     "DT",
+    "ES",
     "ETF",
     "EU",
     "EV",
@@ -55,6 +57,7 @@ SYMBOL_STOPWORDS: set[str] = {
     "IT",
     "LOL",
     "MOON",
+    "NEED",
     "OTC",
     "PM",
     "PUMP",
