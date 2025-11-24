@@ -56,7 +56,16 @@ def test_alias_variants_strip_suffixes():
 
 
 def test_symbol_stopwords_filter_common_words():
-    texts = ["$THE market is volatile", "#if only we knew", "$A setup", "$B", "$AS"]
+    texts = [
+        "$THE market is volatile",
+        "#if only we knew",
+        "$A setup",
+        "$B",
+        "$AS",
+        "$AN",
+        "$ES",
+        "$NEED",
+    ]
 
     stats = extract_candidate_symbols(texts)
 
