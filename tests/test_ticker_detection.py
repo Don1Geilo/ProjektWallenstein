@@ -65,6 +65,15 @@ def test_symbol_stopwords_filter_common_words():
         "$AN",
         "$ES",
         "$NEED",
+        "$ABER",
+        "$SOME",
+        "$YOU",
+        "$LONG",
+        "$FOR",
+        "$BE",
+        "$DE",
+        "$IHR",
+        "$NOW",
     ]
 
     stats = extract_candidate_symbols(texts)
