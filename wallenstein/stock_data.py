@@ -790,8 +790,26 @@ def update_prices(
             validate_df(df_all, "prices")
             log.debug("total new/refresh rows=%s", len(df_all))
 
-            # In temp table
-            con.execute("CREATE TEMP TABLE tmp_prices AS SELECT * FROM df_all")
+            # In temp table (explicit casts to avoid dtype inference issues)
+            con.register("df_all", df_all)
+            try:
+                con.execute(
+                    """
+                    CREATE TEMP TABLE tmp_prices AS
+                    SELECT
+                        CAST(date AS DATE) AS date,
+                        CAST(ticker AS VARCHAR) AS ticker,
+                        CAST(open AS DOUBLE) AS open,
+                        CAST(high AS DOUBLE) AS high,
+                        CAST(low AS DOUBLE) AS low,
+                        CAST(close AS DOUBLE) AS close,
+                        CAST(adj_close AS DOUBLE) AS adj_close,
+                        CAST(volume AS BIGINT) AS volume
+                    FROM df_all
+                    """
+                )
+            finally:
+                con.unregister("df_all")
 
             # Upsert: MERGE (wenn möglich) -> sonst DELETE+INSERT
             try:
@@ -903,7 +921,20 @@ def update_fx_rates(db_path: str) -> int:
             return 0
 
         df = df.sort_values("date").drop_duplicates(subset=["date", "pair"])
-        con.execute("CREATE TEMP TABLE tmp_fx AS SELECT * FROM df")
+        con.register("df", df)
+        try:
+            con.execute(
+                """
+                CREATE TEMP TABLE tmp_fx AS
+                SELECT
+                    CAST(date AS DATE) AS date,
+                    CAST(pair AS VARCHAR) AS pair,
+                    CAST(rate_usd_per_eur AS DOUBLE) AS rate_usd_per_eur
+                FROM df
+                """
+            )
+        finally:
+            con.unregister("df")
 
         # Upsert mit MERGE, Fallback DELETE+INSERT
         try:
