@@ -783,7 +783,7 @@ def update_prices(
                 return 0
 
             df_all = pd.concat(all_rows, ignore_index=True)
-            df_all["date"] = pd.to_datetime(df_all["date"]).dt.date
+            df_all = _coerce_price_frame(df_all)
             df_all = df_all.sort_values(["ticker", "date"]).dropna(subset=["date", "ticker"])
 
             # Validierung
@@ -862,6 +862,17 @@ def update_prices(
             pass
 
 
+def _coerce_price_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize price data frame dtypes for DuckDB ingestion."""
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df["ticker"] = df["ticker"].astype(str)
+    numeric_cols = ["open", "high", "low", "close", "adj_close", "volume"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
 def purge_old_prices(db_path: str) -> None:
     """Remove price rows older than ``DATA_RETENTION_DAYS``."""
     cutoff = date.today() - timedelta(days=DATA_RETENTION_DAYS)
@@ -920,7 +931,11 @@ def update_fx_rates(db_path: str) -> int:
             log.info("FX-Update: keine neuen EURUSD-Zeilen")
             return 0
 
-        df = df.sort_values("date").drop_duplicates(subset=["date", "pair"])
+        df = df.copy()
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+        df["pair"] = df["pair"].astype(str)
+        df["rate_usd_per_eur"] = pd.to_numeric(df["rate_usd_per_eur"], errors="coerce")
+        df = df.sort_values("date").drop_duplicates(subset=["date", "pair"]).dropna(subset=["date", "pair"])
         con.register("df", df)
         try:
             con.execute(
