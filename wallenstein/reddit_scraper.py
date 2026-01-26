@@ -351,6 +351,18 @@ def purge_old_posts() -> None:
             pass
 
 
+def _coerce_reddit_posts_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize Reddit post data frame dtypes for DuckDB ingestion."""
+    df = df.copy()
+    df["id"] = df["id"].astype(str)
+    df["title"] = df["title"].astype(str)
+    df["text"] = df["text"].astype(str)
+    df["created_utc"] = pd.to_datetime(df["created_utc"], errors="coerce", utc=True).dt.tz_convert(None)
+    df["upvotes"] = pd.to_numeric(df["upvotes"], errors="coerce").fillna(0).astype(int)
+    df["num_comments"] = pd.to_numeric(df["num_comments"], errors="coerce").fillna(0).astype(int)
+    return df
+
+
 # -------------------------------------------------------
 # Öffentliche API: erwartet dein main.py
 # -------------------------------------------------------
@@ -429,6 +441,7 @@ def update_reddit_data(
 
         if not df_all.empty:
             df_all = df_all[["id", "created_utc", "title", "text", "upvotes", "num_comments"]]
+            df_all = _coerce_reddit_posts_frame(df_all)
             ids = df_all["id"].tolist()
             with duckdb.connect(DB_PATH) as con:
                 ensure_tables(con)
