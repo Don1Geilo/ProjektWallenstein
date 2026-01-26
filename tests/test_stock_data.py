@@ -101,6 +101,36 @@ def test_download_single_safe_handles_429(monkeypatch, caplog):
     assert "skipped due to rate limiting" in caplog.text
 
 
+def test_download_single_safe_falls_back_when_session_rejected(monkeypatch):
+    from yfinance.exceptions import YFDataException
+
+    class DummyTicker:
+        def history(self, *args, **kwargs):
+            return pd.DataFrame(
+                {
+                    "Open": [1.0],
+                    "High": [1.0],
+                    "Low": [1.0],
+                    "Close": [1.0],
+                    "Adj Close": [1.0],
+                    "Volume": [100],
+                },
+                index=pd.to_datetime(["2024-01-02"]),
+            )
+
+    def fake_ticker(symbol, session=None):
+        if session is not None:
+            raise YFDataException("invalid session")
+        return DummyTicker()
+
+    monkeypatch.setattr(stock_data, "_yahoo_chart_api_daily", lambda *_, **__: pd.DataFrame())
+    monkeypatch.setattr(stock_data.yf, "Ticker", fake_ticker)
+
+    df = stock_data._download_single_safe("TEST", session=requests.Session())
+    assert not df.empty
+    assert df["ticker"].iloc[0] == "TEST"
+
+
 def test_prices_table_has_index(tmp_path):
     db = tmp_path / "idx.duckdb"
     con = duckdb.connect(str(db))

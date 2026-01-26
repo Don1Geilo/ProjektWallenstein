@@ -450,7 +450,11 @@ def _download_single_safe(
     def _norm(df_hist: pd.DataFrame) -> pd.DataFrame:
         if df_hist is None or df_hist.empty:
             return _empty()
-        df = df_hist.reset_index().rename(columns={"Date": "date"})
+        df = df_hist.reset_index()
+        for idx_name in ("Date", "Datetime", "index"):
+            if idx_name in df.columns:
+                df = df.rename(columns={idx_name: "date"})
+                break
         df["ticker"] = ticker
         colmap = {
             "Open": "open",
@@ -470,6 +474,17 @@ def _download_single_safe(
     today_utc = pd.Timestamp.utcnow().date()
     last_err: Exception | None = None
 
+    def _yf_ticker():
+        if session is None:
+            return yf.Ticker(ticker)
+        try:
+            return yf.Ticker(ticker, session=session)
+        except Exception as exc:
+            if exc.__class__.__name__ == "YFDataException":
+                log.debug("yfinance rejected custom session for %s: %s", ticker, exc)
+                return yf.Ticker(ticker)
+            raise
+
     for attempt in range(MAX_RETRIES):
         try:
             # (1) Chart-API daily
@@ -482,7 +497,7 @@ def _download_single_safe(
                 return df_api
 
             # (2) yfinance history (kein harter Fehler)
-            tk = yf.Ticker(ticker, session=session)
+            tk = _yf_ticker()
             use_start = start
             use_period = period
             if use_start is not None and pd.to_datetime(use_start).date() >= today_utc:
